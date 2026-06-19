@@ -21,6 +21,7 @@ const DashboardPage = lazy(() => import('@/pages/DashboardPage').then(m => ({ de
 const AuditPage = lazy(() => import('@/pages/AuditPage').then(m => ({ default: m.AuditPage })))
 const ConfigPage = lazy(() => import('@/pages/config/ConfigPage').then(m => ({ default: m.ConfigPage })))
 const WorkspacesPage = lazy(() => import('@/pages/config/WorkspacesPage').then(m => ({ default: m.WorkspacesPage })))
+const RoutesPage = lazy(() => import('@/pages/config/RoutesPage').then(m => ({ default: m.RoutesPage })))
 const LinkedWorkspacesPage = lazy(() => import('@/pages/config/LinkedWorkspacesPage').then(m => ({ default: m.LinkedWorkspacesPage })))
 const DryRunPage = lazy(() => import('@/pages/DryRunPage').then(m => ({ default: m.DryRunPage })))
 const CreateMCPPage = lazy(() => import('@/pages/CreateMCP').then(m => ({ default: m.CreateMCPPage })))
@@ -178,26 +179,27 @@ function App() {
             <Route path="/worker-approvals" element={<WorkerApprovalsPage />} />
             <Route path="/model-providers" element={<ModelProvidersPage />} />
 
-          {/* Setup group — Connect a service, workspace/server matrix, workspace metadata. */}
+          {/* Setup group — Connect a service, workspace/server matrix, workspace routing, workspace metadata. */}
             <Route path="/workspaces" element={<ConnectionsPage />} />
+            <Route path="/workspaces/routes" element={<RoutesPage />} />
             <Route path="/workspaces/manage" element={<WorkspacesPage />} />
             <Route path="/workspace-links" element={<LinkedWorkspacesPage />} />
 
           {/* Advanced — raw config surfaces: credentials, OAuth providers,
-              routes, descriptions. /config also serves this shell for
-              backwards-compat; query-param redirects live inside ConfigPage. */}
+              descriptions. /config also serves this shell for backwards-compat;
+              query-param redirects live inside ConfigPage. */}
             <Route path="/config" element={<ConfigPage />} />
             <Route path="/advanced" element={<ConfigPage />} />
             <Route path="/advanced/credentials" element={<ConfigPage />} />
             <Route path="/advanced/oauth-providers" element={<ConfigPage />} />
-            <Route path="/advanced/routes" element={<ConfigPage />} />
+            <Route path="/advanced/routes" element={<RedirectWithSearch to="/workspaces/routes" />} />
             <Route path="/advanced/descriptions" element={<ConfigPage />} />
 
           {/* Legacy per-resource routes — redirect to new canonical URLs. */}
             <Route path="/servers" element={<RedirectWithSearch to="/workspaces" />} />
             <Route path="/servers/available" element={<RedirectWithSearch to="/workspaces" />} />
             <Route path="/config/downstreams" element={<RedirectWithSearch to="/workspaces" />} />
-            <Route path="/config/routes" element={<Navigate to="/advanced/routes" replace />} />
+            <Route path="/config/routes" element={<RedirectWithSearch to="/workspaces/routes" />} />
             <Route path="/config/auth-scopes" element={<Navigate to="/advanced/credentials" replace />} />
             <Route path="/config/oauth-providers" element={<Navigate to="/advanced/oauth-providers" replace />} />
             <Route path="/config/workspaces" element={<RedirectWithSearch to="/workspaces/manage" />} />

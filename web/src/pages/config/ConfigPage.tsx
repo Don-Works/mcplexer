@@ -1,18 +1,17 @@
 import { useCallback } from 'react'
 import { Link, Navigate, useLocation, useSearchParams } from 'react-router-dom'
 import { cn } from '@/lib/utils'
-import { RoutesPage } from './RoutesPage'
 import { AuthScopesPage } from './AuthScopesPage'
 import { OAuthProvidersPage } from './OAuthProvidersPage'
 import { DescriptionsPage } from '../DescriptionsPage'
 
 // /config?tab=* redirects — keeps deep-links alive while the IA moves.
-// servers and routes both land on /workspaces (server-to-workspace wiring).
+// servers land on /workspaces; routes land on /workspaces/routes.
 // workspace metadata lives at /workspaces/manage.
 // credentials, oauth, descriptions stay here under /advanced.
 const TAB_REDIRECTS: Record<string, string> = {
   servers: '/workspaces',
-  routes: '/workspaces',
+  routes: '/workspaces/routes',
   workspaces: '/workspaces/manage',
   credentials: '/advanced/credentials',
   oauth: '/advanced/oauth-providers',
@@ -20,10 +19,7 @@ const TAB_REDIRECTS: Record<string, string> = {
 }
 
 function legacyRedirectTarget(rawTab: string, searchParams: URLSearchParams): string | null {
-  const base =
-    rawTab === 'routes' && searchParams.has('route')
-      ? '/advanced/routes'
-      : TAB_REDIRECTS[rawTab]
+  const base = TAB_REDIRECTS[rawTab]
   if (!base) return null
 
   const next = new URLSearchParams(searchParams)
@@ -43,12 +39,11 @@ function legacyRedirectTarget(rawTab: string, searchParams: URLSearchParams): st
 }
 
 // Canonical Advanced sub-pages — each maps to a path segment under /advanced.
-type AdvancedTab = 'credentials' | 'oauth-providers' | 'routes' | 'descriptions'
+type AdvancedTab = 'credentials' | 'oauth-providers' | 'descriptions'
 
 const TABS: { id: AdvancedTab; label: string }[] = [
   { id: 'credentials', label: 'Credentials' },
   { id: 'oauth-providers', label: 'OAuth Providers' },
-  { id: 'routes', label: 'Routes' },
   { id: 'descriptions', label: 'Descriptions' },
 ]
 
@@ -127,7 +122,6 @@ function AdvancedShell({ tab }: { tab: AdvancedTab }) {
       <div>
         {tab === 'credentials' && <AuthScopesPage />}
         {tab === 'oauth-providers' && <OAuthProvidersPage />}
-        {tab === 'routes' && <RoutesPage />}
         {tab === 'descriptions' && <DescriptionsPage />}
       </div>
     </div>
