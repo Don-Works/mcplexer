@@ -14,6 +14,7 @@ import {
   Menu,
   QrCode,
   Radio,
+  Route as RouteIcon,
   Settings,
   ShieldCheck,
   Sliders,
@@ -81,6 +82,8 @@ const setupNav: NavItem[] = [
 // shows servers, routes, memory scope, and tasks scoped to it.
 const workspaceNav: NavItem[] = [
   { label: 'Workspace access', href: '/workspaces', icon: <Layers className="h-4 w-4" />, hint: 'Control what AI can use in each workspace folder' },
+  { label: 'Routing rules', href: '/workspaces/routes', icon: <RouteIcon className="h-4 w-4" />, hint: 'Create, order, and reload workspace route rules' },
+  { label: 'Workspace settings', href: '/workspaces/manage', icon: <FolderOpen className="h-4 w-4" />, hint: 'Create workspaces and edit root paths and default policy' },
 ]
 
 const monitorNav: NavItem[] = [
@@ -131,7 +134,7 @@ const networkNav: NavItem[] = [
 const settingsNav: NavItem[] = [
   { label: 'Safety rules', href: '/guards', icon: <ShieldCheck className="h-4 w-4" />, hint: 'Guards and approval rules that protect local tools' },
   { label: 'Backups', href: '/backups', icon: <Archive className="h-4 w-4" />, hint: 'Backup and restore MCPlexer data' },
-  { label: 'Advanced', href: '/advanced', icon: <Sliders className="h-4 w-4" />, hint: 'Routes, credentials, OAuth providers, guards, descriptions' },
+  { label: 'Advanced', href: '/advanced', icon: <Sliders className="h-4 w-4" />, hint: 'Credentials, OAuth providers, guards, descriptions' },
   { label: 'Settings', href: '/settings', icon: <Settings className="h-4 w-4" /> },
 ]
 
@@ -139,8 +142,10 @@ function NavLink({ item, onNavigate }: { item: NavItem; onNavigate?: () => void 
   const location = useLocation()
   const active =
     location.pathname === item.href ||
-    // Workspaces: matrix plus metadata/settings child page.
-    (item.href === '/workspaces' && location.pathname.startsWith('/workspaces')) ||
+    // Workspaces: keep access, routing, and settings distinct in the sidebar.
+    (item.href === '/workspaces' && location.pathname === '/workspaces') ||
+    (item.href === '/workspaces/routes' && location.pathname.startsWith('/workspaces/routes')) ||
+    (item.href === '/workspaces/manage' && location.pathname.startsWith('/workspaces/manage')) ||
     // Advanced: /advanced and all sub-paths (/advanced/credentials, etc.).
     (item.href === '/advanced' && location.pathname.startsWith('/advanced')) ||
     // Legacy /config/* deep links still highlight Advanced.

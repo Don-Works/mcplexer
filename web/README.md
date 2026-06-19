@@ -34,6 +34,10 @@ npm run build
 ```
 
 The root `task build`, `task build-p2p`, and `task web-build` commands also build the dashboard and refresh the embedded assets under `internal/web/dist`.
+Those generated assets are intentionally ignored by git; no files under
+`internal/web/dist` are tracked. Clean checkout Go commands still compile, but
+release/install builds should run the web build first so the dashboard is
+embedded in the binary.
 
 ## Main Surfaces
 
@@ -44,7 +48,7 @@ The root `task build`, `task build-p2p`, and `task web-build` commands also buil
 - Automation: scheduled workers and delegated one-shot runs.
 - Knowledge: Brain, Memory, Tasks, and Skills.
 - Network: mesh, pairing, and linked workspaces.
-- Settings: safety rules, backups, advanced routes/credentials, and preferences.
+- Settings: safety rules, backups, advanced credentials, and preferences.
 
 ## Verification
 

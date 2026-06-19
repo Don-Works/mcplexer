@@ -220,9 +220,9 @@ export function ConnectionsPage() {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Button variant="outline" asChild>
-            <Link to="/advanced/routes">
+            <Link to="/workspaces/routes">
               <Route className="mr-1.5 h-4 w-4" />
-              Edit routes
+              Routing rules
             </Link>
           </Button>
           <Button variant="outline" asChild>

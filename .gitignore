@@ -15,6 +15,7 @@ data/
 # Web UI
 web/node_modules/
 web/dist/
+internal/web/dist/
 
 # IDE
 .idea/

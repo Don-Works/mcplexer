@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
 import { useApi } from '@/hooks/use-api'
 import {
@@ -13,7 +13,7 @@ import {
   updateRoute,
 } from '@/api/client'
 import type { RouteRule, Workspace } from '@/api/types'
-import { Plus, RotateCw } from 'lucide-react'
+import { ArrowLeft, Plus, RotateCw, Server } from 'lucide-react'
 import { toast } from 'sonner'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { RouteDialog, emptyForm } from './RouteDialog'
@@ -229,27 +229,44 @@ export function RoutesPage() {
 
   return (
     <div className="space-y-6">
-      <div className="space-y-1">
-        <h2 className="text-lg font-semibold">Route Rules</h2>
-        <p className="max-w-2xl text-sm text-muted-foreground">
-          Each rule says: for this workspace, when a tool matches these patterns,
-          use this server and credential. Rules are evaluated by priority; first
-          match wins.
-        </p>
-      </div>
-
-      <div className="flex items-center justify-end">
-        <Button
-          variant="outline"
-          onClick={handleReload}
-          disabled={reloading}
-          data-testid="route-reload"
-          title="Apply route changes immediately (normally cached until restart)"
-        >
-          <RotateCw className={`mr-2 h-4 w-4 ${reloading ? 'animate-spin' : ''}`} />
-          {reloading ? 'Reloading…' : 'Reload'}
-        </Button>
-      </div>
+      <header className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+        <div className="space-y-1">
+          <Button variant="ghost" size="sm" asChild className="-ml-2 h-8">
+            <Link to="/workspaces">
+              <ArrowLeft className="mr-1.5 h-4 w-4" />
+              Workspaces
+            </Link>
+          </Button>
+          <h1 className="text-xl font-semibold">Workspace Routing</h1>
+          <p className="max-w-2xl text-sm text-muted-foreground">
+            Route rules decide which server and credential handle matching tool
+            calls in each workspace. Rules are evaluated by priority; first
+            match wins.
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button variant="outline" asChild>
+            <Link to="/setup">
+              <Server className="mr-1.5 h-4 w-4" />
+              Add server
+            </Link>
+          </Button>
+          <Button onClick={() => openCreate()} data-testid="route-add">
+            <Plus className="mr-1.5 h-4 w-4" />
+            Add rule
+          </Button>
+          <Button
+            variant="outline"
+            onClick={handleReload}
+            disabled={reloading}
+            data-testid="route-reload"
+            title="Apply route changes immediately (normally cached until restart)"
+          >
+            <RotateCw className={`mr-1.5 h-4 w-4 ${reloading ? 'animate-spin' : ''}`} />
+            {reloading ? 'Reloading…' : 'Reload'}
+          </Button>
+        </div>
+      </header>
 
       {loading && !routes && (
         <div className="flex items-center gap-2 text-muted-foreground">
@@ -287,13 +304,6 @@ export function RoutesPage() {
           <p className="text-xs mt-1">Create a workspace, then add a route to connect a server to it.</p>
         </div>
       )}
-
-      <div className="flex justify-end">
-        <Button onClick={() => openCreate()} data-testid="route-add">
-          <Plus className="mr-2 h-4 w-4" />
-          Add Route
-        </Button>
-      </div>
 
       <RouteDialog
         open={dialogOpen}
