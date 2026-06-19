@@ -42,6 +42,7 @@ const PAGES: CommandEntry[] = [
   { id: 'page-harnesses', label: 'AI Harnesses', to: '/harness-setup', keywords: 'wire mcp ide claude cursor codex opencode gemini mimo pi harness bootstrap setup', icon: createElement(Wrench, { className: iconClass }) },
   { id: 'page-setup', label: 'Add integration', to: '/setup', keywords: 'quick setup add server service tool github linear postgres clickup', icon: createElement(Sparkles, { className: iconClass }) },
   { id: 'page-workspaces', label: 'Workspace access', to: '/workspaces', keywords: 'workspace project folder routes servers policy access', icon: createElement(Layers, { className: iconClass }) },
+  { id: 'page-workspace-routes', label: 'Routing rules', to: '/workspaces/routes', keywords: 'route routing rules policy match workspace server access', icon: createElement(Wrench, { className: iconClass }) },
   { id: 'page-signals', label: 'Notifications', to: '/signals', keywords: 'signal notifications log feed alert', icon: createElement(Bell, { className: iconClass }) },
   { id: 'page-approvals', label: 'Approvals', to: '/approvals', keywords: 'approve deny pending wait inbox', icon: createElement(ShieldCheck, { className: iconClass }) },
   { id: 'page-audit', label: 'Audit', to: '/audit', keywords: 'logs trail history monitor', icon: createElement(FileText, { className: iconClass }) },
@@ -57,7 +58,7 @@ const PAGES: CommandEntry[] = [
   { id: 'page-linked-workspaces', label: 'Linked workspaces', to: '/workspace-links', keywords: 'sync paired machines network workspace links', icon: createElement(Link2, { className: iconClass }) },
   { id: 'page-guards', label: 'Safety rules', to: '/guards', keywords: 'guards approvals shell sanitizer schedule sandbox safety policy', icon: createElement(ShieldCheck, { className: iconClass }) },
   { id: 'page-backups', label: 'Backups', to: '/backups', keywords: 'backup restore snapshot export settings', icon: createElement(Archive, { className: iconClass }) },
-  { id: 'page-advanced', label: 'Advanced', to: '/advanced', keywords: 'routes credentials oauth providers descriptions config', icon: createElement(Sliders, { className: iconClass }) },
+  { id: 'page-advanced', label: 'Advanced', to: '/advanced', keywords: 'credentials oauth providers descriptions config', icon: createElement(Sliders, { className: iconClass }) },
   { id: 'page-settings', label: 'Settings', to: '/settings', keywords: 'preferences config settings', icon: createElement(Settings, { className: iconClass }) },
   { id: 'page-worker-cost', label: 'Worker cost', to: '/workers/cost', keywords: 'spend dollars budget mtd cost dashboard ai', icon: createElement(DollarSign, { className: iconClass }) },
   { id: 'page-model-ranks', label: 'Model ranks', to: '/delegations/models', keywords: 'models ranking delegation capacity quality review task kind mimo minimax grok', icon: createElement(Gauge, { className: iconClass }) },
@@ -78,7 +79,7 @@ const SIGNAL_FILTERS: CommandEntry[] = [
 
 const CONFIG_TABS: CommandEntry[] = [
   { id: 'config-servers', label: 'Workspace servers', to: '/workspaces', keywords: 'server downstream mcp config workspace access', icon: createElement(Server, { className: iconClass }), hint: 'workspace' },
-  { id: 'config-routes', label: 'Routes', to: '/advanced/routes', keywords: 'rule policy match config workspace advanced', icon: createElement(Wrench, { className: iconClass }), hint: 'advanced' },
+  { id: 'config-routes', label: 'Routing rules', to: '/workspaces/routes', keywords: 'rule route routing policy match config workspace', icon: createElement(Wrench, { className: iconClass }), hint: 'workspace' },
   { id: 'config-credentials', label: 'Credentials', to: '/advanced/credentials', keywords: 'auth scope secret api config advanced', icon: createElement(Lock, { className: iconClass }), hint: 'advanced' },
   { id: 'config-workspaces', label: 'Workspace settings', to: '/workspaces/manage', keywords: 'project root folder policy config', icon: createElement(Globe, { className: iconClass }), hint: 'workspace' },
   { id: 'config-oauth', label: 'OAuth providers', to: '/advanced/oauth-providers', keywords: 'provider token config advanced', icon: createElement(KeyRound, { className: iconClass }), hint: 'advanced' },
@@ -150,7 +151,7 @@ export function useCommandEntries(open: boolean): { groups: CommandGroup[]; load
             keywords: `route rule ${r.workspace_id || ''} ${r.policy} ${r.path_glob || ''}`,
             hint: r.policy,
             icon: createElement(Wrench, { className: iconClass }),
-            to: `/advanced/routes?route=${encodeURIComponent(r.id)}`,
+            to: `/workspaces/routes?route=${encodeURIComponent(r.id)}`,
           }
         }),
         credentials: scopes.map((c) => ({

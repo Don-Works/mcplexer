@@ -160,9 +160,9 @@ export function WorkspacesPage() {
           <h1 className="text-xl font-semibold">Workspace Settings</h1>
         </div>
         <Button variant="outline" asChild>
-          <Link to="/advanced/routes">
+          <Link to="/workspaces/routes">
             <Route className="mr-1.5 h-4 w-4" />
-            Edit routes
+            Routing rules
           </Link>
         </Button>
       </div>
@@ -247,7 +247,7 @@ export function WorkspacesPage() {
                                 data-testid={`workspace-routes-${w.id}`}
                                 asChild
                               >
-                                <Link to={`/advanced/routes?workspace=${encodeURIComponent(w.id)}`}>
+                                <Link to={`/workspaces/routes?workspace=${encodeURIComponent(w.id)}`}>
                                   <Route className="h-3.5 w-3.5" />
                                 </Link>
                               </Button>

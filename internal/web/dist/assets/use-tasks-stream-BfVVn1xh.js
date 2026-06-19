@@ -1,1 +1,0 @@
-import{r as e}from"./rolldown-runtime-QTnfLwEv.js";import{f as t}from"./recharts-V3eOq3uM.js";import{Rt as n}from"./index-BDLzoIgt.js";var r=e(t(),1);function i({workspaceId:e,onEvent:t,disabled:i}){let a=(0,r.useRef)(t);a.current=t,(0,r.useEffect)(()=>{if(!i)return n(`tasks`,t=>{let n=t;e&&n.workspace_id!==e||a.current(n)})},[e,i])}export{i as t};
