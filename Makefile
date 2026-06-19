@@ -143,6 +143,7 @@ secret:
 
 clean:
 	rm -rf bin/ web/dist/
+	find internal/web/dist -mindepth 1 ! -name .gitkeep -delete 2>/dev/null || true
 
 uninstall:
 	-./bin/mcplexer daemon stop 2>/dev/null

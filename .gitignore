@@ -15,6 +15,8 @@ data/
 # Web UI
 web/node_modules/
 web/dist/
+internal/web/dist/*
+!internal/web/dist/.gitkeep
 
 # IDE
 .idea/
