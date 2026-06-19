@@ -34,9 +34,10 @@ npm run build
 ```
 
 The root `task build`, `task build-p2p`, and `task web-build` commands also build the dashboard and refresh the embedded assets under `internal/web/dist`.
-Those generated assets are intentionally ignored by git; only
-`internal/web/dist/.gitkeep` is tracked so Go packages still compile before a
-web build has run.
+Those generated assets are intentionally ignored by git; no files under
+`internal/web/dist` are tracked. Clean checkout Go commands still compile, but
+release/install builds should run the web build first so the dashboard is
+embedded in the binary.
 
 ## Main Surfaces
 

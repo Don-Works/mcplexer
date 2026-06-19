@@ -9,7 +9,6 @@
   },
   "scripts": {
     "dev": "vite",
-    "prebuild": "node scripts/clean-dist.mjs",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "test": "vitest run",

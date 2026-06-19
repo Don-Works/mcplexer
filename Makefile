@@ -142,8 +142,7 @@ secret:
 	./bin/mcplexer secret put $(SCOPE) $(KEY) $(VALUE)
 
 clean:
-	rm -rf bin/ web/dist/
-	find internal/web/dist -mindepth 1 ! -name .gitkeep -delete 2>/dev/null || true
+	rm -rf bin/ web/dist/ internal/web/dist/
 
 uninstall:
 	-./bin/mcplexer daemon stop 2>/dev/null
@@ -163,7 +162,7 @@ worktrees-gc-yes:
 	@bash scripts/worktrees-gc.sh --yes
 
 # Cross-compile Go for all platforms
-go-build-platforms:
+go-build-platforms: web-build
 	GOOS=darwin GOARCH=arm64 go build -tags p2p -ldflags "$(GO_LDFLAGS)" -o bin/darwin/arm64/mcplexer ./cmd/mcplexer
 	GOOS=darwin GOARCH=amd64 go build -tags p2p -ldflags "$(GO_LDFLAGS)" -o bin/darwin/amd64/mcplexer ./cmd/mcplexer
 	GOOS=linux GOARCH=amd64 go build -tags p2p -ldflags "$(GO_LDFLAGS)" -o bin/linux/amd64/mcplexer ./cmd/mcplexer
