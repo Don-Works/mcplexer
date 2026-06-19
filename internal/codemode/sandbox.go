@@ -225,6 +225,14 @@ func (s *Sandbox) Execute(ctx context.Context, code string, tools []ToolDef) (*E
 		return nil, fmt.Errorf("set help: %w", err)
 	}
 
+	// Install the Number.prototype.toLocaleString polyfill before user code.
+	// goja has no Intl and aliases toLocaleString to toString, so a locale
+	// argument is parsed as a radix and throws — this replaces it with a
+	// non-throwing, grouped formatter.
+	if err := installNumberLocalePolyfill(vm); err != nil {
+		return nil, fmt.Errorf("install number locale polyfill: %w", err)
+	}
+
 	// Run watchdog: interrupts the VM on (a) ctx cancel/timeout, (b) heap
 	// growth past the configured limit. Heap growth is approximate — it
 	// observes the entire process heap, not just this VM — so we only abort
