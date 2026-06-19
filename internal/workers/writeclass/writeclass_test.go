@@ -18,6 +18,7 @@ func TestIsWriteClass(t *testing.T) {
 		{"github__delete_issue is write", "github__delete_issue", true},
 		{"linear__update_status is write", "linear__update_status", true},
 		{"mesh__send is write (bare verb)", "mesh__send", true},
+		{"data__harvest_harness_context is write", "data__harvest_harness_context", true},
 		{"github__list_issues is read", "github__list_issues", false},
 		{"mesh__receive is read", "mesh__receive", false},
 		{"notion__databases.query is read", "notion__databases.query", false},

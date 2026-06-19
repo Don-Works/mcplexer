@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
+	"github.com/don-works/mcplexer/internal/harnesscontext"
 	"github.com/don-works/mcplexer/internal/store"
 )
 
@@ -37,6 +39,9 @@ func (h *handler) dispatchDataTool(
 		return resp, err, true
 	case "data__drop":
 		resp, err := h.handleDataDrop(ctx, raw)
+		return resp, err, true
+	case "data__harvest_harness_context":
+		resp, err := h.handleDataHarvestHarnessContext(ctx, raw)
 		return resp, err, true
 	}
 	return nil, nil, false
@@ -198,6 +203,140 @@ func (h *handler) handleDataDrop(ctx context.Context, raw json.RawMessage) (json
 		return dataStoreError("drop", err), nil
 	}
 	return marshalJSONResult(map[string]any{"ok": true, "dropped": args.Name})
+}
+
+func (h *handler) handleDataHarvestHarnessContext(ctx context.Context, raw json.RawMessage) (json.RawMessage, *RPCError) {
+	var args struct {
+		Name          string   `json:"name"`
+		Harnesses     []string `json:"harnesses"`
+		WorkspaceID   string   `json:"workspace_id"`
+		HomeDir       string   `json:"home_dir"`
+		WorkDir       string   `json:"work_dir"`
+		MaxFiles      int      `json:"max_files"`
+		MaxFileBytes  int      `json:"max_bytes_per_file"`
+		MaxTotalBytes int      `json:"max_total_bytes"`
+		TTLMinutes    *int     `json:"ttl_minutes"`
+		Pinned        bool     `json:"pinned"`
+	}
+	if err := json.Unmarshal(raw, &args); err != nil {
+		return nil, &RPCError{Code: CodeInvalidParams, Message: err.Error()}
+	}
+	workspaceID, rpc := h.dataWorkspace(ctx, args.WorkspaceID, true)
+	if rpc != nil {
+		return rpcResult(rpc), nil
+	}
+	var harnesses []harnesscontext.Harness
+	for _, hs := range args.Harnesses {
+		harnesses = append(harnesses, harnesscontext.Harness(hs))
+	}
+	collectionName := dataHarvestCollectionName(args.Name)
+	batchID := "harvest-" + time.Now().UTC().Format("20060102T150405Z")
+	result, err := harnesscontext.Harvest(harnesscontext.Options{
+		Harnesses:      harnesses,
+		HomeDir:        args.HomeDir,
+		WorkDir:        h.dataHarvestWorkDir(ctx, args.WorkDir),
+		MaxFiles:       args.MaxFiles,
+		MaxFileBytes:   args.MaxFileBytes,
+		MaxTotalBytes:  args.MaxTotalBytes,
+		HarvestBatchID: batchID,
+		CollectionName: collectionName,
+	})
+	if err != nil {
+		return marshalErrorResult(fmt.Sprintf("harvest failed: %v", err)), nil
+	}
+	items, err := harnesscontext.BuildDataItems(result.Documents)
+	if err != nil {
+		return marshalErrorResult(fmt.Sprintf("harvest failed: %v", err)), nil
+	}
+	if len(items) > dataMaxItems {
+		return marshalErrorResult(fmt.Sprintf("too many items: %d > %d", len(items), dataMaxItems)), nil
+	}
+	if payloadSize(items) > dataMaxPayloadBytes {
+		return marshalErrorResult("payload is too large for scratch ingest"), nil
+	}
+	collection, rpc := h.ingestDataHarvest(ctx, workspaceID, collectionName, batchID, args.TTLMinutes, args.Pinned, items)
+	if rpc != nil {
+		return rpcResult(rpc), nil
+	}
+	return marshalJSONResult(dataHarvestResponse(collectionName, batchID, result, collection))
+}
+
+func dataHarvestCollectionName(name string) string {
+	if strings.TrimSpace(name) == "" {
+		return harnesscontext.DefaultCollectionName
+	}
+	return strings.TrimSpace(name)
+}
+
+func (h *handler) dataHarvestWorkDir(ctx context.Context, override string) string {
+	if strings.TrimSpace(override) != "" {
+		return strings.TrimSpace(override)
+	}
+	ancestors := h.routingWorkspaceAncestors(ctx)
+	if len(ancestors) > 0 {
+		return ancestors[0].RootPath
+	}
+	return ""
+}
+
+func (h *handler) ingestDataHarvest(
+	ctx context.Context, workspaceID, name, batchID string, ttl *int, pinned bool,
+	items []store.DataItem,
+) (map[string]any, *RPCError) {
+	if len(items) == 0 {
+		return nil, nil
+	}
+	tagsJSON, _ := json.Marshal([]string{"harvest", "harness-context", batchID})
+	schemaJSON, _ := json.Marshal(map[string]any{
+		"documents": len(items),
+		"columns": map[string]string{
+			"harness":          "string",
+			"source_path":      "string",
+			"source_kind":      "string",
+			"title":            "string",
+			"content":          "string",
+			"source_hash":      "string",
+			"size_bytes":       "number",
+			"modified_at":      "string",
+			"harvest_batch_id": "string",
+		},
+	})
+	metadataJSON, _ := json.Marshal(map[string]any{
+		"source":           "data__harvest_harness_context",
+		"harvest_batch_id": batchID,
+	})
+	c := &store.DataCollection{
+		WorkspaceID:     workspaceID,
+		Name:            name,
+		Kind:            store.DataWorkbenchKindDocs,
+		TagsJSON:        tagsJSON,
+		SchemaJSON:      schemaJSON,
+		MetadataJSON:    metadataJSON,
+		Pinned:          pinned,
+		SourceSessionID: h.sessions.sessionID(),
+	}
+	c.TTLExpiresAt = dataTTL(ttl, pinned)
+	if err := h.store.IngestDataCollection(ctx, c, items); err != nil {
+		return nil, &RPCError{Code: CodeInternalError, Message: fmt.Sprintf("ingest failed: %v", err)}
+	}
+	return dataCollectionView(*c), nil
+}
+
+func dataHarvestResponse(
+	collectionName, batchID string, result *harnesscontext.Result, collection map[string]any,
+) map[string]any {
+	return map[string]any{
+		"ok":               true,
+		"collection_name":  collectionName,
+		"collection":       collection,
+		"harvest_batch_id": batchID,
+		"total_found":      result.Found,
+		"total_ingested":   result.Ingested,
+		"total_skipped":    result.Skipped,
+		"total_excluded":   result.Excluded,
+		"files":            result.Files,
+		"errors":           result.Errors,
+	}
 }
 
 func (h *handler) dataWorkspace(ctx context.Context, override string, write bool) (string, *RPCError) {

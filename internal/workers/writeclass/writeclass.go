@@ -37,6 +37,7 @@ var writeVerbs = []string{
 	"overwrite", "purge",
 	"archive", "cancel", "revoke", "rename", "assign", "disable",
 	"enable", "restore", "add", "append", "import", "ingest", "move",
+	"harvest",
 }
 
 // dangerSubstrings are verbs / phrases so destructive that finding them

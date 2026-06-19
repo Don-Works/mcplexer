@@ -206,7 +206,8 @@ func (h *handler) handleBuiltinCall(
 		return resp, rpcErr
 
 	case "data__ingest", "data__list", "data__describe",
-		"data__query", "data__search", "data__drop":
+		"data__query", "data__search", "data__drop",
+		"data__harvest_harness_context":
 		resp, rpcErr, _ := h.dispatchDataTool(ctx, req.Name, req.Arguments)
 		return resp, rpcErr
 
