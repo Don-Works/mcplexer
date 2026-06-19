@@ -132,5 +132,31 @@ func dataToolDefinitions() []Tool {
 				OpenWorldHint:   boolPtr(false),
 			}),
 		},
+		{
+			Name:        "data__harvest_harness_context",
+			Description: "Discover allowlisted harness context files (Codex AGENTS/instructions files, Cursor rules), normalize them as documents, and ingest them into a data workbench collection. Returns a manifest with skipped/excluded files. Idempotent by collection name: re-harvesting replaces that workspace collection.",
+			InputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"name": {"type": "string", "description": "Collection name. Default harness-context."},
+					"harnesses": {"type": "array", "items": {"type": "string", "enum": ["codex", "cursor", "all"]}, "description": "Harnesses to harvest. Default [\"codex\", \"cursor\"]. Use \"all\" for both."},
+					"workspace_id": {"type": "string", "description": "Override current workspace. Required when no session workspace is resolved."},
+					"home_dir": {"type": "string", "description": "Optional admin/test override for the home directory. Defaults to the current user home."},
+					"work_dir": {"type": "string", "description": "Optional admin/test override for the workspace root. Defaults to the current workspace root."},
+					"max_files": {"type": "integer", "description": "Max files per harvest (default 200)."},
+					"max_bytes_per_file": {"type": "integer", "description": "Max bytes per file (default 262144)."},
+					"max_total_bytes": {"type": "integer", "description": "Max total bytes ingested (default 4194304)."},
+					"ttl_minutes": {"type": "integer", "description": "Default 1440. Set 0 with pinned=true for no expiry."},
+					"pinned": {"type": "boolean", "description": "When true, no TTL is applied unless ttl_minutes is positive."}
+				}
+			}`),
+			Extras: withAnnotations(ToolAnnotations{
+				Title:           "Harvest Harness Context",
+				ReadOnlyHint:    boolPtr(false),
+				DestructiveHint: boolPtr(false),
+				IdempotentHint:  boolPtr(true),
+				OpenWorldHint:   boolPtr(false),
+			}),
+		},
 	}
 }

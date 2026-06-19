@@ -18,6 +18,7 @@ Scratch collections are not durable knowledge. Promote conclusions with
 | `data__query` | Run a single bounded `SELECT`/`WITH` query against one collection |
 | `data__search` | Search a collection using the FTS5 retrieval floor |
 | `data__drop` | Purge a collection and its indexed payloads |
+| `data__harvest_harness_context` | Harvest allowlisted Codex/Cursor context files into a docs collection |
 
 In code mode these are available as `data.ingest(...)`, `data.query(...)`, and
 so on.
@@ -57,6 +58,19 @@ memory.save({
 data.drop({ name: "issues" });
 ```
 
+## Harness Context Harvest
+
+`data.harvest_harness_context(...)` discovers a small allowlist of local harness
+context files, normalizes them as documents, and creates or replaces a scratch
+collection. The first cut covers Codex `AGENTS.md`/instruction files and Cursor
+rules under `.cursor/rules`; it deliberately skips opaque workspace storage
+databases and secret-like paths/content.
+
+Each document includes `harness`, `source_path`, `source_kind`, `title`,
+`content`, `source_hash`, `size_bytes`, `modified_at`, and
+`harvest_batch_id`. The collection is tagged with `harvest`, `harness-context`,
+and the batch id so later analysis stages can preserve lineage.
+
 `data.query` runs in an isolated in-memory SQLite database that contains only
 the selected collection. Use table `data`; when the collection name is a valid
 SQL identifier, that name is also available as a view. Queries are wrapped with
@@ -66,8 +80,9 @@ a server-side limit and must be a single read-only statement.
 
 - Collections are scoped to the current workspace and session provenance is
   recorded.
-- `data__ingest` and `data__drop` are write-class tools. Read-only workers can
-  list, describe, query, and search, but not mutate collections.
+- `data__ingest`, `data__harvest_harness_context`, and `data__drop` are
+  write-class tools. Read-only workers can list, describe, query, and search,
+  but not mutate collections.
 - Ingest audit records redact row, document, and text payloads. Audit metadata
   keeps collection name, tags, counts, and payload sizes.
 - Default TTL is 24 hours unless a collection is pinned or a TTL override is
