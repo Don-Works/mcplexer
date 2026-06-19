@@ -28,7 +28,7 @@ const PROMPT_TEMPLATE_BY_PAGE: Record<string, string> = {
 }
 
 function pageContextFromPath(pathname: string): string {
-  // /config/routes → "routes", /create-mcp → "create-mcp", / → "default"
+  // /workspaces/routes → "routes", /create-mcp → "create-mcp", / → "default"
   const seg = pathname.split('/').filter(Boolean).pop() ?? ''
   return PROMPT_TEMPLATE_BY_PAGE[seg] ? seg : 'default'
 }
