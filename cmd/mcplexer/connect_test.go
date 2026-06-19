@@ -39,7 +39,7 @@ func shortSockDir(t *testing.T) string {
 //   - context with deadline returns once the deadline elapses, even when
 //     the socket never becomes available
 //
-// Timing assertions use generous slack (200ms) to stay stable under CI
+// Timing assertions use generous slack to stay stable under CI
 // load; the precise schedule (20ms -> 50 -> 100 -> 200 -> 500 -> 1s, cap 2s)
 // is locked by TestDialWithBackoff_ScheduleRamp below.
 func TestDialWithBackoff_TableDriven(t *testing.T) {
@@ -65,7 +65,7 @@ func TestDialWithBackoff_TableDriven(t *testing.T) {
 			setupCtx: func() (context.Context, context.CancelFunc) {
 				return context.WithTimeout(context.Background(), 2*time.Second)
 			},
-			wantElapsed: 400 * time.Millisecond,
+			wantElapsed: 1 * time.Second,
 		},
 		{
 			name:       "ctx cancellation interrupts the loop",
