@@ -34,7 +34,7 @@ cd web && npm run build
 
 Include a clear summary, verification notes, and screenshots for user-facing dashboard changes.
 The generated dashboard bundle under `internal/web/dist` is ignored; do not
-commit hashed Vite assets.
+commit anything from that directory.
 
 ## Project Rules
 

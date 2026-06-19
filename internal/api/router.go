@@ -1008,6 +1008,9 @@ func NewRouter(deps RouterDeps) http.Handler {
 	// fetches from the SPA carry authentication automatically.
 	distFS, err := fs.Sub(web.StaticFiles, "dist")
 	if err == nil {
+		_, err = fs.Stat(distFS, "index.html")
+	}
+	if err == nil {
 		spaHandler := spaFallback(distFS, http.FileServerFS(distFS), deps.APIToken)
 		mux.Handle("/", spaHandler)
 	}
