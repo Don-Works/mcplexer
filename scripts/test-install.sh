@@ -18,7 +18,10 @@ cleanup() {
     kill "$DAEMON_PID" 2>/dev/null || true
     wait "$DAEMON_PID" 2>/dev/null || true
   fi
-  rm -rf "$TEST_HOME"
+  if [ -n "$TEST_HOME" ] && [ -d "$TEST_HOME" ]; then
+    chmod -R u+w "$TEST_HOME" 2>/dev/null || true
+    rm -rf "$TEST_HOME" || true
+  fi
 }
 trap cleanup EXIT
 
