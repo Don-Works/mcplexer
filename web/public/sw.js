@@ -12,12 +12,14 @@
 //   • notificationclick — route to the right SPA route, focus an existing
 //     window if one is open, otherwise open a new one.
 
-// Bumped to v5 to evict stale localhost PWA shells that blank the dashboard.
-// v3 shipped no-cache for sw.js itself but existing installs had already
-// cached a broken shell; v4 forced a clean sweep via the version bump.
-// v5 is a second sweep for stragglers whose Chrome kept the old registration.
+// Version history:
+//   v3 — no-cache for sw.js itself (prevents OS-level caching of stale SW).
+//   v4 — version bump to force a clean cache sweep.
+//   v5 — second sweep for stragglers.
+//   v7 — template-based version from the build pipeline.
+//   v8 — evict v7 caches that blanked the dashboard on localhost.
 // activate() prunes any cache name that isn't this one.
-const CACHE_NAME = 'mcplexer-shell-v5';
+const CACHE_NAME = 'mcplexer-shell-v8';
 const SHELL_URLS = ['/', '/icon.svg', '/icon-192.png', '/manifest.webmanifest'];
 
 self.addEventListener('install', (event) => {

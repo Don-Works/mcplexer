@@ -72,13 +72,17 @@ func TestSPAFallback_MissingAssetsReturn404(t *testing.T) {
 }
 
 // TestSPAFallback_SWVersionBumped ensures sw.js contains a version string
-// that differs from the old v4, confirming the cache-busting bump landed.
+// that has moved past v7 (the version that blanked localhost dashboards),
+// confirming the cache-busting bump landed.
 func TestSPAFallback_SWVersionBumped(t *testing.T) {
 	sw, err := os.ReadFile("../../web/public/sw.js")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(sw), "mcplexer-shell-v4") {
-		t.Error("sw.js CACHE_NAME still uses old v4; expected v5 bump")
+	if strings.Contains(string(sw), "mcplexer-shell-v7") {
+		t.Error("sw.js CACHE_NAME still uses old v7; expected v8 bump")
+	}
+	if !strings.Contains(string(sw), "mcplexer-shell-v8") {
+		t.Error("sw.js CACHE_NAME should use v8")
 	}
 }
