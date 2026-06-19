@@ -1,0 +1,19 @@
+<!-- MCPLEXER:HARNESS-SYNC:BEGIN v1 (codex) -->
+
+Use the 4 top-level tools (mcpx__search_tools + mcpx__execute_code for batch, secret__prompt/list_refs).
+
+For the full contract, fetch mcpx.skill_get({name:"using-mcplexer"}) directly. Use mcpx.skill_search only for unknown/deeper playbooks: mcplexer-features / mcplexer-tasks / agent-mesh / token-preserving-delegation.
+
+Start mcpx__search_tools in summary or exact-tool mode; avoid broad detail:"full" searches.
+
+The using-mcplexer skill (this bootstrap) is the source of truth for the contract.
+
+## Memory — mcplexer is the single source of truth
+
+Do NOT use your native memory system. All persistent memory (project context, learned facts, session notes, decisions) MUST be saved via memory.save({...}) inside mcpx__execute_code. Do not write to your harness-native memory files (checkpoint.md, MEMORY.md, notes.md, ~/.claude/projects/*/memory/*.md).
+
+Read mcplexer memory first. Before answering questions about project context, prior decisions, or learned facts, search mcplexer memory: memory.recall({query:"..."}) or memory.list({}) inside mcpx__execute_code. The digest at ~/.mcplexer/memory-exports/ is a read-only snapshot — use the live memory tools for the canonical data.
+
+Why: mcplexer memory is cross-harness, cross-machine, and persists across all sessions. Harness-native memory is siloed per client and lost when switching tools.
+
+<!-- MCPLEXER:HARNESS-SYNC:END -->

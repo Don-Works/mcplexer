@@ -1,0 +1,1265 @@
+[
+  {
+    "id": "github",
+    "name": "GitHub",
+    "description": "Issues, PRs, repos, and code search via GitHub Copilot MCP.",
+    "category": "dev",
+    "tags": [
+      "git",
+      "code",
+      "issues",
+      "pr"
+    ],
+    "auth": "oauth",
+    "transport": "http",
+    "command": "",
+    "args": null,
+    "url": "https://api.githubcopilot.com/mcp/",
+    "tool_namespace": "github",
+    "discovery": "dynamic",
+    "idle_timeout_sec": 300,
+    "max_instances": 1,
+    "restart_policy": "on-failure",
+    "disabled": false
+  },
+  {
+    "id": "linear",
+    "name": "Linear",
+    "description": "Linear issue tracker — projects, issues, comments, cycles.",
+    "category": "dev",
+    "tags": [
+      "issues",
+      "project"
+    ],
+    "auth": "oauth",
+    "transport": "http",
+    "command": "",
+    "args": null,
+    "url": "https://mcp.linear.app/mcp",
+    "tool_namespace": "linear",
+    "discovery": "dynamic",
+    "idle_timeout_sec": 300,
+    "max_instances": 1,
+    "restart_policy": "on-failure",
+    "disabled": false
+  },
+  {
+    "id": "sentry",
+    "name": "Sentry",
+    "description": "Sentry error tracking and performance monitoring.",
+    "category": "observability",
+    "tags": [
+      "errors",
+      "monitoring"
+    ],
+    "auth": "oauth",
+    "transport": "stdio",
+    "command": "npx",
+    "args": [
+      "-y",
+      "mcp-remote",
+      "https://mcp.sentry.dev/mcp"
+    ],
+    "url": null,
+    "tool_namespace": "sentry",
+    "discovery": "dynamic",
+    "idle_timeout_sec": 300,
+    "max_instances": 1,
+    "restart_policy": "on-failure",
+    "disabled": false
+  },
+  {
+    "id": "azdo",
+    "name": "Azure DevOps",
+    "description": "Azure DevOps work items, repos, and pipelines.",
+    "category": "dev",
+    "tags": [
+      "microsoft",
+      "devops"
+    ],
+    "auth": "oauth",
+    "transport": "http",
+    "command": "",
+    "args": null,
+    "url": "https://mcp.developer.microsoft.com/api/mcp",
+    "tool_namespace": "azdo",
+    "discovery": "dynamic",
+    "idle_timeout_sec": 300,
+    "max_instances": 1,
+    "restart_policy": "on-failure",
+    "disabled": false
+  },
+  {
+    "id": "figma",
+    "name": "Figma",
+    "description": "Read Figma designs, components, and frames.",
+    "category": "dev",
+    "tags": [
+      "design"
+    ],
+    "auth": "oauth",
+    "transport": "stdio",
+    "command": "npx",
+    "args": [
+      "-y",
+      "mcp-remote",
+      "https://mcp.figma.com/mcp"
+    ],
+    "url": null,
+    "tool_namespace": "figma",
+    "discovery": "dynamic",
+    "idle_timeout_sec": 300,
+    "max_instances": 1,
+    "restart_policy": "on-failure",
+    "disabled": false
+  },
+  {
+    "id": "git",
+    "name": "Git",
+    "description": "Local git operations on a repository path.",
+    "category": "dev",
+    "tags": [
+      "version-control"
+    ],
+    "auth": "config",
+    "transport": "stdio",
+    "command": "uvx",
+    "args": [
+      "mcp-server-git"
+    ],
+    "url": null,
+    "tool_namespace": "git",
+    "discovery": "dynamic",
+    "idle_timeout_sec": 300,
+    "max_instances": 1,
+    "restart_policy": "on-failure",
+    "disabled": false
+  },
+  {
+    "id": "docker",
+    "name": "Docker",
+    "description": "Inspect and manage Docker containers + images.",
+    "category": "dev",
+    "tags": [
+      "containers"
+    ],
+    "auth": "config",
+    "transport": "stdio",
+    "command": "npx",
+    "args": [
+      "-y",
+      "@docker/mcp-server"
+    ],
+    "url": null,
+    "tool_namespace": "docker",
+    "discovery": "dynamic",
+    "idle_timeout_sec": 300,
+    "max_instances": 1,
+    "restart_policy": "on-failure",
+    "disabled": false
+  },
+  {
+    "id": "playwright",
+    "name": "Playwright",
+    "description": "Headless browser automation for testing and scraping.",
+    "category": "dev",
+    "tags": [
+      "browser",
+      "testing"
+    ],
+    "auth": "none",
+    "transport": "stdio",
+    "command": "npx",
+    "args": [
+      "-y",
+      "@playwright/mcp@latest",
+      "--headless",
+      "--isolated"
+    ],
+    "url": null,
+    "tool_namespace": "playwright",
+    "discovery": "dynamic",
+    "idle_timeout_sec": 300,
+    "max_instances": 1,
+    "restart_policy": "on-failure",
+    "disabled": false
+  },
+  {
+    "id": "puppeteer",
+    "name": "Puppeteer",
+    "description": "Chrome automation via Puppeteer.",
+    "category": "dev",
+    "tags": [
+      "browser"
+    ],
+    "auth": "none",
+    "transport": "stdio",
+    "command": "npx",
+    "args": [
+      "-y",
+      "@modelcontextprotocol/server-puppeteer"
+    ],
+    "url": null,
+    "tool_namespace": "puppeteer",
+    "discovery": "dynamic",
+    "idle_timeout_sec": 300,
+    "max_instances": 1,
+    "restart_policy": "on-failure",
+    "disabled": false
+  },
+  {
+    "id": "context7",
+    "name": "Context7",
+    "description": "Up-to-date library docs from Upstash Context7.",
+    "category": "dev",
+    "tags": [
+      "docs"
+    ],
+    "auth": "none",
+    "transport": "stdio",
+    "command": "npx",
+    "args": [
+      "-y",
+      "@upstash/context7-mcp@latest"
+    ],
+    "url": null,
+    "tool_namespace": "context7",
+    "discovery": "dynamic",
+    "idle_timeout_sec": 300,
+    "max_instances": 1,
+    "restart_policy": "on-failure",
+    "disabled": false
+  },
+  {
+    "id": "clickup",
+    "name": "ClickUp",
+    "description": "ClickUp tasks, lists, docs, and time tracking.",
+    "category": "productivity",
+    "tags": [
+      "tasks"
+    ],
+    "auth": "oauth",
+    "transport": "http",
+    "command": "",
+    "args": null,
+    "url": "https://mcp.clickup.com/mcp",
+    "tool_namespace": "clickup",
+    "discovery": "dynamic",
+    "idle_timeout_sec": 300,
+    "max_instances": 1,
+    "restart_policy": "on-failure",
+    "disabled": false
+  },
+  {
+    "id": "notion",
+    "name": "Notion",
+    "description": "Notion pages, databases, and search.",
+    "category": "productivity",
+    "tags": [
+      "docs",
+      "wiki"
+    ],
+    "auth": "oauth",
+    "transport": "http",
+    "command": "",
+    "args": null,
+    "url": "https://mcp.notion.com/mcp",
+    "tool_namespace": "notion",
+    "discovery": "dynamic",
+    "idle_timeout_sec": 300,
+    "max_instances": 1,
+    "restart_policy": "on-failure",
+    "disabled": false
+  },
+  {
+    "id": "obsidian",
+    "name": "Obsidian",
+    "description": "Local Obsidian notes through the Local REST API MCP endpoint.",
+    "category": "productivity",
+    "tags": [
+      "notes",
+      "wiki",
+      "local"
+    ],
+    "auth": "api-key",
+    "transport": "http",
+    "command": "",
+    "args": null,
+    "url": "http://127.0.0.1:27123/mcp/",
+    "tool_namespace": "obsidian",
+    "discovery": "dynamic",
+    "idle_timeout_sec": 300,
+    "max_instances": 1,
+    "restart_policy": "on-failure",
+    "disabled": false
+  },
+  {
+    "id": "asana",
+    "name": "Asana",
+    "description": "Asana projects, tasks, and teams.",
+    "category": "productivity",
+    "tags": [
+      "tasks"
+    ],
+    "auth": "oauth",
+    "transport": "http",
+    "command": "",
+    "args": null,
+    "url": "https://mcp.asana.com/v2/mcp",
+    "tool_namespace": "asana",
+    "discovery": "dynamic",
+    "idle_timeout_sec": 300,
+    "max_instances": 1,
+    "restart_policy": "on-failure",
+    "disabled": false
+  },
+  {
+    "id": "atlassian",
+    "name": "Atlassian (Jira + Confluence)",
+    "description": "Jira issues and Confluence pages.",
+    "category": "productivity",
+    "tags": [
+      "jira",
+      "confluence"
+    ],
+    "auth": "oauth",
+    "transport": "http",
+    "command": "",
+    "args": null,
+    "url": "https://mcp.atlassian.com/v1/mcp",
+    "tool_namespace": "atlassian",
+    "discovery": "dynamic",
+    "idle_timeout_sec": 300,
+    "max_instances": 1,
+    "restart_policy": "on-failure",
+    "disabled": false
+  },
+  {
+    "id": "hubspot",
+    "name": "HubSpot",
+    "description": "HubSpot CRM contacts, companies, and deals.",
+    "category": "productivity",
+    "tags": [
+      "crm",
+      "sales"
+    ],
+    "auth": "oauth",
+    "transport": "stdio",
+    "command": "npx",
+    "args": [
+      "-y",
+      "mcp-remote",
+      "https://mcp.hubspot.com"
+    ],
+    "url": null,
+    "tool_namespace": "hubspot",
+    "discovery": "dynamic",
+    "idle_timeout_sec": 300,
+    "max_instances": 1,
+    "restart_policy": "on-failure",
+    "disabled": false
+  },
+  {
+    "id": "vercel",
+    "name": "Vercel",
+    "description": "Vercel projects, deployments, and env vars.",
+    "category": "cloud",
+    "tags": [
+      "hosting",
+      "deploy"
+    ],
+    "auth": "oauth",
+    "transport": "stdio",
+    "command": "npx",
+    "args": [
+      "-y",
+      "mcp-remote",
+      "https://mcp.vercel.com"
+    ],
+    "url": null,
+    "tool_namespace": "vercel",
+    "discovery": "dynamic",
+    "idle_timeout_sec": 300,
+    "max_instances": 1,
+    "restart_policy": "on-failure",
+    "disabled": false
+  },
+  {
+    "id": "cloudflare",
+    "name": "Cloudflare",
+    "description": "Cloudflare DNS, Workers, R2, and KV.",
+    "category": "cloud",
+    "tags": [
+      "dns",
+      "workers"
+    ],
+    "auth": "oauth",
+    "transport": "http",
+    "command": "",
+    "args": null,
+    "url": "https://mcp.cloudflare.com/mcp",
+    "tool_namespace": "cloudflare",
+    "discovery": "dynamic",
+    "idle_timeout_sec": 300,
+    "max_instances": 1,
+    "restart_policy": "on-failure",
+    "disabled": false
+  },
+  {
+    "id": "stripe",
+    "name": "Stripe",
+    "description": "Stripe customers, charges, subscriptions, and products.",
+    "category": "cloud",
+    "tags": [
+      "payments"
+    ],
+    "auth": "oauth",
+    "transport": "stdio",
+    "command": "npx",
+    "args": [
+      "-y",
+      "mcp-remote",
+      "https://mcp.stripe.com"
+    ],
+    "url": null,
+    "tool_namespace": "stripe",
+    "discovery": "dynamic",
+    "idle_timeout_sec": 300,
+    "max_instances": 1,
+    "restart_policy": "on-failure",
+    "disabled": false
+  },
+  {
+    "id": "portainer",
+    "name": "Portainer",
+    "description": "Manage Docker / Kubernetes via Portainer.",
+    "category": "cloud",
+    "tags": [
+      "containers"
+    ],
+    "auth": "api-key",
+    "transport": "stdio",
+    "command": "portainer-mcp",
+    "args": [
+      "-server",
+      "localhost:9443",
+      "-token",
+      "YOUR_TOKEN"
+    ],
+    "url": null,
+    "tool_namespace": "portainer",
+    "discovery": "dynamic",
+    "idle_timeout_sec": 300,
+    "max_instances": 1,
+    "restart_policy": "on-failure",
+    "disabled": false
+  },
+  {
+    "id": "datadog",
+    "name": "Datadog",
+    "description": "Datadog metrics, logs, monitors, and incidents.",
+    "category": "observability",
+    "tags": [
+      "metrics",
+      "logs"
+    ],
+    "auth": "oauth",
+    "transport": "stdio",
+    "command": "npx",
+    "args": [
+      "-y",
+      "mcp-remote",
+      "https://mcp.datadoghq.com/api/unstable/mcp-server/mcp"
+    ],
+    "url": null,
+    "tool_namespace": "datadog",
+    "discovery": "dynamic",
+    "idle_timeout_sec": 300,
+    "max_instances": 1,
+    "restart_policy": "on-failure",
+    "disabled": false
+  },
+  {
+    "id": "grafana",
+    "name": "Grafana",
+    "description": "Query Grafana dashboards and Loki logs.",
+    "category": "observability",
+    "tags": [
+      "metrics",
+      "dashboards"
+    ],
+    "auth": "api-key",
+    "transport": "stdio",
+    "command": "uvx",
+    "args": [
+      "mcp-grafana"
+    ],
+    "url": null,
+    "tool_namespace": "grafana",
+    "discovery": "dynamic",
+    "idle_timeout_sec": 300,
+    "max_instances": 1,
+    "restart_policy": "on-failure",
+    "disabled": false
+  },
+  {
+    "id": "aikido",
+    "name": "Aikido",
+    "description": "Aikido security alerts and posture.",
+    "category": "observability",
+    "tags": [
+      "security"
+    ],
+    "auth": "api-key",
+    "transport": "internal",
+    "command": "",
+    "args": null,
+    "url": null,
+    "tool_namespace": "aikido",
+    "discovery": "static",
+    "idle_timeout_sec": 0,
+    "max_instances": 1,
+    "restart_policy": "",
+    "disabled": false
+  },
+  {
+    "id": "supabase",
+    "name": "Supabase",
+    "description": "Supabase Postgres, auth, and storage.",
+    "category": "data",
+    "tags": [
+      "postgres",
+      "baas"
+    ],
+    "auth": "oauth",
+    "transport": "http",
+    "command": "",
+    "args": null,
+    "url": "https://mcp.supabase.com/mcp",
+    "tool_namespace": "supabase",
+    "discovery": "dynamic",
+    "idle_timeout_sec": 300,
+    "max_instances": 1,
+    "restart_policy": "on-failure",
+    "disabled": false
+  },
+  {
+    "id": "neon",
+    "name": "Neon",
+    "description": "Neon serverless Postgres branches and queries.",
+    "category": "data",
+    "tags": [
+      "postgres",
+      "serverless"
+    ],
+    "auth": "oauth",
+    "transport": "http",
+    "command": "",
+    "args": null,
+    "url": "https://mcp.neon.tech/mcp",
+    "tool_namespace": "neon",
+    "discovery": "dynamic",
+    "idle_timeout_sec": 300,
+    "max_instances": 1,
+    "restart_policy": "on-failure",
+    "disabled": false
+  },
+  {
+    "id": "postgres",
+    "name": "PostgreSQL",
+    "description": "Query a PostgreSQL database.",
+    "category": "data",
+    "tags": [
+      "sql"
+    ],
+    "auth": "config",
+    "transport": "stdio",
+    "command": "npx",
+    "args": [
+      "-y",
+      "@modelcontextprotocol/server-postgres",
+      "postgresql://localhost:5432/mydb"
+    ],
+    "url": null,
+    "tool_namespace": "postgres",
+    "discovery": "dynamic",
+    "idle_timeout_sec": 300,
+    "max_instances": 1,
+    "restart_policy": "on-failure",
+    "disabled": false
+  },
+  {
+    "id": "sqlite",
+    "name": "SQLite",
+    "description": "Query a local SQLite database file.",
+    "category": "data",
+    "tags": [
+      "sql"
+    ],
+    "auth": "config",
+    "transport": "stdio",
+    "command": "uvx",
+    "args": [
+      "mcp-server-sqlite",
+      "--db-path",
+      "./data/mydb.db"
+    ],
+    "url": null,
+    "tool_namespace": "sqlite",
+    "discovery": "dynamic",
+    "idle_timeout_sec": 300,
+    "max_instances": 1,
+    "restart_policy": "on-failure",
+    "disabled": false
+  },
+  {
+    "id": "redis",
+    "name": "Redis",
+    "description": "Read and write keys in a Redis instance.",
+    "category": "data",
+    "tags": [
+      "cache",
+      "kv"
+    ],
+    "auth": "config",
+    "transport": "stdio",
+    "command": "npx",
+    "args": [
+      "-y",
+      "@modelcontextprotocol/server-redis",
+      "redis://localhost:6379"
+    ],
+    "url": null,
+    "tool_namespace": "redis",
+    "discovery": "dynamic",
+    "idle_timeout_sec": 300,
+    "max_instances": 1,
+    "restart_policy": "on-failure",
+    "disabled": false
+  },
+  {
+    "id": "turso",
+    "name": "Turso",
+    "description": "Turso edge SQLite (libSQL).",
+    "category": "data",
+    "tags": [
+      "sqlite",
+      "edge"
+    ],
+    "auth": "api-key",
+    "transport": "stdio",
+    "command": "npx",
+    "args": [
+      "-y",
+      "@turso/mcp-server"
+    ],
+    "url": null,
+    "tool_namespace": "turso",
+    "discovery": "dynamic",
+    "idle_timeout_sec": 300,
+    "max_instances": 1,
+    "restart_policy": "on-failure",
+    "disabled": false
+  },
+  {
+    "id": "brave-search",
+    "name": "Brave Search",
+    "description": "Privacy-respecting web search via Brave.",
+    "category": "search",
+    "tags": [
+      "web"
+    ],
+    "auth": "api-key",
+    "transport": "stdio",
+    "command": "npx",
+    "args": [
+      "-y",
+      "@modelcontextprotocol/server-brave-search"
+    ],
+    "url": null,
+    "tool_namespace": "brave",
+    "discovery": "dynamic",
+    "idle_timeout_sec": 300,
+    "max_instances": 1,
+    "restart_policy": "on-failure",
+    "disabled": false
+  },
+  {
+    "id": "exa",
+    "name": "Exa",
+    "description": "Neural web search by Exa.",
+    "category": "search",
+    "tags": [
+      "web",
+      "neural"
+    ],
+    "auth": "api-key",
+    "transport": "stdio",
+    "command": "npx",
+    "args": [
+      "-y",
+      "exa-mcp-server"
+    ],
+    "url": null,
+    "tool_namespace": "exa",
+    "discovery": "dynamic",
+    "idle_timeout_sec": 300,
+    "max_instances": 1,
+    "restart_policy": "on-failure",
+    "disabled": false
+  },
+  {
+    "id": "tavily",
+    "name": "Tavily",
+    "description": "Tavily search and content extraction.",
+    "category": "search",
+    "tags": [
+      "web"
+    ],
+    "auth": "api-key",
+    "transport": "stdio",
+    "command": "npx",
+    "args": [
+      "-y",
+      "tavily-mcp"
+    ],
+    "url": null,
+    "tool_namespace": "tavily",
+    "discovery": "dynamic",
+    "idle_timeout_sec": 300,
+    "max_instances": 1,
+    "restart_policy": "on-failure",
+    "disabled": false
+  },
+  {
+    "id": "gmaps",
+    "name": "Google Maps",
+    "description": "Google Maps places, directions, and geocoding.",
+    "category": "search",
+    "tags": [
+      "maps"
+    ],
+    "auth": "api-key",
+    "transport": "stdio",
+    "command": "npx",
+    "args": [
+      "-y",
+      "@modelcontextprotocol/server-google-maps"
+    ],
+    "url": null,
+    "tool_namespace": "gmaps",
+    "discovery": "dynamic",
+    "idle_timeout_sec": 300,
+    "max_instances": 1,
+    "restart_policy": "on-failure",
+    "disabled": false
+  },
+  {
+    "id": "fetch",
+    "name": "Fetch",
+    "description": "Fetch and convert web pages to markdown.",
+    "category": "search",
+    "tags": [
+      "web",
+      "scrape"
+    ],
+    "auth": "none",
+    "transport": "stdio",
+    "command": "uvx",
+    "args": [
+      "mcp-server-fetch"
+    ],
+    "url": null,
+    "tool_namespace": "fetch",
+    "discovery": "dynamic",
+    "idle_timeout_sec": 300,
+    "max_instances": 1,
+    "restart_policy": "on-failure",
+    "disabled": false
+  },
+  {
+    "id": "slack",
+    "name": "Slack",
+    "description": "Read channels and post messages in Slack.",
+    "category": "comms",
+    "tags": [
+      "chat"
+    ],
+    "auth": "oauth",
+    "transport": "http",
+    "command": "",
+    "args": null,
+    "url": "https://mcp.slack.com/mcp",
+    "tool_namespace": "slack",
+    "discovery": "dynamic",
+    "idle_timeout_sec": 300,
+    "max_instances": 1,
+    "restart_policy": "on-failure",
+    "disabled": false
+  },
+  {
+    "id": "freeagent",
+    "name": "FreeAgent",
+    "description": "FreeAgent invoices, contacts, projects, and bank txns.",
+    "category": "productivity",
+    "tags": [
+      "accounting",
+      "invoices"
+    ],
+    "auth": "oauth",
+    "transport": "internal",
+    "command": "",
+    "args": null,
+    "url": null,
+    "tool_namespace": "freeagent",
+    "discovery": "static",
+    "idle_timeout_sec": 0,
+    "max_instances": 1,
+    "restart_policy": "",
+    "disabled": false
+  },
+  {
+    "id": "hammerspoon",
+    "name": "Hammerspoon",
+    "description": "macOS desktop automation: list/focus windows, screenshot, send keys, notify. Requires Hammerspoon.app + Accessibility permission.",
+    "category": "productivity",
+    "tags": [
+      "macos",
+      "automation",
+      "desktop"
+    ],
+    "auth": "config",
+    "transport": "internal",
+    "command": "",
+    "args": null,
+    "url": null,
+    "tool_namespace": "hammerspoon",
+    "discovery": "static",
+    "idle_timeout_sec": 0,
+    "max_instances": 1,
+    "restart_policy": "",
+    "disabled": false
+  },
+  {
+    "id": "filesystem",
+    "name": "Filesystem",
+    "description": "Read and write local files within a sandboxed root.",
+    "category": "core",
+    "tags": [
+      "files"
+    ],
+    "auth": "config",
+    "transport": "stdio",
+    "command": "npx",
+    "args": [
+      "-y",
+      "@modelcontextprotocol/server-filesystem",
+      "/tmp"
+    ],
+    "url": null,
+    "tool_namespace": "fs",
+    "discovery": "dynamic",
+    "idle_timeout_sec": 300,
+    "max_instances": 1,
+    "restart_policy": "on-failure",
+    "disabled": false
+  },
+  {
+    "id": "memory",
+    "name": "Memory",
+    "description": "Persistent key-value memory for agents.",
+    "category": "core",
+    "tags": [
+      "memory"
+    ],
+    "auth": "none",
+    "transport": "stdio",
+    "command": "npx",
+    "args": [
+      "-y",
+      "@modelcontextprotocol/server-memory"
+    ],
+    "url": null,
+    "tool_namespace": "memory",
+    "discovery": "dynamic",
+    "idle_timeout_sec": 300,
+    "max_instances": 1,
+    "restart_policy": "on-failure",
+    "disabled": false
+  },
+  {
+    "id": "sequential-thinking",
+    "name": "Sequential Thinking",
+    "description": "Step-by-step reasoning helper tool.",
+    "category": "core",
+    "tags": [
+      "reasoning"
+    ],
+    "auth": "none",
+    "transport": "stdio",
+    "command": "npx",
+    "args": [
+      "-y",
+      "@modelcontextprotocol/server-sequential-thinking"
+    ],
+    "url": null,
+    "tool_namespace": "thinking",
+    "discovery": "dynamic",
+    "idle_timeout_sec": 300,
+    "max_instances": 1,
+    "restart_policy": "on-failure",
+    "disabled": false
+  },
+  {
+    "id": "paddle-sandbox-ro",
+    "name": "Paddle Sandbox (read-only)",
+    "description": "Paddle billing sandbox (read-only).",
+    "category": "cloud",
+    "tags": [
+      "billing",
+      "paddle"
+    ],
+    "auth": "api-key",
+    "transport": "stdio",
+    "command": "/usr/bin/env",
+    "args": [
+      "PADDLE_ENVIRONMENT=sandbox",
+      "PADDLE_MCP_TOOLS=read-only",
+      "npx",
+      "-y",
+      "@paddle/paddle-mcp"
+    ],
+    "url": null,
+    "tool_namespace": "paddle_sandbox_ro",
+    "discovery": "dynamic",
+    "idle_timeout_sec": 300,
+    "max_instances": 1,
+    "restart_policy": "on-failure",
+    "disabled": true
+  },
+  {
+    "id": "paddle-sandbox",
+    "name": "Paddle Sandbox (read+write)",
+    "description": "Paddle billing sandbox (read+write).",
+    "category": "cloud",
+    "tags": [
+      "billing",
+      "paddle"
+    ],
+    "auth": "api-key",
+    "transport": "stdio",
+    "command": "/usr/bin/env",
+    "args": [
+      "PADDLE_ENVIRONMENT=sandbox",
+      "PADDLE_MCP_TOOLS=all",
+      "npx",
+      "-y",
+      "@paddle/paddle-mcp"
+    ],
+    "url": null,
+    "tool_namespace": "paddle_sandbox",
+    "discovery": "dynamic",
+    "idle_timeout_sec": 300,
+    "max_instances": 1,
+    "restart_policy": "on-failure",
+    "disabled": true
+  },
+  {
+    "id": "paddle-prod-ro",
+    "name": "Paddle Production (read-only)",
+    "description": "Paddle billing production (read-only).",
+    "category": "cloud",
+    "tags": [
+      "billing",
+      "paddle"
+    ],
+    "auth": "api-key",
+    "transport": "stdio",
+    "command": "/usr/bin/env",
+    "args": [
+      "PADDLE_ENVIRONMENT=production",
+      "PADDLE_MCP_TOOLS=read-only",
+      "npx",
+      "-y",
+      "@paddle/paddle-mcp"
+    ],
+    "url": null,
+    "tool_namespace": "paddle_prod_ro",
+    "discovery": "dynamic",
+    "idle_timeout_sec": 300,
+    "max_instances": 1,
+    "restart_policy": "on-failure",
+    "disabled": true
+  },
+  {
+    "id": "paddle-prod",
+    "name": "Paddle Production (read+write, destructive)",
+    "description": "Paddle billing production (read+write, destructive).",
+    "category": "cloud",
+    "tags": [
+      "billing",
+      "paddle"
+    ],
+    "auth": "api-key",
+    "transport": "stdio",
+    "command": "/usr/bin/env",
+    "args": [
+      "PADDLE_ENVIRONMENT=production",
+      "PADDLE_MCP_TOOLS=all",
+      "npx",
+      "-y",
+      "@paddle/paddle-mcp"
+    ],
+    "url": null,
+    "tool_namespace": "paddle_prod",
+    "discovery": "dynamic",
+    "idle_timeout_sec": 300,
+    "max_instances": 1,
+    "restart_policy": "on-failure",
+    "disabled": true
+  },
+  {
+    "id": "mcplexer",
+    "name": "MCPlexer Control",
+    "description": "Self-CRUD over MCP (admin only).",
+    "category": "core",
+    "tags": [
+      "admin"
+    ],
+    "auth": "none",
+    "transport": "internal",
+    "command": "",
+    "args": null,
+    "url": null,
+    "tool_namespace": "mcplexer",
+    "discovery": "static",
+    "idle_timeout_sec": 0,
+    "max_instances": 1,
+    "restart_policy": "",
+    "disabled": false
+  },
+  {
+    "id": "mcpx-builtin",
+    "name": "MCPlexer Built-in Tools",
+    "description": "Built-in MCPlexer tools.",
+    "category": "core",
+    "tags": [
+      "admin"
+    ],
+    "auth": "none",
+    "transport": "internal",
+    "command": "",
+    "args": null,
+    "url": null,
+    "tool_namespace": "mcpx",
+    "discovery": "static",
+    "idle_timeout_sec": 0,
+    "max_instances": 1,
+    "restart_policy": "",
+    "disabled": false
+  },
+  {
+    "id": "mesh-builtin",
+    "name": "Agent Mesh",
+    "description": "Inter-agent mesh messaging.",
+    "category": "core",
+    "tags": [
+      "mesh"
+    ],
+    "auth": "none",
+    "transport": "internal",
+    "command": "",
+    "args": null,
+    "url": null,
+    "tool_namespace": "mesh",
+    "discovery": "static",
+    "idle_timeout_sec": 0,
+    "max_instances": 1,
+    "restart_policy": "",
+    "disabled": false
+  },
+  {
+    "id": "telegram",
+    "name": "Telegram",
+    "description": "Telegram chat bridge.",
+    "category": "comms",
+    "tags": [
+      "chat",
+      "telegram"
+    ],
+    "auth": "config",
+    "transport": "internal",
+    "command": "",
+    "args": null,
+    "url": null,
+    "tool_namespace": "telegram",
+    "discovery": "static",
+    "idle_timeout_sec": 0,
+    "max_instances": 1,
+    "restart_policy": "",
+    "disabled": false
+  },
+  {
+    "id": "lmstudio",
+    "name": "LM Studio (local models)",
+    "description": "Local model inference via LM Studio.",
+    "category": "core",
+    "tags": [
+      "llm",
+      "local"
+    ],
+    "auth": "none",
+    "transport": "internal",
+    "command": "",
+    "args": null,
+    "url": null,
+    "tool_namespace": "lmstudio",
+    "discovery": "static",
+    "idle_timeout_sec": 0,
+    "max_instances": 1,
+    "restart_policy": "",
+    "disabled": false
+  },
+  {
+    "id": "secret-builtin",
+    "name": "Ephemeral Secret Prompts",
+    "description": "Ephemeral secret prompt handling.",
+    "category": "core",
+    "tags": [
+      "secrets"
+    ],
+    "auth": "none",
+    "transport": "internal",
+    "command": "",
+    "args": null,
+    "url": null,
+    "tool_namespace": "secret",
+    "discovery": "static",
+    "idle_timeout_sec": 0,
+    "max_instances": 1,
+    "restart_policy": "",
+    "disabled": false
+  },
+  {
+    "id": "email-builtin",
+    "name": "Agent Email (SES, send-only)",
+    "description": "Agent email sending via SES.",
+    "category": "comms",
+    "tags": [
+      "email"
+    ],
+    "auth": "none",
+    "transport": "internal",
+    "command": "",
+    "args": null,
+    "url": null,
+    "tool_namespace": "email",
+    "discovery": "static",
+    "idle_timeout_sec": 0,
+    "max_instances": 1,
+    "restart_policy": "",
+    "disabled": false
+  },
+  {
+    "id": "memory-builtin",
+    "name": "Universal Memory (cross-harness facts + notes)",
+    "description": "Cross-harness persistent memory.",
+    "category": "core",
+    "tags": [
+      "memory"
+    ],
+    "auth": "none",
+    "transport": "internal",
+    "command": "",
+    "args": null,
+    "url": null,
+    "tool_namespace": "memory",
+    "discovery": "static",
+    "idle_timeout_sec": 0,
+    "max_instances": 1,
+    "restart_policy": "",
+    "disabled": false
+  },
+  {
+    "id": "task-builtin",
+    "name": "Universal Tasks (per-workspace operational primitive)",
+    "description": "Per-workspace task tracking.",
+    "category": "core",
+    "tags": [
+      "tasks"
+    ],
+    "auth": "none",
+    "transport": "internal",
+    "command": "",
+    "args": null,
+    "url": null,
+    "tool_namespace": "task",
+    "discovery": "static",
+    "idle_timeout_sec": 0,
+    "max_instances": 1,
+    "restart_policy": "",
+    "disabled": false
+  },
+  {
+    "id": "skill-builtin",
+    "name": "Skill Telemetry",
+    "description": "Skill run telemetry.",
+    "category": "core",
+    "tags": [
+      "skills"
+    ],
+    "auth": "none",
+    "transport": "internal",
+    "command": "",
+    "args": null,
+    "url": null,
+    "tool_namespace": "skill",
+    "discovery": "static",
+    "idle_timeout_sec": 0,
+    "max_instances": 1,
+    "restart_policy": "",
+    "disabled": false
+  },
+  {
+    "id": "brain-builtin",
+    "name": "Brain (agent-facing knowledge base)",
+    "description": "Agent-facing knowledge base.",
+    "category": "core",
+    "tags": [
+      "brain",
+      "knowledge"
+    ],
+    "auth": "none",
+    "transport": "internal",
+    "command": "",
+    "args": null,
+    "url": null,
+    "tool_namespace": "brain",
+    "discovery": "static",
+    "idle_timeout_sec": 0,
+    "max_instances": 1,
+    "restart_policy": "",
+    "disabled": false
+  },
+  {
+    "id": "excalidraw",
+    "name": "Excalidraw",
+    "description": "Excalidraw whiteboard MCP.",
+    "category": "dev",
+    "tags": [
+      "whiteboard",
+      "design"
+    ],
+    "auth": "none",
+    "transport": "http",
+    "command": "",
+    "args": null,
+    "url": "https://mcp.excalidraw.com/mcp",
+    "tool_namespace": "excalidraw",
+    "discovery": "dynamic",
+    "idle_timeout_sec": 300,
+    "max_instances": 1,
+    "restart_policy": "on-failure",
+    "disabled": false
+  }
+]

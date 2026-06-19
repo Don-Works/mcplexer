@@ -1,0 +1,42 @@
+name: Install test
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "cmd/mcplexer/**"
+      - "internal/install/**"
+      - "internal/api/**"
+      - "scripts/test-install.sh"
+      - "scripts/preflight.sh"
+      - "go.mod"
+      - "go.sum"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  install-test:
+    name: install-${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install test
+        run: bash scripts/test-install.sh

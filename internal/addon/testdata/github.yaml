@@ -1,0 +1,182 @@
+# GitHub REST API (subset) — representative of large complex specs.
+# Trimmed from the official api.github.com OpenAPI description so the test
+# stays readable. Exercises bearer auth, deep paths, mixed verb tables, and
+# operationId duplication across resources.
+openapi: 3.0.3
+info:
+  title: GitHub
+  description: GitHub REST API (subset for addon import tests).
+  version: '1.1.4'
+servers:
+  - url: https://api.github.com
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+security:
+  - bearerAuth: []
+paths:
+  /user:
+    get:
+      operationId: users/get-authenticated
+      summary: Get the authenticated user
+      responses:
+        '200':
+          description: ok
+  /user/repos:
+    get:
+      operationId: repos/list-for-authenticated-user
+      summary: List repositories for the authenticated user
+      parameters:
+        - name: visibility
+          in: query
+          schema: { type: string }
+        - name: sort
+          in: query
+          schema: { type: string }
+        - name: per_page
+          in: query
+          schema: { type: integer }
+        - name: page
+          in: query
+          schema: { type: integer }
+      responses:
+        '200': { description: ok }
+    post:
+      operationId: repos/create-for-authenticated-user
+      summary: Create a repository for the authenticated user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string }
+                description: { type: string }
+                private: { type: boolean }
+                has_issues: { type: boolean }
+      responses:
+        '201': { description: created }
+  /repos/{owner}/{repo}:
+    get:
+      operationId: repos/get
+      summary: Get a repository
+      parameters:
+        - name: owner
+          in: path
+          required: true
+          schema: { type: string }
+        - name: repo
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: ok }
+    delete:
+      operationId: repos/delete
+      summary: Delete a repository
+      parameters:
+        - name: owner
+          in: path
+          required: true
+          schema: { type: string }
+        - name: repo
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '204': { description: deleted }
+  /repos/{owner}/{repo}/issues:
+    get:
+      operationId: issues/list-for-repo
+      summary: List repository issues
+      parameters:
+        - name: owner
+          in: path
+          required: true
+          schema: { type: string }
+        - name: repo
+          in: path
+          required: true
+          schema: { type: string }
+        - name: state
+          in: query
+          schema: { type: string }
+        - name: labels
+          in: query
+          schema: { type: string }
+      responses:
+        '200': { description: ok }
+    post:
+      operationId: issues/create
+      summary: Create an issue
+      parameters:
+        - name: owner
+          in: path
+          required: true
+          schema: { type: string }
+        - name: repo
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title]
+              properties:
+                title: { type: string }
+                body: { type: string }
+                assignee: { type: string }
+      responses:
+        '201': { description: created }
+  /repos/{owner}/{repo}/issues/{issue_number}:
+    patch:
+      operationId: issues/update
+      summary: Update an issue
+      parameters:
+        - name: owner
+          in: path
+          required: true
+          schema: { type: string }
+        - name: repo
+          in: path
+          required: true
+          schema: { type: string }
+        - name: issue_number
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title: { type: string }
+                state: { type: string }
+      responses:
+        '200': { description: ok }
+  /search/repositories:
+    get:
+      operationId: search/repos
+      summary: Search repositories
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema: { type: string }
+        - name: sort
+          in: query
+          schema: { type: string }
+        - name: order
+          in: query
+          schema: { type: string }
+      responses:
+        '200': { description: ok }

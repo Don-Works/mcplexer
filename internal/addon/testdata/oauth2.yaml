@@ -1,0 +1,29 @@
+# OAuth2 spec — should produce auth.kind="oauth2_pending" so the OAuth wizard
+# can take over.
+openapi: 3.0.3
+info:
+  title: OAuth API
+  description: OAuth2 only.
+  version: '0.1.0'
+servers:
+  - url: https://oauth.example.com
+components:
+  securitySchemes:
+    oauth2:
+      type: oauth2
+      flows:
+        authorizationCode:
+          authorizationUrl: https://oauth.example.com/authorize
+          tokenUrl: https://oauth.example.com/token
+          scopes:
+            read: read
+            write: write
+security:
+  - oauth2: [read]
+paths:
+  /me:
+    get:
+      operationId: getMe
+      summary: Get current user
+      responses:
+        '200': { description: ok }

@@ -1,0 +1,437 @@
+# feature_manifest.yaml — the canonical list of shipped mcplexer surfaces
+# the e2e suite is responsible for verifying. Read by scenario_manifest_
+# coverage (see scenario_manifest_coverage.sh) to gate the run: any
+# feature with zero matching scenario function FAILs the build.
+#
+# Format (deliberately yq-free; awk-parseable):
+#
+#   features:
+#     - id: <stable.dotted.id>
+#       surface: <rest|mcp_tool|mesh_kind|scheduler|ui_route|secret_type|cli|sandbox>
+#       owner: <epic id or 'core'>
+#       scenario_functions: [<bash function names>]
+#
+# Adding a feature?
+#   1. Bump this file with the entry.
+#   2. Add a scenario function (in scenarios.sh or a sourced scenario_*.sh)
+#      whose name appears in scenario_functions.
+#   3. Run `make test-integration` — the coverage step will accept it.
+#
+# Removing a feature? Delete the row. The coverage step doesn't enforce
+# the inverse (orphan scenario functions are allowed, since you may keep
+# a regression test for a feature that's been removed).
+#
+# Seeded with the surfaces visible in scenarios.sh main() as of 2026-05-27.
+# This is intentionally NOT exhaustive yet — A3 ships the gate + a baseline;
+# follow-on tasks under epic 01KSK91Q4W8TNED9MAF0CTRVKC backfill the
+# manifest as new features land.
+
+features:
+
+  # ---- Core REST surface --------------------------------------------------
+  - id: rest.health.basic
+    surface: rest
+    owner: core
+    scenario_functions: [scenario_health, scenario_health_detail]
+
+  - id: rest.workspaces.lifecycle
+    surface: rest
+    owner: core
+    scenario_functions: [scenario_provision, scenario_workspaces_lifecycle]
+
+  - id: rest.auth_scopes.crud
+    surface: rest
+    owner: core
+    scenario_functions: [scenario_provision, scenario_auth_scopes_list]
+
+  - id: rest.downstream.crud
+    surface: rest
+    owner: core
+    scenario_functions: [scenario_downstream_crud]
+
+  - id: rest.routes.crud
+    surface: rest
+    owner: core
+    scenario_functions: [scenario_routes_crud]
+
+  - id: rest.settings.get_put
+    surface: rest
+    owner: core
+    scenario_functions: [scenario_settings_get_put]
+
+  - id: rest.cache.endpoints
+    surface: rest
+    owner: core
+    scenario_functions: [scenario_cache_endpoints]
+
+  - id: rest.dashboard.summary
+    surface: rest
+    owner: core
+    scenario_functions: [scenario_dashboard]
+
+  - id: rest.notifications.queue
+    surface: rest
+    owner: core
+    scenario_functions: [scenario_notifications]
+
+  - id: rest.audit.pagination
+    surface: rest
+    owner: core
+    scenario_functions: [scenario_audit, scenario_audit_pagination]
+
+  - id: rest.audit.redaction
+    surface: rest
+    owner: core
+    scenario_functions: [scenario_audit_redaction]
+
+  - id: rest.named_devices
+    surface: rest
+    owner: core
+    scenario_functions: [scenario_named_devices]
+
+  - id: rest.tools.endpoint
+    surface: rest
+    owner: core
+    scenario_functions: [scenario_tools_endpoint]
+
+  - id: rest.backups.endpoint
+    surface: rest
+    owner: core
+    scenario_functions: [scenario_backups]
+
+  - id: rest.guards.inventory
+    surface: rest
+    owner: core
+    scenario_functions: [scenario_guards_inventory]
+
+  - id: rest.auth.gate
+    surface: rest
+    owner: core
+    scenario_functions: [scenario_auth_gate]
+
+  - id: rest.code_mode.execute
+    surface: rest
+    owner: core
+    scenario_functions: [scenario_code_mode]
+
+  - id: rest.search_tools
+    surface: rest
+    owner: core
+    scenario_functions: [scenario_search_tools]
+
+  # ---- Mesh surface -------------------------------------------------------
+  - id: mesh.kind.finding
+    surface: mesh_kind
+    owner: core
+    scenario_functions: [scenario_mesh_send]
+
+  - id: mesh.send.direct
+    surface: rest
+    owner: core
+    scenario_functions: [scenario_mesh_send]
+
+  - id: mesh.agents.directory
+    surface: rest
+    owner: core
+    scenario_functions: [scenario_mesh_agents_directory]
+
+  - id: mesh.list_queue
+    surface: rest
+    owner: core
+    scenario_functions: [scenario_mesh_list_queue]
+
+  - id: mesh.trigger.tag
+    surface: scheduler
+    owner: core
+    scenario_functions: [scenario_mesh_trigger_tag]
+
+  - id: mesh.trigger.kind
+    surface: scheduler
+    owner: core
+    scenario_functions: [scenario_mesh_trigger_kind]
+
+  - id: mesh.trigger.regex
+    surface: scheduler
+    owner: core
+    scenario_functions: [scenario_mesh_trigger_regex]
+
+  - id: mesh.trigger.throttle
+    surface: scheduler
+    owner: core
+    scenario_functions: [scenario_mesh_trigger_throttle]
+
+  - id: mesh.trigger.unauthorized
+    surface: scheduler
+    owner: core
+    scenario_functions: [scenario_mesh_trigger_unauthorized]
+
+  # ---- P2P / pairing ------------------------------------------------------
+  - id: p2p.identity
+    surface: rest
+    owner: core
+    scenario_functions: [scenario_p2p_identity]
+
+  - id: p2p.pair.handshake
+    surface: rest
+    owner: core
+    scenario_functions: [scenario_pairing]
+
+  - id: p2p.pair.same_user_auto_grant
+    surface: rest
+    owner: "01KSK91Q4W8TNED9MAF0CTRVKC"
+    scenario_functions: [scenario_tier1_same_user_pair, pair_same_user]
+
+  - id: p2p.pair.cross_user_no_auto_grant
+    surface: rest
+    owner: "01KSK91Q4W8TNED9MAF0CTRVKC"
+    scenario_functions: [scenario_tier2_same_org_pair, pair_same_org]
+
+  - id: p2p.pair.cross_org_boundary
+    surface: rest
+    owner: "01KSK91Q4W8TNED9MAF0CTRVKC"
+    scenario_functions: [scenario_tier3_cross_org_pair, pair_cross_org]
+
+  # ---- Skill registry -----------------------------------------------------
+  - id: skills.publish
+    surface: rest
+    owner: core
+    scenario_functions: [scenario_skill_publish_request]
+
+  - id: skills.share.grant
+    surface: rest
+    owner: core
+    scenario_functions: [scenario_skill_share_grant]
+
+  - id: skills.share.unauthorized
+    surface: rest
+    owner: core
+    scenario_functions: [scenario_skill_share_unauthorized]
+
+  - id: skills.share.authorized_nonexistent
+    surface: rest
+    owner: core
+    scenario_functions: [scenario_skill_share_authorized_nonexistent]
+
+  - id: skills.search
+    surface: rest
+    owner: core
+    scenario_functions: [scenario_skill_search]
+
+  - id: skills.bundles.tarball
+    surface: rest
+    owner: "01KSK91Q4W8TNED9MAF0CTRVKC"
+    scenario_functions: [scenario_skill_bundles]
+
+  # ---- Workers ------------------------------------------------------------
+  - id: workers.run_now
+    surface: rest
+    owner: core
+    scenario_functions: [scenario_worker_run]
+
+  - id: workers.templates.crud
+    surface: rest
+    owner: core
+    scenario_functions: [scenario_worker_templates]
+
+  - id: workers.approvals
+    surface: rest
+    owner: core
+    scenario_functions: [scenario_worker_approvals]
+
+  - id: workers.adapter.claude_cli
+    surface: cli
+    owner: "01KSK91Q4W8TNED9MAF0CTRVKC"
+    scenario_functions: [scenario_worker_adapters_claude_cli]
+
+  - id: workers.adapter.opencode_cli
+    surface: cli
+    owner: "01KSK91Q4W8TNED9MAF0CTRVKC"
+    scenario_functions: [scenario_worker_adapters_opencode_cli]
+
+  - id: workers.adapter.grok_cli
+    surface: cli
+    owner: "01KSK91Q4W8TNED9MAF0CTRVKC"
+    scenario_functions: [scenario_worker_adapters_grok_cli]
+
+  - id: workers.sandbox.protected_paths
+    surface: sandbox
+    owner: "01KSK91Q4W8TNED9MAF0CTRVKC"
+    scenario_functions: [scenario_worker_adapters_sandbox]
+
+  # ---- Memory -------------------------------------------------------------
+  - id: memory.save_recall
+    surface: rest
+    owner: core
+    scenario_functions: [scenario_memory_save_recall]
+
+  - id: memory.list_filter
+    surface: rest
+    owner: core
+    scenario_functions: [scenario_memory_list_filter]
+
+  - id: memory.supersede
+    surface: rest
+    owner: core
+    scenario_functions: [scenario_memory_supersede]
+
+  - id: memory.forget_by_source
+    surface: rest
+    owner: core
+    scenario_functions: [scenario_memory_forget_by_source]
+
+  - id: memory.audit
+    surface: rest
+    owner: core
+    scenario_functions: [scenario_memory_audit]
+
+  - id: memory.cross_peer_share
+    surface: rest
+    owner: core
+    scenario_functions: [scenario_memory_cross_peer_share]
+
+  - id: memory.cross_peer_unauthorized
+    surface: rest
+    owner: core
+    scenario_functions: [scenario_memory_unauthorized_share]
+
+  - id: memory.consolidator
+    surface: rest
+    owner: "01KSK91Q4W8TNED9MAF0CTRVKC"
+    scenario_functions: [scenario_memory_consolidator]
+
+  - id: memory.hybrid_search_quality
+    surface: rest
+    owner: "01KSK91Q4W8TNED9MAF0CTRVKC"
+    scenario_functions: [scenario_memory_deep_hybrid_search]
+
+  - id: memory.scope_isolation_tiers
+    surface: rest
+    owner: "01KSK91Q4W8TNED9MAF0CTRVKC"
+    scenario_functions: [scenario_memory_deep_scope_isolation]
+
+  - id: memory.stress_10k
+    surface: rest
+    owner: "01KSK91Q4W8TNED9MAF0CTRVKC"
+    scenario_functions: [scenario_memory_deep_stress]
+
+  - id: memory.contextual_recall
+    surface: rest
+    owner: "01KSK91Q4W8TNED9MAF0CTRVKC"
+    scenario_functions: [scenario_memory_deep_contextual]
+
+  # ---- Tasks --------------------------------------------------------------
+  - id: tasks.crud.local
+    surface: rest
+    owner: core
+    scenario_functions: [scenario_tasks_local_crud]
+
+  - id: tasks.terminal_states
+    surface: rest
+    owner: core
+    scenario_functions: [scenario_tasks_update_terminal]
+
+  - id: tasks.notes
+    surface: rest
+    owner: core
+    scenario_functions: [scenario_tasks_notes]
+
+  - id: tasks.claim
+    surface: rest
+    owner: core
+    scenario_functions: [scenario_tasks_claim]
+
+  - id: tasks.mesh_events
+    surface: rest
+    owner: core
+    scenario_functions: [scenario_tasks_mesh_events]
+
+  - id: tasks.cross_peer_share
+    surface: rest
+    owner: core
+    scenario_functions: [scenario_tasks_cross_peer_share]
+
+  - id: tasks.unauthorized_offer
+    surface: rest
+    owner: core
+    scenario_functions: [scenario_tasks_unauthorized_offer]
+
+  - id: tasks.consolidator
+    surface: rest
+    owner: core
+    scenario_functions: [scenario_tasks_consolidator]
+
+  - id: tasks.audit
+    surface: rest
+    owner: core
+    scenario_functions: [scenario_tasks_audit]
+
+  - id: tasks.attachments
+    surface: rest
+    owner: "01KSK91Q4W8TNED9MAF0CTRVKC"
+    scenario_functions: [scenario_task_attachments]
+
+  # ---- Approvals ----------------------------------------------------------
+  - id: approvals.rules.crud
+    surface: rest
+    owner: core
+    scenario_functions: [scenario_approval_rules_crud]
+
+  - id: approvals.queue
+    surface: rest
+    owner: core
+    scenario_functions: [scenario_approval_queue]
+
+  - id: approvals.consent_queue.tier_aware
+    surface: rest
+    owner: "01KSK91Q4W8TNED9MAF0CTRVKC"
+    scenario_functions: [scenario_consent_queue]
+
+  - id: approvals.consent_audit.accepted_by
+    surface: rest
+    owner: "01KSK91Q4W8TNED9MAF0CTRVKC"
+    scenario_functions: [scenario_consent_audit]
+
+  # ---- Concierge ----------------------------------------------------------
+  - id: concierge.self_improving_loop
+    surface: rest
+    owner: "01KSK91Q4W8TNED9MAF0CTRVKC"
+    scenario_functions: [scenario_concierge_self_improving]
+
+  # ---- Secrets ------------------------------------------------------------
+  - id: secrets.refs
+    surface: rest
+    owner: core
+    scenario_functions: [scenario_secret_refs]
+
+  # ---- Security guards ----------------------------------------------------
+  - id: security.cmdguard.protected_paths
+    surface: sandbox
+    owner: "01KSK91Q4W8TNED9MAF0CTRVKC"
+    scenario_functions: [scenario_cmdguard_db_lockdown]
+
+  # ---- Tier-matrix scenarios (B-group) ------------------------------------
+  - id: tier.matrix.same_user_silent_sharing
+    surface: rest
+    owner: "01KSK91Q4W8TNED9MAF0CTRVKC"
+    scenario_functions: [scenario_tier1_same_user]
+
+  - id: tier.matrix.same_org_explicit_grants
+    surface: rest
+    owner: "01KSK91Q4W8TNED9MAF0CTRVKC"
+    scenario_functions: [scenario_tier2_same_org]
+
+  - id: tier.matrix.cross_org_boundary
+    surface: rest
+    owner: "01KSK91Q4W8TNED9MAF0CTRVKC"
+    scenario_functions: [scenario_tier3_cross_org]
+
+  # ---- Downstream MCP integrations ----------------------------------------
+  - id: integrations.googlechat.surface
+    surface: rest
+    owner: core
+    scenario_functions: [scenario_googlechat_status]
+
+  - id: integrations.hammerspoon.surface
+    surface: rest
+    owner: core
+    scenario_functions: [scenario_hammerspoon_disabled_by_default]

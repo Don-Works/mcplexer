@@ -1,0 +1,27 @@
+version: "2"
+
+run:
+  build-tags:
+    - p2p
+
+linters:
+  default: none
+  enable:
+    - errcheck
+    - govet
+    - staticcheck
+    - unused
+    - ineffassign
+  settings:
+    errcheck:
+      check-type-assertions: false
+      check-blank: false
+  exclusions:
+    rules:
+      # Test files: defer Close() return values are universally ignored
+      - path: _test\.go
+        linters:
+          - errcheck
+
+output:
+  uniq-by-line: true

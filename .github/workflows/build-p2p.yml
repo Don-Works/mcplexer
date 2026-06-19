@@ -1,0 +1,73 @@
+name: Build (slim + p2p)
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build-${{ matrix.tag || 'slim' }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - tag: ""
+            output: bin/mcplexer
+            artifact: mcplexer-slim
+          - tag: "p2p"
+            output: bin/mcplexer-p2p
+            artifact: mcplexer-p2p
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build
+        env:
+          BUILD_TAG: ${{ matrix.tag }}
+          OUTPUT: ${{ matrix.output }}
+        run: |
+          mkdir -p bin
+          VERSION="$(git describe --tags --dirty --always --abbrev=12 2>/dev/null || echo dev)"
+          COMMIT="$(git rev-parse --short=12 HEAD 2>/dev/null || echo unknown)"
+          LDFLAGS="-X main.buildVersion=${VERSION} -X main.buildCommit=${COMMIT}"
+          if [ -n "$BUILD_TAG" ]; then
+            go build -tags "$BUILD_TAG" -ldflags "$LDFLAGS" -o "$OUTPUT" ./cmd/mcplexer
+          else
+            go build -ldflags "$LDFLAGS" -o "$OUTPUT" ./cmd/mcplexer
+          fi
+          ls -la "$OUTPUT"
+          du -h "$OUTPUT"
+
+      - name: Test (p2p package only)
+        env:
+          BUILD_TAG: ${{ matrix.tag }}
+        run: |
+          if [ -n "$BUILD_TAG" ]; then
+            go test -tags "$BUILD_TAG" ./internal/p2p/...
+          else
+            go test ./internal/p2p/...
+          fi
+
+      - name: Dead-code guard
+        run: sh scripts/check-deadcode.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}-${{ github.sha }}
+          path: ${{ matrix.output }}
+          if-no-files-found: error
+          retention-days: 7

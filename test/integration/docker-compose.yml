@@ -1,0 +1,182 @@
+# Five mcplexer nodes on a shared docker network exercising pairing, mesh,
+# skill sharing, worker runs, AND the trust-tier matrix (same-user multi-
+# machine / same-org different-user / cross-org). An `echo-llm` sidecar
+# speaks the OpenAI-compatible /v1/chat/completions surface so the worker
+# tests run without a real model provider.
+#
+# Node identity assignments (driven by MCPLEXER_SELF_USER_ID — daemons
+# with the same value auto-grant default scopes on pair):
+#
+#   node-a  user-alice  AcmeCo   (Tier 1 partner for node-b)
+#   node-b  user-alice  AcmeCo   (Tier 1 partner for node-a; SAME user)
+#   node-c  user-bob    AcmeCo   (Tier 2 — same org, different user)
+#   node-d  user-carol  BetaCo   (Tier 3 — different org)
+#   node-e  user-carol  BetaCo   (Tier 1 partner for node-d within BetaCo)
+#
+# "Org" is a TEST-SIDE LABEL only — the daemon itself doesn't model orgs
+# yet (see B3 / D6 in epic 01KSK91Q4W8TNED9MAF0CTRVKC for the gap).
+# tier_topology.sh exposes node_org() that reads from this static map.
+#
+# Host port mapping (23xxx avoids collisions with user daemons on 1333x):
+#   node-a → 23333    node-b → 23334    node-c → 23335
+#   node-d → 13336    node-e → 13337
+# Existing 3-node smoke tests reference NODE_A/B/C and continue to work.
+# The bulletproof tier matrix references NODE_D/E.
+
+name: mcplexer-test
+
+services:
+  # OpenAI-compatible echo server. The worker tests point an `openai_compat`
+  # worker at this and expect the run to land status=succeeded with a model
+  # response of "ok" so the smoke surface stays deterministic.
+  echo-llm:
+    build:
+      context: .
+      dockerfile: Dockerfile.echo-llm
+    networks:
+      - mcplexer-test
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
+      interval: 3s
+      timeout: 2s
+      retries: 10
+      start_period: 5s
+
+  node-a:
+    build:
+      context: ../..
+      dockerfile: test/integration/Dockerfile.mcplexer
+      cache_from:
+        - mcplexer-test:latest
+    image: mcplexer-test:latest
+    container_name: mcplexer-test-node-a
+    hostname: node-a
+    networks:
+      - mcplexer-test
+    ports:
+      - "13333:3333"
+    volumes:
+      - mcplexer-data-a:/data
+    environment:
+      MCPLEXER_LOG_LEVEL: info
+      MCPLEXER_SELF_USER_ID: user-alice
+      MCPLEXER_SELF_USER_DISPLAY_NAME: "Alice (AcmeCo, machine 1)"
+      GOOGLECHAT_DISABLE_JWT_VALIDATION: "true"
+      GOOGLECHAT_BOT_NAME: "users/999"
+    healthcheck:
+      test: ["CMD", "curl", "-fs", "http://localhost:3333/api/v1/health"]
+      interval: 3s
+      timeout: 2s
+      retries: 15
+      start_period: 5s
+    depends_on:
+      echo-llm:
+        condition: service_healthy
+
+  node-b:
+    image: mcplexer-test:latest
+    container_name: mcplexer-test-node-b
+    hostname: node-b
+    networks:
+      - mcplexer-test
+    ports:
+      - "23334:3333"
+    volumes:
+      - mcplexer-data-b:/data
+    environment:
+      MCPLEXER_LOG_LEVEL: info
+      MCPLEXER_SELF_USER_ID: user-alice
+      MCPLEXER_SELF_USER_DISPLAY_NAME: "Alice (AcmeCo, machine 2)"
+    healthcheck:
+      test: ["CMD", "curl", "-fs", "http://localhost:3333/api/v1/health"]
+      interval: 3s
+      timeout: 2s
+      retries: 15
+      start_period: 5s
+    depends_on:
+      node-a:
+        condition: service_healthy
+
+  node-c:
+    image: mcplexer-test:latest
+    container_name: mcplexer-test-node-c
+    hostname: node-c
+    networks:
+      - mcplexer-test
+    ports:
+      - "23335:3333"
+    volumes:
+      - mcplexer-data-c:/data
+    environment:
+      MCPLEXER_LOG_LEVEL: info
+      MCPLEXER_SELF_USER_ID: user-bob
+      MCPLEXER_SELF_USER_DISPLAY_NAME: "Bob (AcmeCo)"
+    healthcheck:
+      test: ["CMD", "curl", "-fs", "http://localhost:3333/api/v1/health"]
+      interval: 3s
+      timeout: 2s
+      retries: 15
+      start_period: 5s
+    depends_on:
+      node-a:
+        condition: service_healthy
+
+  node-d:
+    image: mcplexer-test:latest
+    container_name: mcplexer-test-node-d
+    hostname: node-d
+    networks:
+      - mcplexer-test
+    ports:
+      - "13336:3333"
+    volumes:
+      - mcplexer-data-d:/data
+    environment:
+      MCPLEXER_LOG_LEVEL: info
+      MCPLEXER_SELF_USER_ID: user-carol
+      MCPLEXER_SELF_USER_DISPLAY_NAME: "Carol (BetaCo, machine 1)"
+    healthcheck:
+      test: ["CMD", "curl", "-fs", "http://localhost:3333/api/v1/health"]
+      interval: 3s
+      timeout: 2s
+      retries: 15
+      start_period: 5s
+    depends_on:
+      node-a:
+        condition: service_healthy
+
+  node-e:
+    image: mcplexer-test:latest
+    container_name: mcplexer-test-node-e
+    hostname: node-e
+    networks:
+      - mcplexer-test
+    ports:
+      - "13337:3333"
+    volumes:
+      - mcplexer-data-e:/data
+    environment:
+      MCPLEXER_LOG_LEVEL: info
+      MCPLEXER_SELF_USER_ID: user-carol
+      MCPLEXER_SELF_USER_DISPLAY_NAME: "Carol (BetaCo, machine 2)"
+    healthcheck:
+      test: ["CMD", "curl", "-fs", "http://localhost:3333/api/v1/health"]
+      interval: 3s
+      timeout: 2s
+      retries: 15
+      start_period: 5s
+    depends_on:
+      node-a:
+        condition: service_healthy
+
+networks:
+  mcplexer-test:
+    name: mcplexer-test-net
+    driver: bridge
+
+volumes:
+  mcplexer-data-a:
+  mcplexer-data-b:
+  mcplexer-data-c:
+  mcplexer-data-d:
+  mcplexer-data-e:

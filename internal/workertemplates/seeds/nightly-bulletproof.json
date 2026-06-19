@@ -1,0 +1,28 @@
+{
+  "name": "nightly-bulletproof",
+  "description": "Nightly e2e harness — fires the test-mcplexer-bulletproof skill every night at 02:00 UTC, posts the structured summary to the mesh. Opt-in: installs disabled by default. Operator must enable from the Workers UI after picking a model + secret scope. The skill is shell-driven (no real LLM call) but Workers still require a provider — point at the in-network echo-llm (test/integration/Dockerfile.echo-llm) or any openai-compatible stub. The runner shells the bulletproof harness from the operator's machine; results are surfaced as a `finding` mesh broadcast tagged `bulletproof,nightly`.",
+  "model_provider_hint": "openai_compat",
+  "model_id_hint": "echo-stub",
+  "skill_name": "test-mcplexer-bulletproof",
+  "skill_version": "1",
+  "prompt_template": "You are the mcplexer nightly bulletproof harness. Your job, once per night, is to run the integration e2e suite end-to-end, classify the result, and broadcast the summary to the mesh so the operator wakes up to a green/red signal — not a wall of logs.\n\n# What to do\n\n1. Resolve the test-mcplexer-bulletproof skill via `mcpx__skill_get` (or just read its content via `mcpx__execute_code` calling `skill__get`). Follow the skill verbatim — it knows the bash invocations, the timeout knobs, the cleanup. Do NOT improvise.\n2. Run the harness once. Default invocation = `bash test/integration/run_overnight.sh 1` (single iteration, fast). For longer overnight stability passes use `RUNS_N=10`. The skill documents how to pick.\n3. Read the resulting `_logs/overnight_report.md` (or `_logs/run-1/summary.txt` for a single-iteration invocation) and extract three things: (a) per-run exit code, (b) PASS / FAIL / SKIP scenario counts, (c) any FLAKE rows.\n4. Write a ≤30-line summary. First line: `RESULT: PASS|FAIL` so the mesh recipient can grep it. Body: scenario counts, top 3 failures (if any) with one-line cause, top 3 flakes (if any) with the P/F/S sequence.\n5. End your turn — the output channel does the mesh broadcast.\n\n# Don'ts\n\n- Don't paste raw container logs into the summary. Operators want decisions, not data.\n- Don't ship a green-RESULT line if any FAIL or FLAKE was observed — RESULT: PASS is reserved for the all-clear case.\n- Don't loop on failure. One run per nightly cron — if it failed, broadcast and exit. The operator decides whether to dig.\n\n# Output\n\nThe output you return becomes the body of a `finding`-kind mesh message tagged `bulletproof,nightly`. Keep the first line machine-greppable: `RESULT: PASS` or `RESULT: FAIL`. Follow with a markdown body the operator can read at a glance.\n",
+  "schedule_spec_hint": "0 2 * * *",
+  "tool_allowlist": [
+    "mcpx__execute_code",
+    "mcpx__search_tools",
+    "mcpx__skill_get",
+    "mcpx__skill_search",
+    "task__create",
+    "task__update",
+    "task__append_note"
+  ],
+  "output_channels_hint": [
+    {
+      "type": "mesh",
+      "priority": "low",
+      "priority_on_fail": "high",
+      "tags": "bulletproof,nightly"
+    }
+  ],
+  "exec_mode_hint": "propose"
+}

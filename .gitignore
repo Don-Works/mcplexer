@@ -1,0 +1,73 @@
+# Binaries
+bin/
+/mcplexer
+*.exe
+
+# Go
+vendor/
+
+# Environment
+.env
+*.db
+data/
+!web/src/data/
+
+# Web UI
+web/node_modules/
+web/dist/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Age keys
+*.age
+*.key
+
+# MCPlexer runtime state / data dir: DB, secrets, api-key, logs, p2p, backups.
+# NEVER commit: contains plaintext api-key and at-rest secrets that the
+# *.key / *.db / *.age rules above DO NOT all cover, e.g. the extensionless api-key.
+.mcplexer/
+
+# Next.js
+.next/
+
+# Site
+site/node_modules/
+site/.next/
+site/out/
+
+# Generated collateral / skill artefacts
+output/
+web/config/
+
+# Internal planning / collateral config
+.planning/
+/config/
+
+# Local test artefacts
+*.mcskill
+/mcplexer-test
+/mcplexer-*
+
+# Local agent/runtime state
+.worktrees/
+.claude/
+.mimocode/
+.codex/
+.opencode/
+.gemini/
+
+# User-specific addon specs (not part of the public repo)
+addons/*.yaml
+
+# User-specific config / scratch files
+mcplexer.yaml
+todo.md
+*.mcskill

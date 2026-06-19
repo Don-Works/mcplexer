@@ -1,0 +1,43 @@
+# Synonym clusters for tool search.
+# Format: one cluster per line, comma-separated.
+# At query time the first hit triggers the entire cluster being OR'd in.
+# At index time every cluster member is appended to the searchable text of
+# any tool whose name or description already mentions one of them.
+#
+# Lines starting with '#' are comments. Blank lines are ignored.
+
+# Create / write verbs
+make,create,add,new,insert,register,raise,open,start,build,generate
+
+# Read / fetch verbs
+list,get,fetch,find,search,read,view,show,query,lookup
+
+# Update / modify verbs
+update,modify,edit,change,patch,set,rename,adjust,tweak
+
+# Delete / remove verbs
+delete,remove,destroy,drop,close,cancel,archive,clear,purge
+
+# Send / publish verbs
+send,post,publish,push,deliver,broadcast,announce,emit,dispatch
+
+# Domain: messaging
+message,chat,dm,im,thread,conversation,reply
+
+# Domain: tickets / issues
+issue,ticket,bug,task,story,defect,incident
+
+# Domain: customer / contact
+customer,client,contact,account,company,organization,org
+
+# Domain: invoice / billing
+invoice,bill,charge,payment,receipt
+
+# Domain: file / document
+file,document,doc,attachment,upload,blob
+
+# Domain: calendar / events
+event,meeting,appointment,booking,schedule
+
+# Domain: code / repo
+repo,repository,project,codebase,commit,branch,pull,merge
