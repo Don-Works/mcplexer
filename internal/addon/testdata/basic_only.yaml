@@ -1,0 +1,22 @@
+# Spec where the only declared security is HTTP Basic — must be rejected.
+openapi: 3.0.3
+info:
+  title: BasicOnly API
+  description: Demonstrates HTTP Basic-only auth which is unsupported.
+  version: '0.1.0'
+servers:
+  - url: https://example.com
+components:
+  securitySchemes:
+    basicAuth:
+      type: http
+      scheme: basic
+security:
+  - basicAuth: []
+paths:
+  /ping:
+    get:
+      operationId: ping
+      summary: Ping
+      responses:
+        '200': { description: ok }

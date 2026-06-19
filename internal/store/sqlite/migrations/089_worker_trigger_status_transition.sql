@@ -1,0 +1,17 @@
+-- 089_worker_trigger_status_transition.sql
+--
+-- Status-transition-driven worker dispatch. Adds status_from_match /
+-- status_to_match to worker_mesh_triggers so a trigger can AND on "this is
+-- a status_changed event AND the new status is `review`" (the existing
+-- tag_match is OR-only and can't express it).
+--
+-- NO-OP MARKER (deliberate): the two columns are added by the Go-side
+-- self-heal invariant ensureWorkerMeshTriggerStatusCols (migrate.go), NOT
+-- here. SQLite's `ALTER TABLE ... ADD COLUMN` has no IF NOT EXISTS form, so
+-- a bare ADD here would crash the migration on any DB that already carries
+-- the columns at a schema_version < 89 (branch swaps, partially-restored
+-- backups, a self-heal that ran before this file existed). Mirroring the
+-- migration-024 + ensureP2PConnectionMode pattern, this file only bumps
+-- schema_version to 89; the invariant — which runs on every boot and adds
+-- each column only when missing — is the single, idempotent source of the
+-- DDL. See ensureWorkerMeshTriggerStatusCols.

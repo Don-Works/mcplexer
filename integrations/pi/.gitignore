@@ -1,0 +1,9 @@
+node_modules/
+*.tsbuildinfo
+.DS_Store
+
+# The repo-root .gitignore excludes every `bin/` directory (Go build output).
+# Our bin/ holds the load-bearing mcpx-shim.mjs source, not build artifacts —
+# re-include it so the package is complete when checked out.
+!bin/
+!bin/mcpx-shim.mjs

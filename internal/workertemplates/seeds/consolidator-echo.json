@@ -1,0 +1,16 @@
+{
+  "name": "consolidator-echo",
+  "description": "Echo-LLM-backed memory consolidator for the integration harness. Points at the in-cluster echo-llm (test/integration/echo-llm.go) so scenario_memory_consolidator (D2) and D7.4 stress can exercise the consolidator's plumbing end-to-end without needing a real model API key. The echo-llm's `consolidate-mode` returns a deterministic merged digest (concatenated input messages with a 'MERGED: ' prefix) so graders can assert >=20% reduction + recall@5 in CI. NOT for production — the consolidations it produces are not semantically meaningful. Production installs use the `memory-consolidator` template instead (claude_cli-backed).",
+  "model_provider_hint": "openai_compat",
+  "model_id_hint": "echo-stub",
+  "prompt_template": "You are mcplexer's memory consolidator running in the integration harness. Your job is to consolidate the workspace memory using the in-cluster echo-llm. The harness's grading depends on you exercising memory__save + memory__invalidate so the plumbing (audit row, mesh broadcast, run accounting) lights up.\n\n# What to do\n\n1. Call `memory__list` with kind=note. Cap with limit=50.\n2. For every two notes returned, write ONE consolidated note via `memory__save` (kind=note). The body can be the echo-llm output verbatim — semantic quality is not graded in echo-mode; plumbing is.\n3. Call `memory__invalidate` on each consumed original id with superseded_by_id pointing at your new note. NEVER `memory__forget`.\n4. End your turn after the last tool call.\n\n# Don'ts\n\n- Don't touch `kind=fact` rows.\n- Don't consolidate across pinned memories.\n- Don't loop — one pass per run, the scheduler handles re-runs.\n\n# Output\n\nNo human-facing output required. The memory__consolidator_run audit row + Tier-1 mesh broadcast carry the lifecycle signal the harness reads.",
+  "schedule_spec_hint": "0 3 * * *",
+  "tool_allowlist": [
+    "memory__list",
+    "memory__get",
+    "memory__save",
+    "memory__recall",
+    "memory__invalidate"
+  ],
+  "exec_mode_hint": "autonomous"
+}

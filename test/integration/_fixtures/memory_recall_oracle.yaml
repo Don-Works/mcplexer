@@ -1,0 +1,521 @@
+# memory_recall_oracle.yaml — ground-truth fixture for D7 (memory deep-dive).
+#
+# Each `seed_memories` row gets POST /api/v1/memory'd ONCE before queries
+# run. Names must be globally-unique (the scenario uses them as primary
+# identifiers when grading). Content is the haystack; query is the needle.
+#
+# Per-query fields:
+#   id            — stable handle for the per-query miss list
+#   query         — natural-language string fed to /api/v1/memory/search
+#   expected_top  — `name` of the seed that should rank #1
+#                   (recall@1 grade); the scenario relaxes to recall@5.
+#   accept        — optional list of additional seed names that are
+#                   considered "right enough" if surfaced (ambiguous queries).
+#   category      — keyword_strong | semantic_paraphrase | ambiguous |
+#                   contextual | pure_semantic
+#                   pure_semantic queries SKIP without an embedder
+#                   (the docker rig is FTS5-only).
+#   requires_embedder — bool; when true the query is excluded from FTS5
+#                   recall@k grading and surfaced as a separate report row.
+#   rationale     — short note for the grade report.
+#
+# Why this shape works under FTS5-only:
+#   FTS5 with bag-of-words OR ftsExpr matches any single term, so as
+#   long as the paraphrase shares ≥1 content word with the seed, the
+#   row is reachable. Pure-semantic rows that share zero terms are
+#   correctly marked requires_embedder.
+
+seed_memories:
+
+  # ---------- programming / deployment lore -----------------------------
+
+  - name: deploy-hygiene
+    kind: fact
+    tags: [deploy, hygiene]
+    content: |
+      Before any make deploy, the working tree must be clean and HEAD
+      must equal origin/main. Stash anything you don't want to ship;
+      pull --rebase; only then run make deploy.
+
+  - name: amend-anti-pattern
+    kind: fact
+    tags: [deploy, git]
+    content: |
+      Never amend or rebase commits that are already deployed.
+      Roll forward with a new commit instead — amending rewrites
+      history that ops has already traced to a build hash.
+
+  - name: secrets-no-commit
+    kind: fact
+    tags: [security, git]
+    content: |
+      Never commit secrets like .env files, API keys, or tokens to
+      git. Hardcoded credentials in source files are a hard rule.
+
+  - name: db-lockdown
+    kind: fact
+    tags: [security, mcplexer]
+    content: |
+      The mcplexer SQLite database under ~/.mcplexer/mcplexer.db is
+      off-limits to AI tool calls — blocked at the harness denylist,
+      a PreToolUse hook, and the gateway cmdguard. Bypassing the
+      gateway defeats audit and approval gates.
+
+  - name: idempotent-go-style
+    kind: fact
+    tags: [go, style]
+    content: |
+      Go code in this repo follows idiomatic style: explicit error
+      handling, table-driven tests, max 300 lines per file, max
+      50 lines per function.
+
+  - name: typescript-strict
+    kind: fact
+    tags: [typescript, style]
+    content: |
+      TypeScript files use strict mode, functional components, and
+      never the `any` type. Run tsc -- noEmit before commit.
+
+  # ---------- workers / mcplexer architecture ---------------------------
+
+  - name: workers-claude-cli-optin
+    kind: fact
+    tags: [workers, security]
+    content: |
+      The claude_cli, opencode_cli, grok_cli, and mimo_cli worker providers are opt-in via
+      MCPLEXER_ALLOW_CLAUDE_CLI=1 / MCPLEXER_ALLOW_OPENCODE_CLI=1 /
+      MCPLEXER_ALLOW_GROK_CLI=1 / MCPLEXER_ALLOW_MIMO_CLI=1. They currently run with NetworkHost
+      (unrestricted egress).
+
+  - name: workers-sandbox-write-deny
+    kind: fact
+    tags: [workers, security]
+    content: |
+      The worker sandbox profile denies writes to ~/.claude/ and
+      ~/.mcplexer/ while leaving reads open so OAuth login works.
+      A prompt injection that talks the agent into installing a
+      malicious PreToolUse hook is blocked at the sandbox layer.
+
+  - name: slim-tool-surface
+    kind: fact
+    tags: [mcplexer, mcp]
+    content: |
+      Mcplexer exposes only 4 entrypoints on tools/list by default —
+      mcpx__execute_code, mcpx__search_tools, secret__prompt, and
+      secret__list_refs. Everything else lives behind code mode to
+      save ~22k tokens per session.
+
+  - name: mcpx-code-mode
+    kind: fact
+    tags: [mcplexer, mcp]
+    content: |
+      Downstream tools are called via JS inside mcpx__execute_code.
+      The pattern is namespace.tool(args). Results auto-unwrap from
+      the MCP envelope so you read result.id directly.
+
+  # ---------- tasks vocabulary + lifecycle ------------------------------
+
+  - name: tasks-over-harness
+    kind: fact
+    tags: [tasks, mcplexer]
+    content: |
+      Prefer task__create over the harness's built-in TaskCreate.
+      Harness tasks are session-local and vanish at session end —
+      useless for handoffs, audit, dashboard visibility, or
+      mesh-replication.
+
+  - name: tasks-touches-files
+    kind: fact
+    tags: [tasks, coordination]
+    content: |
+      Before non-trivial work, declare touches_files in meta on the
+      task. The gateway returns coordination_warnings if another
+      in-progress task already declared an overlapping path.
+
+  - name: tasks-lease-not-dead
+    kind: fact
+    tags: [tasks, leases]
+    content: |
+      lease_expired in a task's status_history is just a missed
+      heartbeat — not evidence the work stopped. Re-check the
+      assigned session before declaring the task abandoned.
+
+  - name: tasks-mesh-distinction
+    kind: fact
+    tags: [tasks, mesh]
+    content: |
+      Mesh is volatile broadcast / situational awareness with no
+      lifecycle. Tasks are durable, owned, lifecycle-tracked, and
+      audited. Promote a mesh message to a task when it contains
+      an action item that needs tracking.
+
+  # ---------- mesh + agent coordination ---------------------------------
+
+  - name: mesh-resolve-four-states
+    kind: fact
+    tags: [mesh, agents]
+    content: |
+      Every received mesh message must resolve to exactly one of:
+      ignore, ack-reply, promote-to-task, or immediate-action-and-reply.
+      Silently doing the work with no task is an anti-pattern.
+
+  - name: mesh-broadcast-volatile
+    kind: fact
+    tags: [mesh]
+    content: |
+      A mesh broadcast is volatile — no durable record once consumed.
+      If you need someone to act later, file a task and assign it.
+
+  - name: agent-mesh-skill
+    kind: skill
+    tags: [mesh, skill]
+    content: |
+      The agent-mesh skill covers same-machine and cross-peer agent
+      coordination patterns — registering identity, advertising
+      persistent status, exchanging findings, delegating tasks.
+
+  # ---------- memory subsystem itself -----------------------------------
+
+  - name: memory-fts5-floor
+    kind: fact
+    tags: [memory, mcplexer]
+    content: |
+      Mcplexer's memory subsystem has an FTS5 floor — recall works
+      with no embedder configured. An OpenAI embedder lights up
+      vector recall and RRF fusion when MCPLEXER_OPENAI_API_KEY is set.
+
+  - name: memory-bitemporal
+    kind: fact
+    tags: [memory, design]
+    content: |
+      Memory entries are bi-temporal. Updating a fact by name
+      invalidates the prior row (t_valid_end stamped) and creates
+      a new active row; include_invalid=true surfaces the history.
+
+  - name: memory-scope-workspace
+    kind: fact
+    tags: [memory, scope]
+    content: |
+      Memory scope is workspace-keyed. workspace_id="" means global;
+      workspace_id=<id> means global ∪ that workspace. Two workspaces
+      on the same node never see each other's private rows.
+
+  - name: memory-consolidator
+    kind: fact
+    tags: [memory, consolidator]
+    content: |
+      The memory consolidator is a sleep-time worker that compacts
+      duplicate notes and invalidates stale ones. It runs as a
+      regular Worker materialised from the memory-consolidator
+      template; the default schedule is nightly at 03:00 UTC.
+
+  # ---------- duplicates for the consolidator to chew on ---------------
+
+  - name: dup-vim-1
+    kind: note
+    tags: [editor, dup]
+    content: |
+      Operator prefers vim as his primary code editor for terminal work.
+
+  - name: dup-vim-2
+    kind: note
+    tags: [editor, dup]
+    content: |
+      The user uses vim as the editor when working in a terminal.
+
+  - name: dup-vim-3
+    kind: note
+    tags: [editor, dup]
+    content: |
+      Editor preference: vim is the user's go-to in terminal contexts.
+
+  - name: dup-coffee-1
+    kind: note
+    tags: [trivia, dup]
+    content: Operator drinks his coffee black with no sugar.
+
+  - name: dup-coffee-2
+    kind: note
+    tags: [trivia, dup]
+    content: Operator takes his coffee straight black, never any sweetener.
+
+  # ---------- ambiguity bait (two rows the keyword could hit) -----------
+
+  - name: deploy-staging
+    kind: note
+    tags: [deploy, staging]
+    content: |
+      The staging deploy uses make deploy-staging and points at the
+      staging vercel project. It does NOT require origin/main parity.
+
+  - name: deploy-rollback
+    kind: note
+    tags: [deploy, rollback]
+    content: |
+      To roll back a deploy, push a new revert commit then run
+      make deploy. Never reset --hard on a deployed branch.
+
+  # ---------- trick contextual seeds ------------------------------------
+
+  - name: hygiene-personal-rule
+    kind: note
+    tags: [personal, hygiene]
+    content: |
+      Max keeps a clean terminal — one tab per concern, prompts that
+      surface git state, and aliases that flag uncommitted work.
+
+  - name: hygiene-ops-rule
+    kind: fact
+    tags: [ops, hygiene]
+    content: |
+      Build hygiene means every shipped artifact maps back to a
+      single git ref ops can trace. Dirty trees defeat that promise.
+
+  # ---------- semantic-only paraphrase fodder (no keyword overlap) ------
+
+  - name: pure-semantic-money
+    kind: note
+    tags: [pricing]
+    content: Premium tier subscribers are billed quarterly in advance.
+
+  - name: pure-semantic-deer
+    kind: note
+    tags: [wildlife]
+    content: The local woodland has a small herd of fallow deer.
+
+# ============================================================================
+# Queries
+# ============================================================================
+queries:
+
+  # ---------- keyword-strong (recall@1 must hit) ------------------------
+
+  - id: kw-deploy-hygiene
+    query: deploy hygiene rule clean working tree
+    expected_top: deploy-hygiene
+    category: keyword_strong
+    rationale: every content word shared.
+
+  - id: kw-amend
+    query: amend a deployed commit
+    expected_top: amend-anti-pattern
+    category: keyword_strong
+    rationale: amend + deployed share with the seed body.
+
+  - id: kw-secrets-env
+    query: secrets env api keys git
+    expected_top: secrets-no-commit
+    category: keyword_strong
+    rationale: every content word in the seed.
+
+  - id: kw-db-lockdown
+    query: ~/.mcplexer/mcplexer.db PreToolUse hook denylist
+    expected_top: db-lockdown
+    category: keyword_strong
+    rationale: rare-token query, only one row contains the path.
+
+  - id: kw-go-style
+    query: idiomatic Go explicit error handling table-driven tests
+    expected_top: idempotent-go-style
+    category: keyword_strong
+    rationale: heavy keyword overlap.
+
+  - id: kw-typescript
+    query: TypeScript strict mode functional components
+    expected_top: typescript-strict
+    category: keyword_strong
+
+  - id: kw-claude-cli-optin
+    query: MCPLEXER_ALLOW_CLAUDE_CLI env opt-in
+    expected_top: workers-claude-cli-optin
+    category: keyword_strong
+
+  - id: kw-sandbox-write-deny
+    query: sandbox denies writes to ~/.claude/ and ~/.mcplexer/
+    expected_top: workers-sandbox-write-deny
+    category: keyword_strong
+
+  - id: kw-slim-tools
+    query: 4 entrypoints tools/list slim surface
+    expected_top: slim-tool-surface
+    category: keyword_strong
+
+  - id: kw-code-mode
+    query: mcpx__execute_code JS namespace.tool call
+    expected_top: mcpx-code-mode
+    category: keyword_strong
+
+  - id: kw-tasks-prefer
+    query: prefer task__create over TaskCreate harness
+    expected_top: tasks-over-harness
+    category: keyword_strong
+
+  - id: kw-touches-files
+    query: touches_files meta coordination_warnings
+    expected_top: tasks-touches-files
+    category: keyword_strong
+
+  - id: kw-lease-expired
+    query: lease_expired missed heartbeat
+    expected_top: tasks-lease-not-dead
+    category: keyword_strong
+
+  - id: kw-mesh-vs-tasks
+    query: mesh volatile broadcast tasks durable audited
+    expected_top: tasks-mesh-distinction
+    category: keyword_strong
+
+  - id: kw-mesh-four-states
+    query: mesh message ignore ack-reply promote-to-task
+    expected_top: mesh-resolve-four-states
+    category: keyword_strong
+
+  - id: kw-fts5
+    query: FTS5 floor embedder vector recall
+    expected_top: memory-fts5-floor
+    category: keyword_strong
+
+  - id: kw-bitemporal
+    query: bi-temporal t_valid_end invalidate include_invalid
+    expected_top: memory-bitemporal
+    category: keyword_strong
+
+  - id: kw-mem-scope
+    query: workspace_id memory scope global private
+    expected_top: memory-scope-workspace
+    category: keyword_strong
+
+  - id: kw-consolidator
+    query: memory consolidator sleep-time worker template schedule
+    expected_top: memory-consolidator
+    category: keyword_strong
+
+  # ---------- semantic-paraphrase (≥1 shared content word, FTS5-feasible)
+
+  - id: para-deploy-uncommitted
+    query: what's the rule about deploying with uncommitted work
+    expected_top: deploy-hygiene
+    category: semantic_paraphrase
+    rationale: shares "deploy" only — relies on BM25 across the corpus.
+
+  - id: para-history-rewrite
+    query: rewriting git history after shipping is bad
+    expected_top: amend-anti-pattern
+    category: semantic_paraphrase
+    rationale: shares "history" / "git" only; semantically about amend.
+
+  - id: para-leaked-keys
+    query: don't leak credentials into the repo
+    expected_top: secrets-no-commit
+    category: semantic_paraphrase
+    rationale: shares "credentials" / "repo" minimally.
+
+  - id: para-gateway-defeat
+    query: bypassing the gateway breaks audit
+    expected_top: db-lockdown
+    category: semantic_paraphrase
+
+  - id: para-cli-providers
+    query: enabling subprocess-based model providers
+    expected_top: workers-claude-cli-optin
+    category: semantic_paraphrase
+
+  - id: para-prompt-injection
+    query: protection against malicious PreToolUse installs
+    expected_top: workers-sandbox-write-deny
+    category: semantic_paraphrase
+
+  - id: para-fewer-tools
+    query: cutting the tool inventory to save context
+    expected_top: slim-tool-surface
+    category: semantic_paraphrase
+
+  - id: para-batch-calls
+    query: batching downstream tool calls in JavaScript
+    expected_top: mcpx-code-mode
+    category: semantic_paraphrase
+
+  - id: para-coordination
+    query: declaring which files an agent intends to touch
+    expected_top: tasks-touches-files
+    category: semantic_paraphrase
+
+  - id: para-heartbeat-miss
+    query: expired lease does not mean the worker died
+    expected_top: tasks-lease-not-dead
+    category: semantic_paraphrase
+
+  # ---------- ambiguous (two seeds could fit; recency / pin matters) ----
+
+  - id: ambig-deploy-which
+    query: how do I deploy
+    expected_top: deploy-hygiene
+    accept: [deploy-staging, deploy-rollback]
+    category: ambiguous
+    rationale: three deploy-tagged seeds; recall@5 must surface ≥2.
+
+  - id: ambig-hygiene-which
+    query: hygiene rule
+    expected_top: hygiene-ops-rule
+    accept: [deploy-hygiene, hygiene-personal-rule]
+    category: ambiguous
+
+  - id: ambig-editor-vim
+    query: vim
+    expected_top: dup-vim-1
+    accept: [dup-vim-2, dup-vim-3]
+    category: ambiguous
+    rationale: three near-duplicates; recall@5 must contain ≥2.
+
+  # ---------- contextual / "clever" (graded separately, recall@3 ≥ 0.8)
+
+  - id: ctx-max-deploy
+    query: what did the operator say about deploy hygiene
+    expected_top: deploy-hygiene
+    category: contextual
+    rationale: shares "deploy" + "hygiene" — operator-prefix is conversational, FTS5 handles it.
+
+  - id: ctx-recovery
+    query: how to recover from a bad shipped commit
+    expected_top: amend-anti-pattern
+    accept: [deploy-rollback]
+    category: contextual
+
+  - id: ctx-explain-mcpx
+    query: explain how to call downstream MCP tools
+    expected_top: mcpx-code-mode
+    accept: [slim-tool-surface]
+    category: contextual
+
+  - id: ctx-explain-workers
+    query: what do I need to know about workers
+    expected_top: workers-claude-cli-optin
+    accept: [workers-sandbox-write-deny]
+    category: contextual
+
+  - id: ctx-coordination
+    query: how do I avoid stepping on another agent
+    expected_top: tasks-touches-files
+    accept: [mesh-resolve-four-states, tasks-mesh-distinction]
+    category: contextual
+
+  - id: ctx-memory-design
+    query: design of the memory system in mcplexer
+    expected_top: memory-fts5-floor
+    accept: [memory-bitemporal, memory-scope-workspace, memory-consolidator]
+    category: contextual
+
+  # ---------- pure semantic (zero overlap; needs embedder) --------------
+
+  - id: pure-money
+    query: how often do subscribers pay
+    expected_top: pure-semantic-money
+    category: pure_semantic
+    requires_embedder: true
+    rationale: zero shared content words — FTS5 cannot reach.
+
+  - id: pure-deer
+    query: forest animals nearby
+    expected_top: pure-semantic-deer
+    category: pure_semantic
+    requires_embedder: true

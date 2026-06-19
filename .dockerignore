@@ -1,0 +1,13 @@
+bin/
+data/
+*.db
+*.age
+*.key
+.env
+.git
+.idea
+.vscode
+.DS_Store
+web/node_modules/
+web/dist/
+internal/web/dist/

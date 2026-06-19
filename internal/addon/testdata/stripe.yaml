@@ -1,0 +1,110 @@
+# Stripe API (subset) — exercises HTTP Basic auth (custom — not supported)
+# AND a Bearer fallback. The test asserts we either pick Bearer cleanly or
+# emit an actionable error when only Basic is available.
+openapi: 3.0.3
+info:
+  title: Stripe
+  description: Stripe API (subset for addon import tests).
+  version: '2024-04-10'
+servers:
+  - url: https://api.stripe.com
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+    basicAuth:
+      type: http
+      scheme: basic
+security:
+  - bearerAuth: []
+paths:
+  /v1/customers:
+    get:
+      operationId: ListCustomers
+      summary: List all customers
+      parameters:
+        - name: email
+          in: query
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer }
+      responses:
+        '200': { description: ok }
+    post:
+      operationId: CreateCustomer
+      summary: Create a customer
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                email: { type: string }
+                name: { type: string }
+          application/json:
+            schema:
+              type: object
+              properties:
+                email: { type: string }
+                name: { type: string }
+                description: { type: string }
+      responses:
+        '200': { description: ok }
+  /v1/customers/{customer}:
+    get:
+      operationId: GetCustomer
+      summary: Retrieve a customer
+      parameters:
+        - name: customer
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: ok }
+    post:
+      operationId: UpdateCustomer
+      summary: Update a customer
+      parameters:
+        - name: customer
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email: { type: string }
+                name: { type: string }
+      responses:
+        '200': { description: ok }
+    delete:
+      operationId: DeleteCustomer
+      summary: Delete a customer
+      parameters:
+        - name: customer
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: ok }
+  /v1/charges:
+    post:
+      operationId: CreateCharge
+      summary: Create a charge
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [amount, currency]
+              properties:
+                amount: { type: integer }
+                currency: { type: string }
+                customer: { type: string }
+                description: { type: string }
+      responses:
+        '200': { description: ok }

@@ -1,0 +1,63 @@
+{
+  "name": "MCPlexer",
+  "short_name": "MCPlexer",
+  "description": "MCP Gateway — manage MCP tool servers, routes, and credentials.",
+  "id": "/?source=pwa",
+  "start_url": "/?source=pwa",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone"],
+  "orientation": "any",
+  "background_color": "#0a0a0a",
+  "theme_color": "#0a0a0a",
+  "categories": ["developer", "utilities", "productivity"],
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "type": "image/svg+xml",
+      "sizes": "any",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-192.png",
+      "type": "image/png",
+      "sizes": "192x192",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-512.png",
+      "type": "image/png",
+      "sizes": "512x512",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-maskable-192.png",
+      "type": "image/png",
+      "sizes": "192x192",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/icon-maskable-512.png",
+      "type": "image/png",
+      "sizes": "512x512",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Approvals",
+      "url": "/approvals",
+      "description": "Pending tool approvals"
+    },
+    {
+      "name": "Mesh",
+      "url": "/mesh",
+      "description": "Agent mesh"
+    },
+    {
+      "name": "Servers",
+      "url": "/config?tab=servers",
+      "description": "Configure MCP servers"
+    }
+  ]
+}

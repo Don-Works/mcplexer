@@ -1,0 +1,38 @@
+{
+  "name": "ops-retro-weekly",
+  "description": "Weekly operational retrospective. Invokes the published mcplexer-ops-retro skill to mine the task ledger, delegations, offers and mesh for SDLC patterns (review skipping, lease churn, unreviewed work, telemetry gaps, backlog rot). Sends Telegram digest always (mesh finding fallback if no chat paired for workspace); creates deduplicated fix-up tasks only on threshold breach; emits mesh finding tagged ops,retro,weekly for other agents. Designed to be installed + enabled on a target workspace with a cheap model profile (grok_cli supported).",
+  "model_provider_hint": "grok_cli",
+  "model_id_hint": "grok-build",
+  "skill_name": "mcplexer-ops-retro",
+  "skill_version": "1",
+  "prompt_template": "You are the ops-retro-weekly scheduled worker for mcplexer. Your only responsibility is to execute the mcplexer-ops-retro skill on its weekly cadence (or via Run Now).\n\nFollow the skill's Run protocol to the letter:\n\n1. Start telemetry FIRST: skill.run_start({skill: \"mcplexer-ops-retro\", phases: [\"mine\", \"assess\", \"report\"], task_epic_id: <the parent ops-retro epic id if composing, else omit>}). Capture the returned run_id.\n2. Retrieve the authoritative skill body (use mcpx.skill_get({name:\"mcplexer-ops-retro\", version:\"latest\"}) or equivalent mcpx__skill_get inside execute_code). The body contains the exact MINE JS snippet to run, the metric thresholds, ASSESS logic, and REPORT contract.\n3. MINE: execute the mining snippet provided by the skill in ONE mcpx__execute_code call (queries tasks + status_history, delegations, offers, mesh, counts etc.). Trust only status_history and row counts; zero cost/tool/token values from CLI providers mean \"unknown\".\n4. ASSESS: compare mined metrics against the thresholds defined in the skill.\n5. REPORT (always):\n   - Deliver a concise human-readable digest.\n   - Prefer Telegram: first telegram.list_chats(), then telegram.broadcast({workspace_id: current, text: digest, priority: \"normal\"}) or send_message to the right chat_id. This must happen every run (\"always\").\n   - Always emit a mesh finding via mesh.send({kind: \"finding\", tags: \"ops,retro,weekly\", to_workspace: \"*\" or current, content/preview: summary + key metrics + breach flags}).\n   - Create tasks via task.create (with compose_into parent epic if applicable, and dedupe logic) ONLY when ASSESS indicates one or more thresholds breached. Keep titles high-signal and actionable. Append notes with run provenance.\n6. Record progress with skill.phase({run_id, phase: \"mine\"|\"assess\"|\"report\", event: \"started\"|\"completed\"|\"failed\", note}).\n7. End with skill.run_complete({run_id, outcome: \"success\"|\"failure\", summary: \"<one-line outcome + breach count>\"}).\n\nStay strictly inside your tool allowlist and caps. One invocation = one weekly retro. The configured output channels will surface mesh findings automatically.",
+  "schedule_spec_hint": "0 9 * * 1",
+  "tool_allowlist": [
+    "mcpx__execute_code",
+    "mcpx__search_tools",
+    "mcpx__skill_get",
+    "mcpx__skill_search",
+    "skill__run_start",
+    "skill__phase",
+    "skill__run_complete",
+    "task__list",
+    "task__get",
+    "task__create",
+    "task__update",
+    "task__append_note",
+    "telegram__list_chats",
+    "telegram__send_message",
+    "telegram__broadcast",
+    "mesh__send",
+    "mesh__receive"
+  ],
+  "output_channels_hint": [
+    {
+      "type": "mesh",
+      "priority": "normal",
+      "priority_on_fail": "high",
+      "tags": "ops,retro,weekly"
+    }
+  ],
+  "exec_mode_hint": "autonomous"
+}

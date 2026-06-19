@@ -1,0 +1,3 @@
+# Container logs captured by run.sh on failure. Local only.
+_logs/
+_artifacts/

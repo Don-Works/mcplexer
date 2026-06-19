@@ -1,0 +1,1 @@
+ALTER TABLE route_rules ADD COLUMN name TEXT NOT NULL DEFAULT '';
