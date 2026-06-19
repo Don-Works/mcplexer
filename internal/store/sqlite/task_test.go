@@ -308,6 +308,144 @@ func TestSearchTasksEscapeHelperKeepsLiveTestWorking(t *testing.T) {
 	}
 }
 
+func TestSearchTasksMatchesIDPrefix(t *testing.T) {
+	ctx := context.Background()
+	d := newMemDB(t)
+	wsID := seedWorkspace(t, d, "ws-prefix-search")
+
+	ids := []string{
+		"01KSPFXA00000000000AAA111",
+		"01KSPFXB00000000000AAA222",
+		"01KSPFXC00000000000BBB333", // different suffix block
+	}
+	for _, id := range ids {
+		if err := d.CreateTask(ctx, &store.Task{
+			ID: id, WorkspaceID: wsID, Title: "task-" + id,
+		}); err != nil {
+			t.Fatalf("seed task %s: %v", id, err)
+		}
+	}
+
+	// Prefix matching: "01KSPFXA" should match only the first task.
+	rows, err := d.SearchTasks(ctx, store.TaskFilter{WorkspaceID: wsID}, "01KSPFXA")
+	if err != nil {
+		t.Fatalf("SearchTasks prefix: %v", err)
+	}
+	if len(rows) != 1 || rows[0].ID != ids[0] {
+		t.Fatalf("expected 1 prefix match for 01KSPFXA, got %d: %v", len(rows), rows)
+	}
+
+	// Broader prefix: "01KSPFX" should match all three.
+	rows, err = d.SearchTasks(ctx, store.TaskFilter{WorkspaceID: wsID}, "01KSPFX")
+	if err != nil {
+		t.Fatalf("SearchTasks broader prefix: %v", err)
+	}
+	if len(rows) != 3 {
+		t.Fatalf("expected 3 broader prefix matches, got %d", len(rows))
+	}
+
+	// Case-insensitive prefix.
+	rows, err = d.SearchTasks(ctx, store.TaskFilter{WorkspaceID: wsID}, "01kspfx")
+	if err != nil {
+		t.Fatalf("SearchTasks lowercase prefix: %v", err)
+	}
+	if len(rows) != 3 {
+		t.Fatalf("expected 3 case-insensitive prefix matches, got %d", len(rows))
+	}
+}
+
+func TestSearchTasksTitleFallback(t *testing.T) {
+	ctx := context.Background()
+	d := newMemDB(t)
+	wsID := seedWorkspace(t, d, "ws-title-fb")
+
+	_ = d.CreateTask(ctx, &store.Task{WorkspaceID: wsID, Title: "Deploy the monitoring stack"})
+	_ = d.CreateTask(ctx, &store.Task{WorkspaceID: wsID, Title: "Unrelated task"})
+
+	// "monitoring" should match via FTS (porter stemmer).
+	rows, err := d.SearchTasks(ctx, store.TaskFilter{WorkspaceID: wsID}, "monitoring")
+	if err != nil {
+		t.Fatalf("SearchTasks FTS: %v", err)
+	}
+	if len(rows) < 1 {
+		t.Fatal("expected at least 1 FTS hit for 'monitoring'")
+	}
+
+	// A query that FTS might not tokenise well but title LIKE catches.
+	// "deploy-the" has a hyphen that FTS treats as separator.
+	rows, err = d.SearchTasks(ctx, store.TaskFilter{WorkspaceID: wsID}, "deploy-the")
+	if err != nil {
+		t.Fatalf("SearchTasks title fallback: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 title fallback match for 'deploy-the', got %d", len(rows))
+	}
+}
+
+func TestSearchTasksTagFallback(t *testing.T) {
+	ctx := context.Background()
+	d := newMemDB(t)
+	wsID := seedWorkspace(t, d, "ws-tag-fb")
+
+	_ = d.CreateTask(ctx, &store.Task{
+		WorkspaceID: wsID,
+		Title:       "Tagged task",
+		TagsJSON:    json.RawMessage(`["urgent","backend"]`),
+	})
+	_ = d.CreateTask(ctx, &store.Task{
+		WorkspaceID: wsID,
+		Title:       "No tags",
+	})
+
+	// FTS indexes tags as space-separated tokens, so "urgent" should work.
+	rows, err := d.SearchTasks(ctx, store.TaskFilter{WorkspaceID: wsID}, "urgent")
+	if err != nil {
+		t.Fatalf("SearchTasks tag FTS: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 tag FTS match, got %d", len(rows))
+	}
+
+	// Tag LIKE fallback: search for a tag that appears in JSON array.
+	rows, err = d.SearchTasks(ctx, store.TaskFilter{WorkspaceID: wsID}, "backend")
+	if err != nil {
+		t.Fatalf("SearchTasks tag fallback: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 tag fallback match, got %d", len(rows))
+	}
+}
+
+func TestSearchTasksClosedTasksIncluded(t *testing.T) {
+	ctx := context.Background()
+	d := newMemDB(t)
+	wsID := seedWorkspace(t, d, "ws-closed-search")
+
+	_ = d.CreateTask(ctx, &store.Task{
+		WorkspaceID: wsID,
+		Title:       "Closed gateway task",
+		Status:      "done",
+		ClosedAt:    ptrTime(time.Now()),
+	})
+	_ = d.CreateTask(ctx, &store.Task{
+		WorkspaceID: wsID,
+		Title:       "Open gateway task",
+		Status:      "open",
+	})
+
+	// SearchTasks does NOT apply OnlyTerminal, so both open and closed
+	// tasks should be returned.
+	rows, err := d.SearchTasks(ctx, store.TaskFilter{WorkspaceID: wsID}, "gateway")
+	if err != nil {
+		t.Fatalf("SearchTasks closed: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("expected 2 matches (open+closed), got %d", len(rows))
+	}
+}
+
+func ptrTime(t time.Time) *time.Time { return &t }
+
 func TestUpsertVocabAndIsTerminal(t *testing.T) {
 	ctx := context.Background()
 	d := newMemDB(t)
