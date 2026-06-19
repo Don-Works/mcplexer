@@ -1,1 +1,0 @@
-function e(e,t=1e3,n=3e4){return Math.min(t*2**e,n)}export{e as t};
