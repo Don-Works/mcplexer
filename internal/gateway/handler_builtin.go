@@ -211,6 +211,10 @@ func (h *handler) handleBuiltinCall(
 		resp, rpcErr, _ := h.dispatchDataTool(ctx, req.Name, req.Arguments)
 		return resp, rpcErr
 
+	case "kv__set", "kv__get", "kv__list", "kv__delete":
+		resp, rpcErr, _ := h.dispatchKVTool(ctx, req.Name, req.Arguments)
+		return resp, rpcErr
+
 	case "concierge__record_signal":
 		return h.handleConciergeRecordSignal(ctx, req.Arguments)
 

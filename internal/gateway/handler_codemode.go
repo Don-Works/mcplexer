@@ -596,6 +596,7 @@ func (h *handler) codeModeBuiltinTools() []Tool {
 	}
 	if h.store != nil {
 		tools = append(tools, dataToolDefinitions()...)
+		tools = append(tools, kvToolDefinitions()...)
 	}
 	if h.tasksSvc != nil {
 		tools = append(tools, taskToolDefinitions()...)
@@ -645,6 +646,9 @@ func (h *handler) buildCodeExecuteTool(ctx context.Context) (Tool, bool) {
 			"script before printing. Extract only the fields you need.\n" +
 			"- For lists: print counts, top-N items, or key fields — not full arrays.\n" +
 			"- Use compact(obj) to prune nulls/empties from large objects.\n" +
+			"- State does NOT persist between execute_code calls (each runs in a fresh sandbox). " +
+			"Use the kv namespace — kv.set({key, value}) then kv.get({key}) — to build an expensive " +
+			"dataset once and rehydrate it in a later call instead of recomputing it.\n" +
 			"- print()/console.log output is capped server-side and marked when truncated.\n\n" +
 			"Calling patterns:\n" +
 			"- Sequential (default): calls return values directly, so you can " +
@@ -675,6 +679,9 @@ func (h *handler) buildCodeExecuteTool(ctx context.Context) (Tool, bool) {
 			"script before printing. Extract only the fields you need.\n" +
 			"- For lists: print counts, top-N items, or key fields — not full arrays.\n" +
 			"- Use compact(obj) to prune nulls/empties from large objects.\n" +
+			"- State does NOT persist between execute_code calls (each runs in a fresh sandbox). " +
+			"Use the kv namespace — kv.set({key, value}) then kv.get({key}) — to build an expensive " +
+			"dataset once and rehydrate it in a later call instead of recomputing it.\n" +
 			"- print()/console.log output is capped server-side and marked when truncated.\n\n" +
 			"Calling patterns:\n" +
 			"- Sequential (default): calls return values directly, so you can " +
