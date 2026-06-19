@@ -375,7 +375,23 @@ func (d *DB) SearchTasks(ctx context.Context, f store.TaskFilter, query string) 
 	if err != nil {
 		return nil, err
 	}
-	return mergeTaskSearchRows(idRows, ftsRows, limit), nil
+	merged := mergeTaskSearchRows(idRows, ftsRows, limit)
+	if len(merged) > 0 {
+		return merged, nil
+	}
+	// Fallback: direct LIKE on title and tags_json when FTS + ID
+	// search both return zero hits. Catches porter-stemmer
+	// tokenisation mismatches, partial ID prefixes not yet long enough
+	// for the ID-ref path, and tags stored as plain strings.
+	titleRows, err := d.searchTasksTitleFallback(ctx, f, q, limit)
+	if err != nil {
+		return nil, err
+	}
+	tagRows, err := d.searchTasksTagFallback(ctx, f, q, limit)
+	if err != nil {
+		return nil, err
+	}
+	return mergeTaskSearchRows(titleRows, tagRows, limit), nil
 }
 
 func taskSearchLimit(limit int) int {
@@ -418,6 +434,73 @@ func (d *DB) searchTasksFTS(ctx context.Context, f store.TaskFilter, query strin
 	return out, rows.Err()
 }
 
+func (d *DB) searchTasksTitleFallback(ctx context.Context, f store.TaskFilter, query string, limit int) ([]store.Task, error) {
+	where, args, err := buildTaskWhere(f)
+	if err != nil {
+		return nil, err
+	}
+	likePattern := "%" + escapeLikePattern(query) + "%"
+	where += " AND tasks.title LIKE ?"
+	args = append(args, likePattern, limit)
+
+	rows, err := d.q.QueryContext(ctx, `
+		SELECT `+taskSelectCols+`
+		FROM tasks
+		WHERE `+where+`
+		ORDER BY updated_at DESC
+		LIMIT ?`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("search tasks title fallback: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	out, err := scanTasks(rows)
+	if err != nil {
+		return nil, err
+	}
+	if len(f.Tags) > 0 {
+		out = filterTasksByTags(out, f.Tags)
+	}
+	return out, rows.Err()
+}
+
+func (d *DB) searchTasksTagFallback(ctx context.Context, f store.TaskFilter, query string, limit int) ([]store.Task, error) {
+	where, args, err := buildTaskWhere(f)
+	if err != nil {
+		return nil, err
+	}
+	likePattern := "%" + escapeLikePattern(query) + "%"
+	where += " AND tasks.tags_json LIKE ?"
+	args = append(args, likePattern, limit)
+
+	rows, err := d.q.QueryContext(ctx, `
+		SELECT `+taskSelectCols+`
+		FROM tasks
+		WHERE `+where+`
+		ORDER BY updated_at DESC
+		LIMIT ?`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("search tasks tag fallback: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	out, err := scanTasks(rows)
+	if err != nil {
+		return nil, err
+	}
+	if len(f.Tags) > 0 {
+		out = filterTasksByTags(out, f.Tags)
+	}
+	return out, rows.Err()
+}
+
+func escapeLikePattern(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `%`, `\%`)
+	s = strings.ReplaceAll(s, `_`, `\_`)
+	return s
+}
+
 func (d *DB) searchTasksByIDRef(ctx context.Context, f store.TaskFilter, query string, limit int) ([]store.Task, error) {
 	mode, ref := taskIDSearchRef(query)
 	if mode == "" {
@@ -430,12 +513,17 @@ func (d *DB) searchTasksByIDRef(ctx context.Context, f store.TaskFilter, query s
 	switch mode {
 	case "full":
 		where += " AND tasks.id = ?"
+		args = append(args, ref)
 	case "suffix":
 		where += " AND substr(tasks.id, -6) = ?"
+		args = append(args, ref)
+	case "prefix":
+		where += " AND tasks.id LIKE ?"
+		args = append(args, ref+"%")
 	default:
 		return nil, nil
 	}
-	args = append(args, ref, limit)
+	args = append(args, limit)
 
 	rows, err := d.q.QueryContext(ctx, `
 		SELECT `+taskSelectCols+`
@@ -485,6 +573,9 @@ stripped:
 	case 26:
 		return "full", upper
 	default:
+		if len(upper) >= 2 {
+			return "prefix", upper
+		}
 		return "", ""
 	}
 }

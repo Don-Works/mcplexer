@@ -730,6 +730,15 @@ func (h *handler) handleTaskList(
 	// and task_view self-describes the row shape in BOTH modes so
 	// full:true doesn't silently change the contract.
 	envelope["count"] = len(rows)
+	// When a search query returned zero matches, attach diagnostics so
+	// the caller can adjust the query instead of retrying blind. The
+	// envelope already carries known_statuses/known_tags/known_meta_keys
+	// from the discovery envelope — but those are scoped to the *result
+	// set* which is empty here. The diagnostics pull from the broader
+	// workspace so the caller sees what vocabulary exists.
+	if len(rows) == 0 && strings.TrimSpace(q) != "" {
+		envelope["search_diagnostics"] = h.taskSearchDiagnostics(ctx, wsID, q)
+	}
 	if fullList {
 		envelope["tasks"] = rows
 		envelope["task_view"] = "full"
@@ -832,6 +841,63 @@ func taskSemanticText(row store.Task) string {
 		row.Meta,
 	}
 	return strings.Join(parts, "\n")
+}
+
+// taskSearchDiagnostics returns a diagnostic map when a task search
+// returns zero results. The map includes the workspace ID, the query,
+// any task IDs that match the query as a prefix, and the known tags
+// in the workspace so the caller can adjust their query.
+func (h *handler) taskSearchDiagnostics(ctx context.Context, wsID, query string) map[string]any {
+	diag := map[string]any{
+		"workspace_id": wsID,
+		"query":        query,
+	}
+	// Check if the query looks like a partial task ID (valid ULID chars).
+	// ULIDs use Crockford alphabet: 0-9 A-Z minus I/L/O/U.
+	if isLikelyIDPrefix(query) {
+		if ids, err := h.store.ListTaskIDsByPrefix(ctx, wsID, strings.ToUpper(query), 10); err == nil && len(ids) > 0 {
+			diag["nearby_ids"] = ids
+		}
+	}
+	// Fetch a broad set of tasks to surface the workspace vocabulary.
+	broadFilter := store.TaskFilter{
+		WorkspaceID: wsID,
+		Limit:       50,
+	}
+	if allTasks, err := h.tasksSvc.List(ctx, broadFilter); err == nil && len(allTasks) > 0 {
+		allTags := map[string]bool{}
+		for _, t := range allTasks {
+			for _, tag := range taskTags(t.TagsJSON) {
+				allTags[tag] = true
+			}
+		}
+		if len(allTags) > 0 {
+			tags := make([]string, 0, len(allTags))
+			for tag := range allTags {
+				tags = append(tags, tag)
+			}
+			diag["known_tags"] = tags
+		}
+	}
+	return diag
+}
+
+// isLikelyIDPrefix returns true if s looks like a partial ULID
+// (2+ characters of the Crockford alphabet: 0-9 A-Z minus I/L/O/U).
+func isLikelyIDPrefix(s string) bool {
+	s = strings.TrimSpace(s)
+	if len(s) < 2 {
+		return false
+	}
+	for _, r := range strings.ToUpper(s) {
+		switch {
+		case r >= '0' && r <= '9':
+		case r >= 'A' && r <= 'Z' && r != 'I' && r != 'L' && r != 'O' && r != 'U':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // ----------------------------------------------------------------------
