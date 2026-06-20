@@ -5,7 +5,7 @@ import "encoding/json"
 func kvToolDefinitions() []Tool {
 	return []Tool{
 		{
-			Name: "kv__set",
+			Name:        "kv__set",
 			Description: "Persist a JSON value under a key for this workspace so it survives across mcpx__execute_code calls. Each execute_code call runs in a fresh sandbox, so in-memory variables are lost between calls — use kv to build an expensive dataset once and rehydrate it later with kv__get instead of recomputing it. Scratch storage (default 120-minute TTL, pinnable), not a durable store: promote real conclusions with memory__save. Caps: 1 MiB per value, 256 keys and 16 MiB per workspace.",
 			InputSchema: json.RawMessage(`{
 				"type": "object",
