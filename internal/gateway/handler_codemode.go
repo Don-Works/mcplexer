@@ -227,6 +227,17 @@ func (c *handlerToolCaller) CallTool(
 func (h *handler) handleCodeExecute(
 	ctx context.Context, code string,
 ) (json.RawMessage, *RPCError) {
+	// Strip TypeScript annotations to produce valid JS.
+	jsCode := codemode.StripTypeScript(code)
+
+	if issues := codemode.Preflight(jsCode); len(issues) > 0 {
+		result := &codemode.ExecutionResult{
+			OutputMaxBytes: h.codeModeMaxOutputBytes(ctx),
+			Error:          codemode.FormatPreflightIssues(issues),
+		}
+		return marshalCodeResult(result), nil
+	}
+
 	timeout := h.codeModeTimeout(ctx)
 
 	toolDefs, err := h.codeModeToolDefs(ctx)
@@ -236,9 +247,6 @@ func (h *handler) handleCodeExecute(
 			Message: fmt.Sprintf("gather tools for code mode: %v", err),
 		}
 	}
-
-	// Strip TypeScript annotations to produce valid JS.
-	jsCode := codemode.StripTypeScript(code)
 
 	// Run lint checks before execution to catch common mistakes early.
 	// LintWithTools needs the registered tool names so it can flag
@@ -250,6 +258,7 @@ func (h *handler) handleCodeExecute(
 		toolNames[i] = t.Name
 	}
 	lintResult := codemode.LintWithTools(jsCode, toolNames)
+	lintText := codemode.FormatLintWarnings(lintResult.Warnings)
 
 	// Generate a unique execution ID to correlate all tool calls
 	// from this single execute_code invocation in the audit log.
@@ -277,7 +286,7 @@ func (h *handler) handleCodeExecute(
 	)
 
 	// Prepend lint warnings to the output when present.
-	if lintText := codemode.FormatLintWarnings(lintResult.Warnings); lintText != "" {
+	if lintText != "" {
 		if result.Output != "" {
 			result.Output = lintText + "\n" + result.Output
 		} else {

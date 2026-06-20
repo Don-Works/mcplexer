@@ -158,6 +158,92 @@ func TestHandleCodeExecute_LintWarnsOnTypo(t *testing.T) {
 	}
 }
 
+func TestHandleCodeExecute_PreflightSyntaxStopsBeforeTools(t *testing.T) {
+	lister := &mockToolLister{
+		tools: map[string]json.RawMessage{
+			"gh-server": toolsJSON(Tool{
+				Name:        "create_issue",
+				InputSchema: json.RawMessage(`{"type":"object","properties":{"title":{"type":"string"}}}`),
+			}),
+		},
+	}
+	h, _ := newTestHandler(lister, []store.DownstreamServer{
+		{ID: "gh-server", ToolNamespace: "github", Discovery: "static"},
+	})
+
+	params, _ := json.Marshal(CallToolRequest{
+		Name:      "mcpx__execute_code",
+		Arguments: json.RawMessage(`{"code": "github.create_issue({title:'bug'); print('ok');"}`),
+	})
+	result, rpcErr := h.handleToolsCall(context.Background(), params)
+	if rpcErr != nil {
+		t.Fatalf("unexpected RPC error: %s", rpcErr.Message)
+	}
+	if lister.callCount != 0 {
+		t.Fatalf("preflight must stop before downstream calls, got %d", lister.callCount)
+	}
+	if len(lister.listRequests) != 0 {
+		t.Fatalf("preflight must stop before tool discovery, got %d requests", len(lister.listRequests))
+	}
+
+	var tr CallToolResult
+	if err := json.Unmarshal(result, &tr); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if !tr.IsError {
+		t.Fatal("expected execute_code error result")
+	}
+	joined := joinContent(tr.Content)
+	if !strings.Contains(joined, "preflight failed before execution") ||
+		!strings.Contains(joined, "no tool calls were dispatched") ||
+		!strings.Contains(joined, "syntax error") {
+		t.Fatalf("missing preflight syntax details:\n%s", joined)
+	}
+	if strings.Contains(joined, "tool call(s) executed") {
+		t.Fatalf("preflight result should not report inner tool calls:\n%s", joined)
+	}
+}
+
+func TestHandleCodeExecute_PreflightPolicyStopsBeforeTools(t *testing.T) {
+	lister := &mockToolLister{
+		tools: map[string]json.RawMessage{
+			"gh-server": toolsJSON(Tool{
+				Name:        "create_issue",
+				InputSchema: json.RawMessage(`{"type":"object","properties":{"title":{"type":"string"}}}`),
+			}),
+		},
+	}
+	h, _ := newTestHandler(lister, []store.DownstreamServer{
+		{ID: "gh-server", ToolNamespace: "github", Discovery: "static"},
+	})
+
+	params, _ := json.Marshal(CallToolRequest{
+		Name:      "mcpx__execute_code",
+		Arguments: json.RawMessage(`{"code": "eval(\"github.create_issue({title:'bug'})\");"}`),
+	})
+	result, rpcErr := h.handleToolsCall(context.Background(), params)
+	if rpcErr != nil {
+		t.Fatalf("unexpected RPC error: %s", rpcErr.Message)
+	}
+	if lister.callCount != 0 {
+		t.Fatalf("preflight must stop before downstream calls, got %d", lister.callCount)
+	}
+	if len(lister.listRequests) != 0 {
+		t.Fatalf("preflight must stop before tool discovery, got %d requests", len(lister.listRequests))
+	}
+
+	var tr CallToolResult
+	if err := json.Unmarshal(result, &tr); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	joined := joinContent(tr.Content)
+	if !tr.IsError ||
+		!strings.Contains(joined, "eval is not allowed in code mode") ||
+		!strings.Contains(joined, "no tool calls were dispatched") {
+		t.Fatalf("missing preflight policy details:\n%s", joined)
+	}
+}
+
 // joinContent concatenates every text block in an MCP CallToolResult.
 // Lives in the test file to keep the helper close to its only use site.
 func joinContent(content []ToolContent) string {
