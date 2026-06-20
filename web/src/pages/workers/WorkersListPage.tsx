@@ -100,10 +100,15 @@ export function WorkersListPage() {
 
   async function handleToggle(row: WorkerSummary) {
     const target = !row.enabled
+    const ok = target
+      ? 'Worker resumed'
+      : row.last_run_status === 'running'
+        ? 'Worker paused; active run cancelling'
+        : 'Worker paused'
     await withRow(
       row.id,
       () => (target ? resumeWorker(row.id) : pauseWorker(row.id)),
-      target ? 'Worker resumed' : 'Worker paused',
+      ok,
     )
   }
 

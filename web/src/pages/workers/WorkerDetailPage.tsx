@@ -145,7 +145,11 @@ export function WorkerDetailPage() {
           doAction(
             'enable',
             () => (w.enabled ? pauseWorker(w.id) : resumeWorker(w.id)),
-            w.enabled ? 'Worker paused' : 'Worker resumed',
+            w.enabled
+              ? liveRun
+                ? 'Worker paused; active run cancelling'
+                : 'Worker paused'
+              : 'Worker resumed',
           )
         }
         onRunNow={() =>

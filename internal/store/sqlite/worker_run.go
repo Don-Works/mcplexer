@@ -253,6 +253,35 @@ func (d *DB) ListWorkerRuns(
 	return out, rows.Err()
 }
 
+// ListRunningWorkerRuns returns every currently running run for one worker.
+// It backs the worker-admin disable path, where an operator expects a
+// pause toggle to stop all active executions, not merely the most recent
+// ledger row.
+func (d *DB) ListRunningWorkerRuns(
+	ctx context.Context, workerID string,
+) ([]*store.WorkerRun, error) {
+	rows, err := d.q.QueryContext(ctx, `
+		SELECT `+workerRunCols+`
+		FROM worker_runs
+		WHERE worker_id = ? AND status = 'running'
+		ORDER BY started_at DESC`,
+		workerID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list running worker_runs: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []*store.WorkerRun
+	for rows.Next() {
+		r, err := scanWorkerRun(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan running worker_run: %w", err)
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
 // CountRunningWorkerRuns returns the number of running-status rows for
 // workerID. Backs the concurrency_policy check before scheduling a new
 // dispatch.

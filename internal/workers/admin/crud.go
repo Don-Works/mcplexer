@@ -175,6 +175,11 @@ func (s *Service) Update(ctx context.Context, in UpdateInput) (*store.Worker, er
 		s.syncScheduleAfterChange(ctx, stored)
 	} else {
 		s.removeScheduleAfterDelete(ctx, stored.ID)
+		if in.Enabled != nil && !*in.Enabled {
+			if err := s.cancelRunningRunsForDisabledWorker(ctx, stored.ID); err != nil {
+				return nil, err
+			}
+		}
 	}
 	return stored, nil
 }
