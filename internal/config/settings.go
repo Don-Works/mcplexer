@@ -119,6 +119,28 @@ type Settings struct {
 	// a bootstrap reinstall on the harness setup page when version drift
 	// is detected, instead of requiring a manual click.
 	AutoUpdateBootstrap bool `json:"auto_update_bootstrap"`
+	// ShellGuardAllowChaining, when true (the default), tells the
+	// PreToolUse shell hook (/v1/hooks/pretool) to STOP hard-blocking
+	// command-chaining metacharacters (`;` `|` `&&` `||` backgrounding `&`
+	// backtick, chaining newlines) and shell substitutions. With chaining
+	// allowed, a metachar-laced Bash command is no longer cheap-blocked; it
+	// falls through to the normal approval pipeline and is audited with the
+	// full command text exactly as before. This trades the chaining
+	// hard-block — which cost agents constant failed iterations — for the
+	// existing approval + audit coverage, which the operator accepts
+	// because every command is allowed anyway and everything is recorded.
+	//
+	// Load-bearing carve-out: this flag ONLY relaxes the chaining /
+	// substitution cheap-block. The mcplexer protected-path / secret guards
+	// (downstream.ValidateLocalBashExec over the WHOLE command line) ALWAYS
+	// fire first and still hard-block, regardless of this flag — so allowing
+	// chaining can never open a hole to ~/.mcplexer DB / secrets / keys /
+	// backups.
+	//
+	// Set false (or MCPLEXER_SHELL_GUARD_ALLOW_CHAINING=0/false) to restore
+	// the historical hard-block on chaining metacharacters without a code
+	// change — the reversible escape hatch.
+	ShellGuardAllowChaining bool `json:"shell_guard_allow_chaining"`
 }
 
 // DefaultSettings returns settings with sensible defaults.
@@ -144,6 +166,7 @@ func DefaultSettings() Settings {
 		},
 		DelegationDisabledProviders: map[string]bool{},
 		AutoUpdateBootstrap:         true,
+		ShellGuardAllowChaining:     true,
 	}
 }
 
@@ -232,6 +255,15 @@ func (s *SettingsService) Load(ctx context.Context) Settings {
 		if err := json.Unmarshal(raw, &settings); err != nil {
 			slog.Warn("failed to parse settings JSON, using defaults", "error", err)
 			settings = DefaultSettings()
+		} else if !jsonHasKey(raw, "shell_guard_allow_chaining") {
+			// Legacy rows persisted before this field existed unmarshal it
+			// as the bool zero value (false), which would silently flip a
+			// long-running install into hard-block mode on upgrade. The new
+			// default is allow-chaining, so backfill missing keys to true.
+			// An operator who explicitly wants hard-block writes
+			// "shell_guard_allow_chaining": false, which IS present and is
+			// honoured.
+			settings.ShellGuardAllowChaining = true
 		}
 	}
 
@@ -428,7 +460,27 @@ func applyEnvOverrides(s Settings) Settings {
 	if v := os.Getenv("MCPLEXER_PURE_MODE"); v != "" {
 		s.PureMode = envBoolDefaultTrue(v)
 	}
+	// ShellGuardAllowChaining defaults ON (allow chaining). Env wins so an
+	// operator can hard-block chaining headlessly with
+	// MCPLEXER_SHELL_GUARD_ALLOW_CHAINING=0/false without a settings PUT.
+	if v := os.Getenv("MCPLEXER_SHELL_GUARD_ALLOW_CHAINING"); v != "" {
+		s.ShellGuardAllowChaining = envBoolDefaultTrue(v)
+	}
 	return s
+}
+
+// jsonHasKey reports whether the top-level JSON object encoded in raw
+// contains key. Used to distinguish "field absent (legacy row)" from
+// "field present and false" for bool settings whose new default is true —
+// a plain json.Unmarshal collapses both to the zero value. Returns false
+// on any decode error or when raw is not a JSON object.
+func jsonHasKey(raw json.RawMessage, key string) bool {
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		return false
+	}
+	_, ok := obj[key]
+	return ok
 }
 
 func envBoolDefaultTrue(v string) bool {

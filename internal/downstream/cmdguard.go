@@ -226,6 +226,34 @@ func ValidateLocalBashExec(command string, args []string) error {
 	return nil
 }
 
+// ValidateLocalBashLine is the whole-command-line sibling of
+// ValidateLocalBashExec. It runs the protected-mcplexer-path check over
+// the ENTIRE command string in one pass — not the exe/args split that
+// ValidateLocalBashExec gets after strings.Fields tokenisation.
+//
+// This matters once command chaining is allowed (ShellGuardAllowChaining):
+// a chained invocation like `echo ok; cat ~/.mcplexer/api-key` or
+// `ls && cat ~/.mcplexer/secrets/foo` must still be blocked because it
+// touches the gateway's own state, even though the chaining metachar is no
+// longer cheap-blocked. Scanning the raw line (rather than relying on the
+// path landing in a cleanly-separated token) keeps that guard load-bearing
+// regardless of how the agent spaces the chain. The same shell-quoting
+// normalisation (sec”rets, se\crets) applies via containsProtectedFragment.
+//
+// Returns nil when the line references no protected path. Like
+// ValidateLocalBashExec it does NOT honour
+// MCPLEXER_UNSAFE_DOWNSTREAM_COMMANDS — protected-path containment is a
+// distinct trust concern from downstream-runner registration.
+func ValidateLocalBashLine(fullCmd string) error {
+	if frag, hit := containsProtectedFragment(fullCmd); hit {
+		return fmt.Errorf(
+			"bash command %q references mcplexer protected path %q",
+			fullCmd, frag,
+		)
+	}
+	return nil
+}
+
 // containsProtectedFragment reports whether s mentions any of the
 // mcplexer on-disk paths that downstream configs are forbidden from
 // touching. Returns the matched fragment so the error message can

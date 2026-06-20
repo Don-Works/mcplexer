@@ -242,3 +242,53 @@ func TestApplyEnvOverrides_RemoteSkillServerURL(t *testing.T) {
 		t.Fatalf("RemoteSkillServerURL = %q", got.RemoteSkillServerURL)
 	}
 }
+
+// TestDefaultSettings_ShellGuardAllowChainingDefaultsOn pins the new
+// default: chaining metachars are allowed (cheap-block lifted) unless the
+// operator opts back into hard-block.
+func TestDefaultSettings_ShellGuardAllowChainingDefaultsOn(t *testing.T) {
+	if !DefaultSettings().ShellGuardAllowChaining {
+		t.Fatal("ShellGuardAllowChaining should default to true (allow chaining)")
+	}
+}
+
+// TestLoadSettings_LegacyRowBackfillsShellGuardAllowChaining covers the
+// upgrade path: a settings row persisted before this field existed has no
+// shell_guard_allow_chaining key. A plain unmarshal would leave it false
+// (hard-block), silently regressing the new allow-chaining default on every
+// existing install. Load must backfill missing keys to true.
+func TestLoadSettings_LegacyRowBackfillsShellGuardAllowChaining(t *testing.T) {
+	st := &mockSettingsStore{
+		raw: json.RawMessage(`{"slim_tools":true,"log_level":"info"}`),
+	}
+	svc := NewSettingsService(st)
+	got := svc.Load(context.Background())
+	if !got.ShellGuardAllowChaining {
+		t.Fatal("legacy row (no key) should backfill ShellGuardAllowChaining=true")
+	}
+}
+
+// TestLoadSettings_ExplicitFalseShellGuardAllowChainingHonoured ensures an
+// operator who deliberately wrote shell_guard_allow_chaining:false (the
+// hard-block opt-in) is NOT overwritten by the legacy backfill — the key is
+// present, so its explicit value wins.
+func TestLoadSettings_ExplicitFalseShellGuardAllowChainingHonoured(t *testing.T) {
+	st := &mockSettingsStore{
+		raw: json.RawMessage(`{"log_level":"info","shell_guard_allow_chaining":false}`),
+	}
+	svc := NewSettingsService(st)
+	got := svc.Load(context.Background())
+	if got.ShellGuardAllowChaining {
+		t.Fatal("explicit shell_guard_allow_chaining:false must be honoured, not backfilled to true")
+	}
+}
+
+// TestApplyEnvOverrides_ShellGuardAllowChaining verifies the env escape
+// hatch can force hard-block headlessly without a settings PUT.
+func TestApplyEnvOverrides_ShellGuardAllowChaining(t *testing.T) {
+	t.Setenv("MCPLEXER_SHELL_GUARD_ALLOW_CHAINING", "0")
+	got := applyEnvOverrides(DefaultSettings())
+	if got.ShellGuardAllowChaining {
+		t.Fatal("MCPLEXER_SHELL_GUARD_ALLOW_CHAINING=0 should force allow-chaining off")
+	}
+}

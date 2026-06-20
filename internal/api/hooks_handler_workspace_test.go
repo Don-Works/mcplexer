@@ -82,6 +82,14 @@ func newWSTestRig(t *testing.T) *wsTestRig {
 		// ListWorkspaces semantics, including ordering + Tags
 		// passthrough that an inline fake would have to mock.
 		workspaces: db,
+		// These rig tests exercise the per-workspace rule/approval
+		// pipeline, and two of them (WorkspaceLookupLongestMatchWins,
+		// WorkspaceLookupNoMatchLeavesEmpty) deliberately use a metachar
+		// command ("ls; foo") to get an INSTANT cheap-block instead of
+		// racing the approval lifecycle. Pin the chaining hard-block ON so
+		// that shortcut still works; the chaining-allowed DEFAULT is covered
+		// in hooks_handler_test.go.
+		shellGuardAllowChaining: func() bool { return false },
 	}
 	return &wsTestRig{t: t, db: db, mgr: mgr, handler: h, audit: aud}
 }

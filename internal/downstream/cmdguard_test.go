@@ -343,3 +343,54 @@ func TestValidateLocalBashExec_AllowsQuotedNonProtectedPaths(t *testing.T) {
 		})
 	}
 }
+
+// TestValidateLocalBashLine_RejectsProtectedPathsInWholeLine proves the
+// whole-command-line scan catches a protected path no matter where it sits
+// in a chained command — the load-bearing guard once chaining is allowed.
+// The exe/args token scan can miss a path glued to a chaining metachar
+// (echo ok;cat ~/.mcplexer/api-key tokenises "ok;cat" + the path, but
+// no-space pathological forms could slip a token split); scanning the raw
+// line removes that dependency.
+func TestValidateLocalBashLine_RejectsProtectedPathsInWholeLine(t *testing.T) {
+	cases := []struct {
+		name string
+		line string
+	}{
+		{"semicolon chain to api-key", "echo ok; cat /Users/example/.mcplexer/api-key"},
+		{"and chain to secrets", "ls && cat /Users/example/.mcplexer/secrets/foo"},
+		{"pipe to db", "echo .dump | sqlite3 /Users/example/.mcplexer/mcplexer.db"},
+		{"no-space chain", "echo ok;cat /Users/example/.mcplexer/api-key"},
+		{"backgrounded p2p", "sleep 1 & ls /Users/example/.mcplexer/p2p"},
+		{"db.age in chain", "true; cp /Users/example/.mcplexer/mcplexer.db.age /tmp/x"},
+		{"quoted-obfuscated in chain", "echo ok; cat /Users/example/.mcplexer/sec''rets/AGE_KEY"},
+		{"backslash-obfuscated in chain", "echo ok; cat /Users/example/.mcplexer/se\\crets/AGE_KEY"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if err := ValidateLocalBashLine(c.line); err == nil {
+				t.Errorf("ValidateLocalBashLine(%q): want reject, got nil", c.line)
+			}
+		})
+	}
+}
+
+// TestValidateLocalBashLine_AllowsBenignLines confirms the whole-line scan
+// does NOT false-positive on legitimate chained commands that never touch
+// ~/.mcplexer.
+func TestValidateLocalBashLine_AllowsBenignLines(t *testing.T) {
+	cases := []string{
+		"echo a; echo b",
+		"grep x f | head",
+		"go build ./... && go test ./...",
+		"cat /tmp/secrets/data.txt", // "secrets" not under .mcplexer
+		"ls -la ~/project; git status",
+		"echo $(date) > /tmp/out",
+	}
+	for _, line := range cases {
+		t.Run(line, func(t *testing.T) {
+			if err := ValidateLocalBashLine(line); err != nil {
+				t.Errorf("ValidateLocalBashLine(%q): want allow, got %v", line, err)
+			}
+		})
+	}
+}

@@ -48,6 +48,16 @@ type hooksHandler struct {
 	// Nil = always off (the historical behaviour). The router wires this
 	// from SettingsSvc.
 	dangerousMode func() bool
+	// shellGuardAllowChaining is the runtime accessor for the
+	// ShellGuardAllowChaining setting. When set and the accessor returns
+	// true (the default), the pretool path stops cheap-blocking command-
+	// chaining metacharacters + substitutions: those commands fall through
+	// to the normal approval + audit path instead of being hard-blocked.
+	// The protected-path / secret guard still runs FIRST and unconditionally
+	// (see pretool), so allowing chaining never opens a hole to ~/.mcplexer.
+	// Nil = treat as the default (allow chaining). The router wires this
+	// from SettingsSvc.
+	shellGuardAllowChaining func() bool
 	// memories is the narrow read surface the session hook uses to
 	// surface a digest of relevant memories at SessionStart (see
 	// hooks_session.go). Nil = no digest; the recall/capture nudges
@@ -130,6 +140,31 @@ func (h *hooksHandler) resolverAllowsMetachars(a *store.ToolApproval) bool {
 		return false
 	}
 	return h.approvalMgr.HasAllowMetacharsMatch(a)
+}
+
+// chainingAllowed reports whether command-chaining metacharacters +
+// substitutions should be allowed through to the approval path rather than
+// cheap-blocked. Nil accessor = the default (allow chaining), so older
+// wirings / tests that don't set it get the new behaviour. This ONLY
+// governs the metachar/substitution cheap-block; the protected-path guard
+// runs regardless.
+func (h *hooksHandler) chainingAllowed() bool {
+	if h.shellGuardAllowChaining == nil {
+		return true
+	}
+	return h.shellGuardAllowChaining()
+}
+
+// dangerousModeProtectedPath runs the protected-mcplexer-path guard over
+// both the whole command line and the exe/args split, returning the first
+// violation. Factored out so the dangerous-mode branch and the normal path
+// apply identical containment — both relax chaining, so both must catch a
+// chained protected path on the raw line, not only on a clean argv token.
+func dangerousModeProtectedPath(fullCmd, exe string, rest []string) error {
+	if err := downstream.ValidateLocalBashLine(fullCmd); err != nil {
+		return err
+	}
+	return downstream.ValidateLocalBashExec(exe, rest)
 }
 
 // auditRecorder is the narrow surface of *audit.Logger we depend on.
@@ -228,7 +263,11 @@ func (h *hooksHandler) pretool(w http.ResponseWriter, r *http.Request) {
 	// asymmetry a prompt-injection could aim at the moment the user
 	// flipped the toggle.
 	if h.dangerousMode != nil && h.dangerousMode() {
-		if err := downstream.ValidateLocalBashExec(exe, rest); err != nil {
+		// Scan the WHOLE command line as well as the exe/args split: like the
+		// chaining-allowed path below, dangerous mode does not cheap-block
+		// chaining, so a chained protected path must be caught on the raw
+		// line, not just on a cleanly-tokenised argv.
+		if err := dangerousModeProtectedPath(fullCmd, exe, rest); err != nil {
 			reason := err.Error() + " (protected paths stay blocked in dangerous mode)"
 			h.recordPretoolAudit(r.Context(), req, exe, fullCmd, "blocked", reason, start)
 			writeJSON(w, http.StatusOK, PreToolHookResponse{
@@ -242,23 +281,52 @@ func (h *hooksHandler) pretool(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Cheap-block: shell metachars and protected-path references. These
-	// never need a human approval — the request is malformed from a
-	// guard perspective and we reject without prompting.
-	//
-	// The metachar block on fullCmd protects against an agent chaining
-	// destructive commands together (`git status; rm -rf $HOME`). It
-	// runs BEFORE the approval resolver by default — but a user who has
-	// explicitly opted into an AllowMetachars rule (typically the amber
-	// "Allow + audit everything" wildcard) is signalling "I trust shell
-	// metachars on this surface, just audit them". When such a rule
-	// matches the current request we fall through to the regular
-	// approval path so the rule actually gets to fire, instead of dying
-	// at this cheap-block. Other rules — even allow rules without the
-	// flag — do NOT lift this block: it's an explicit per-rule opt-in.
 	wsID, wsName := h.resolveWorkspaceFromCWD(r.Context(), req.CWD)
 	a := buildShellApproval(req, fullCmd, exe, description, wsID, wsName)
-	allowMetachars := h.resolverAllowsMetachars(a)
+
+	// Protected-path guard FIRST — and unconditionally. This is the
+	// load-bearing safety property: the mcplexer data-dir lockdown
+	// (DB / secrets / api-key / p2p / backups) must hard-block BEFORE any
+	// chaining decision, so that allowing chaining can never become a hole
+	// to ~/.mcplexer. We scan the WHOLE command line (ValidateLocalBashLine)
+	// so a chained `echo ok; cat ~/.mcplexer/api-key` is caught regardless
+	// of how the agent spaces the chain, AND the exe/args split
+	// (ValidateLocalBashExec) which adds nothing the line scan misses but
+	// preserves the historical per-token error wording. Neither is governed
+	// by ShellGuardAllowChaining or the AllowMetachars opt-in.
+	if err := downstream.ValidateLocalBashLine(fullCmd); err != nil {
+		h.recordPretoolAudit(r.Context(), req, exe, fullCmd, "blocked", err.Error(), start)
+		writeJSON(w, http.StatusOK, PreToolHookResponse{
+			Decision: "block",
+			Reason:   err.Error(),
+		})
+		return
+	}
+	if err := downstream.ValidateLocalBashExec(exe, rest); err != nil {
+		h.recordPretoolAudit(r.Context(), req, exe, fullCmd, "blocked", err.Error(), start)
+		writeJSON(w, http.StatusOK, PreToolHookResponse{
+			Decision: "block",
+			Reason:   err.Error(),
+		})
+		return
+	}
+
+	// Cheap-block: shell metachars + substitutions. Only a guard concern —
+	// no human approval needed; reject without prompting.
+	//
+	// The metachar block on fullCmd protects against an agent chaining
+	// destructive commands together (`git status; rm -rf $HOME`). It is
+	// LIFTED when either:
+	//   - ShellGuardAllowChaining is on (the default): the operator has
+	//     accepted chaining, so the command flows through to the normal
+	//     approval + audit path instead of dying here, OR
+	//   - a matching AllowMetachars rule (typically the amber "Allow +
+	//     audit everything" wildcard) opts this request in explicitly.
+	// In both cases the protected-path guard above has already run, so
+	// nothing reaching ~/.mcplexer can slip through. When chaining is NOT
+	// allowed and no AllowMetachars rule matches, the historical hard-block
+	// stays in force.
+	allowMetachars := h.chainingAllowed() || h.resolverAllowsMetachars(a)
 	if !allowMetachars {
 		if c, ok := shellmeta.ContainsUnquotedMetachar(fullCmd); ok {
 			reason := "shell command contains metacharacter " + string(c)
@@ -278,14 +346,6 @@ func (h *hooksHandler) pretool(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
-	}
-	if err := downstream.ValidateLocalBashExec(exe, rest); err != nil {
-		h.recordPretoolAudit(r.Context(), req, exe, fullCmd, "blocked", err.Error(), start)
-		writeJSON(w, http.StatusOK, PreToolHookResponse{
-			Decision: "block",
-			Reason:   err.Error(),
-		})
-		return
 	}
 
 	approved, err := h.approvalMgr.RequestApproval(r.Context(), a)

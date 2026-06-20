@@ -301,6 +301,14 @@ func NewRouter(deps RouterDeps) http.Handler {
 			hooks.dangerousMode = func() bool {
 				return settingsSvc.Load(context.Background()).DangerousModeEnabled
 			}
+			// Shell-guard chaining accessor. Returning true (the default)
+			// lifts the chaining/substitution cheap-block so metachar-laced
+			// Bash commands flow to the approval + audit path instead of
+			// being hard-blocked. The protected-path guard is unaffected —
+			// it always runs first. Nil-safe — handler defaults to "allow".
+			hooks.shellGuardAllowChaining = func() bool {
+				return settingsSvc.Load(context.Background()).ShellGuardAllowChaining
+			}
 		}
 		mux.HandleFunc("POST /v1/hooks/pretool", hooks.pretool)
 		// Memory-contract session hook. SessionStart injects a recall

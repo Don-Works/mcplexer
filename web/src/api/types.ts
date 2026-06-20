@@ -563,6 +563,15 @@ export interface Settings {
   // automatically triggers a bootstrap reinstall when version drift is
   // detected, instead of requiring a manual click.
   auto_update_bootstrap: boolean
+  // shell_guard_allow_chaining — when true (default), the PreToolUse shell
+  // hook stops hard-blocking command-chaining metacharacters (; | && || &
+  // backtick, chaining newlines) and substitutions; such commands fall
+  // through to the normal approval + audit path instead. The protected-path
+  // / secret guard (~/.mcplexer) always runs first regardless, so allowing
+  // chaining never opens a hole to the gateway's own state. Set false to
+  // restore the historical hard-block. Optional on the wire — legacy rows
+  // and older servers omit it and the backend backfills the default.
+  shell_guard_allow_chaining?: boolean
 }
 
 export interface ToolDescriptionVersion {
