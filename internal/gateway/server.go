@@ -436,6 +436,9 @@ func (s *Server) run(ctx context.Context, r io.Reader, w io.Writer) error {
 		if sr, ok := s.handler.manager.(SessionReleaser); ok {
 			sr.ReleaseSession(s.handler.sessions.sessionID())
 		}
+		// Drop the ephemeral code-mode `session` object held in memory for
+		// this session so it isn't retained for a dead connection.
+		s.handler.clearSessionState(s.handler.sessions.sessionID())
 		// Remove agent from mesh before disconnecting the session.
 		if s.handler.mesh != nil {
 			_ = s.handler.store.DeleteMeshAgent(disconnCtx, s.handler.sessions.sessionID())

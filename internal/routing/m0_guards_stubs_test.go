@@ -94,6 +94,18 @@ func (m *mockRouteStore) PruneExpiredDataCollections(context.Context, time.Time)
 	return 0, nil
 }
 
+func (m *mockRouteStore) SetCodeState(context.Context, *store.CodeStateEntry) error { return nil }
+func (m *mockRouteStore) GetCodeState(context.Context, string, string) (*store.CodeStateEntry, error) {
+	return nil, store.ErrNotFound
+}
+func (m *mockRouteStore) ListCodeState(context.Context, store.CodeStateFilter) ([]store.CodeStateEntry, error) {
+	return nil, nil
+}
+func (m *mockRouteStore) DeleteCodeState(context.Context, string, string) error { return nil }
+func (m *mockRouteStore) PruneExpiredCodeState(context.Context, time.Time) (int, error) {
+	return 0, nil
+}
+
 // M0.1 (Workers) — stubs for the WorkerStore methods. Routing tests
 // don't exercise this surface yet.
 
