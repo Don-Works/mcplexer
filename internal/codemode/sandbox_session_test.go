@@ -102,6 +102,24 @@ func TestSessionStateNotPersistedOnError(t *testing.T) {
 	}
 }
 
+// When session-state is OFF, referencing `session` throws a bare
+// "ReferenceError: session is not defined" — which reads like the agent's bug.
+// The annotation must signpost it as an unavailable feature and point at kv.
+func TestSessionStateDisabledSignpostsReference(t *testing.T) {
+	s := NewSandbox(newMockCaller(), 5*time.Second)
+	res, err := s.Execute(context.Background(), `session.x = 1`, nil)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if res.Error == "" {
+		t.Fatal("expected a ReferenceError for an undefined session")
+	}
+	if !strings.Contains(res.Error, "not available on this connection") ||
+		!strings.Contains(res.Error, "kv.set") {
+		t.Fatalf("expected the session-not-enabled signpost pointing at kv, got: %q", res.Error)
+	}
+}
+
 func TestSessionStateDisabledLeavesNoObject(t *testing.T) {
 	s := NewSandbox(newMockCaller(), 5*time.Second)
 	res, err := s.Execute(context.Background(), `print(typeof session)`, nil)
