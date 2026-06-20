@@ -12,11 +12,11 @@ import (
 )
 
 const (
-	kvDefaultTTLMinutes   = 120        // 2h; hotter scratch than the 24h data workbench
-	kvMaxKeyLen           = 256        // bytes
-	kvMaxValueBytes       = 1 << 20    // 1 MiB per value
-	kvMaxKeysPerWorkspace = 256        // keys per workspace
-	kvMaxTotalBytes       = 16 << 20   // 16 MiB per workspace
+	kvDefaultTTLMinutes   = 120      // 2h; hotter scratch than the 24h data workbench
+	kvMaxKeyLen           = 256      // bytes
+	kvMaxValueBytes       = 1 << 20  // 1 MiB per value
+	kvMaxKeysPerWorkspace = 256      // keys per workspace
+	kvMaxTotalBytes       = 16 << 20 // 16 MiB per workspace
 )
 
 func (h *handler) dispatchKVTool(

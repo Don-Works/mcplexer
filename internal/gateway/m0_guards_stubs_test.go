@@ -91,8 +91,8 @@ func (m *mockStore) GetCodeState(context.Context, string, string) (*store.CodeSt
 func (m *mockStore) ListCodeState(context.Context, store.CodeStateFilter) ([]store.CodeStateEntry, error) {
 	return nil, nil
 }
-func (m *mockStore) DeleteCodeState(context.Context, string, string) error          { return nil }
-func (m *mockStore) PruneExpiredCodeState(context.Context, time.Time) (int, error)  { return 0, nil }
+func (m *mockStore) DeleteCodeState(context.Context, string, string) error         { return nil }
+func (m *mockStore) PruneExpiredCodeState(context.Context, time.Time) (int, error) { return 0, nil }
 
 // M0.1 (Workers) — stubs for the WorkerStore methods. Gateway handler
 // tests don't exercise this surface yet; the runner / admin tools (M0.3,
