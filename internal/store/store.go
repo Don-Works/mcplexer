@@ -44,6 +44,7 @@ type Store interface {
 	BrainIndexStore
 	RecipeStore
 	DataWorkbenchStore
+	CodeStateStore
 	Tx(ctx context.Context, fn func(Store) error) error
 	Ping(ctx context.Context) error
 	Close() error

@@ -129,6 +129,16 @@ type handler struct {
 	// not durable.
 	lastCreatedTaskMu sync.RWMutex
 	lastCreatedTask   map[lastCreatedKey]string
+
+	// sessionState holds the ephemeral per-MCP-session `session` object for
+	// code mode: sessionID -> (key -> JSON value). Snapshotted after each
+	// clean mcpx__execute_code run and rehydrated before the next, so an agent
+	// can build an expensive dataset once and reuse it across calls in the
+	// same session without re-fetching. In-memory only — cleared on
+	// disconnect, lost on restart. Durable, cross-session/restart state is the
+	// separate kv__ tool surface.
+	sessionStateMu sync.RWMutex
+	sessionState   map[string]map[string]json.RawMessage
 }
 
 // lastCreatedKey scopes the "last task this session created" pointer

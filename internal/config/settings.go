@@ -39,17 +39,23 @@ type Settings struct {
 	// via mcpx__search_tools, but doesn't pollute the agent's top-level
 	// tool inventory. Saves ~22k tokens of MCP-tool context per session.
 	// Set false (or MCPLEXER_SLIM_SURFACE=false) to advertise everything.
-	SlimSurface             bool   `json:"slim_surface"`
-	CompactResponses        bool   `json:"compact_responses"`
-	ToolsCacheTTLSec        int    `json:"tools_cache_ttl_sec"`
-	LogLevel                string `json:"log_level"`
-	CodeModeTimeoutSec      int    `json:"code_mode_timeout_sec"`
-	CodeModeMaxOutputBytes  int    `json:"code_mode_max_output_bytes"`
-	MeshEnabled             bool   `json:"mesh_enabled"`
-	MeshReceiveMaxResults   int    `json:"mesh_receive_max_results"`
-	MeshReceivePreviewBytes int    `json:"mesh_receive_preview_bytes"`
-	MeshSendMaxContentBytes int    `json:"mesh_send_max_content_bytes"`
-	P2PEnabled              bool   `json:"p2p_enabled"`
+	SlimSurface            bool   `json:"slim_surface"`
+	CompactResponses       bool   `json:"compact_responses"`
+	ToolsCacheTTLSec       int    `json:"tools_cache_ttl_sec"`
+	LogLevel               string `json:"log_level"`
+	CodeModeTimeoutSec     int    `json:"code_mode_timeout_sec"`
+	CodeModeMaxOutputBytes int    `json:"code_mode_max_output_bytes"`
+	// CodeModeSessionStateMaxBytes caps the total serialized size of the
+	// ephemeral per-session `session` object that mcpx__execute_code snapshots
+	// and rehydrates between calls. Over-cap snapshots are not persisted (the
+	// agent is told to drop keys or use kv__set). The `session` object lives in
+	// gateway memory and is lost on disconnect/restart.
+	CodeModeSessionStateMaxBytes int  `json:"code_mode_session_state_max_bytes"`
+	MeshEnabled                  bool `json:"mesh_enabled"`
+	MeshReceiveMaxResults        int  `json:"mesh_receive_max_results"`
+	MeshReceivePreviewBytes      int  `json:"mesh_receive_preview_bytes"`
+	MeshSendMaxContentBytes      int  `json:"mesh_send_max_content_bytes"`
+	P2PEnabled                   bool `json:"p2p_enabled"`
 	// SanitizerEnvelopeAlways forces every tool result through the
 	// "untrusted-content" envelope, even when no denylist pattern hit.
 	// When false (default), only matched content is enveloped. Wired
@@ -118,20 +124,21 @@ type Settings struct {
 // DefaultSettings returns settings with sensible defaults.
 func DefaultSettings() Settings {
 	return Settings{
-		SlimTools:                 true,
-		SlimSurface:               true,
-		CompactResponses:          true,
-		ToolsCacheTTLSec:          15,
-		LogLevel:                  "info",
-		CodeModeTimeoutSec:        30,
-		CodeModeMaxOutputBytes:    24 * 1024,
-		MeshReceiveMaxResults:     20,
-		MeshReceivePreviewBytes:   512,
-		MeshSendMaxContentBytes:   64 * 1024,
-		TelegramEnabled:           false,
-		DisplayName:               defaultDisplayName(),
-		DescriptionRefinementMode: "manual",
-		ToolDescriptionOverrides:  map[string]string{},
+		SlimTools:                    true,
+		SlimSurface:                  true,
+		CompactResponses:             true,
+		ToolsCacheTTLSec:             15,
+		LogLevel:                     "info",
+		CodeModeTimeoutSec:           30,
+		CodeModeMaxOutputBytes:       24 * 1024,
+		CodeModeSessionStateMaxBytes: 4 * 1024 * 1024,
+		MeshReceiveMaxResults:        20,
+		MeshReceivePreviewBytes:      512,
+		MeshSendMaxContentBytes:      64 * 1024,
+		TelegramEnabled:              false,
+		DisplayName:                  defaultDisplayName(),
+		DescriptionRefinementMode:    "manual",
+		ToolDescriptionOverrides:     map[string]string{},
 		ToolHints: map[string]string{
 			"postgres__query": "Query information_schema.tables and information_schema.columns to discover the schema before writing queries.",
 		},
@@ -288,6 +295,9 @@ func validateSettings(s Settings) error {
 	if s.CodeModeMaxOutputBytes < 1024 || s.CodeModeMaxOutputBytes > 256*1024 {
 		return fmt.Errorf("code_mode_max_output_bytes must be between 1024 and 262144")
 	}
+	if s.CodeModeSessionStateMaxBytes < 1024 || s.CodeModeSessionStateMaxBytes > 64*1024*1024 {
+		return fmt.Errorf("code_mode_session_state_max_bytes must be between 1024 and 67108864")
+	}
 	if s.MeshReceiveMaxResults < 1 || s.MeshReceiveMaxResults > 50 {
 		return fmt.Errorf("mesh_receive_max_results must be between 1 and 50")
 	}
@@ -370,6 +380,11 @@ func applyEnvOverrides(s Settings) Settings {
 	if v := os.Getenv("MCPLEXER_CODE_MODE_MAX_OUTPUT_BYTES"); v != "" {
 		if n, err := parsePositiveInt(v); err == nil {
 			s.CodeModeMaxOutputBytes = n
+		}
+	}
+	if v := os.Getenv("MCPLEXER_CODE_MODE_SESSION_STATE_MAX_BYTES"); v != "" {
+		if n, err := parsePositiveInt(v); err == nil {
+			s.CodeModeSessionStateMaxBytes = n
 		}
 	}
 	if v := os.Getenv("MCPLEXER_MESH_RECEIVE_MAX_RESULTS"); v != "" {

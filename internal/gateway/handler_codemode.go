@@ -268,6 +268,14 @@ func (h *handler) handleCodeExecute(
 	sandbox := codemode.NewSandbox(caller, timeout)
 	sandbox.SetMaxOutputBytes(h.codeModeMaxOutputBytes(ctx))
 
+	// Enable the ephemeral per-session `session` object when we have a stable
+	// MCP session id: rehydrate the prior snapshot so user code can reuse
+	// values built in an earlier call this session.
+	sessionID := h.sessions.sessionID()
+	if sessionID != "" {
+		sandbox.SetSessionState(h.loadSessionState(sessionID), h.codeModeSessionStateMaxBytes(ctx))
+	}
+
 	// Skill context (if any) flows through ctx already — withSkillID and
 	// withSkillAllowlist are set by the API entrypoint before this call.
 	execCtx := withExecutionID(withInternalCodeModeCall(ctx), execID)
@@ -277,6 +285,19 @@ func (h *handler) handleCodeExecute(
 			Code:    CodeInternalError,
 			Message: fmt.Sprintf("code execution failed: %v", err),
 		})
+	}
+
+	// Persist the post-run `session` snapshot for the next call, and surface
+	// any warning (over cap / non-serializable value) to the agent.
+	if sessionID != "" {
+		h.saveSessionState(sessionID, result.SessionState)
+	}
+	if result.SessionStateWarning != "" {
+		if result.Output != "" {
+			result.Output += "\n" + result.SessionStateWarning
+		} else {
+			result.Output = result.SessionStateWarning
+		}
 	}
 
 	slog.Info("code mode execution complete",
@@ -579,6 +600,68 @@ func (h *handler) codeModeMaxOutputBytes(ctx context.Context) int {
 	return codemode.NormalizeMaxOutputBytes(limit)
 }
 
+// codeModeSessionStateMaxBytes caps the total serialized size of the ephemeral
+// per-session `session` object snapshotted between execute_code calls.
+func (h *handler) codeModeSessionStateMaxBytes(ctx context.Context) int {
+	limit := 4 * 1024 * 1024
+	if h.settingsSvc != nil {
+		if n := h.settingsSvc.Load(ctx).CodeModeSessionStateMaxBytes; n > 0 {
+			limit = n
+		}
+	}
+	return limit
+}
+
+// loadSessionState returns a copy of the ephemeral `session` state for an MCP
+// session, or nil when none exists. The copy isolates the gateway's map from
+// sandbox mutation.
+func (h *handler) loadSessionState(sessionID string) map[string]json.RawMessage {
+	if sessionID == "" {
+		return nil
+	}
+	h.sessionStateMu.RLock()
+	defer h.sessionStateMu.RUnlock()
+	cur := h.sessionState[sessionID]
+	if len(cur) == 0 {
+		return nil
+	}
+	out := make(map[string]json.RawMessage, len(cur))
+	for k, v := range cur {
+		out[k] = v
+	}
+	return out
+}
+
+// saveSessionState replaces the ephemeral `session` state for an MCP session
+// with the post-run snapshot. A nil snapshot is ignored (prior state kept); an
+// empty non-nil snapshot clears the session's state (all keys were deleted).
+func (h *handler) saveSessionState(sessionID string, snapshot map[string]json.RawMessage) {
+	if sessionID == "" || snapshot == nil {
+		return
+	}
+	h.sessionStateMu.Lock()
+	defer h.sessionStateMu.Unlock()
+	if len(snapshot) == 0 {
+		delete(h.sessionState, sessionID)
+		return
+	}
+	if h.sessionState == nil {
+		h.sessionState = make(map[string]map[string]json.RawMessage)
+	}
+	h.sessionState[sessionID] = snapshot
+}
+
+// clearSessionState drops all ephemeral `session` state for an MCP session.
+// Called on disconnect so memory isn't retained for dead sessions.
+func (h *handler) clearSessionState(sessionID string) {
+	if sessionID == "" {
+		return
+	}
+	h.sessionStateMu.Lock()
+	defer h.sessionStateMu.Unlock()
+	delete(h.sessionState, sessionID)
+}
+
 func (h *handler) codeModeBuiltinTools() []Tool {
 	var tools []Tool
 	tools = append(tools, searchToolsDefinition())
@@ -605,6 +688,7 @@ func (h *handler) codeModeBuiltinTools() []Tool {
 	}
 	if h.store != nil {
 		tools = append(tools, dataToolDefinitions()...)
+		tools = append(tools, kvToolDefinitions()...)
 	}
 	if h.tasksSvc != nil {
 		tools = append(tools, taskToolDefinitions()...)
@@ -654,6 +738,12 @@ func (h *handler) buildCodeExecuteTool(ctx context.Context) (Tool, bool) {
 			"script before printing. Extract only the fields you need.\n" +
 			"- For lists: print counts, top-N items, or key fields — not full arrays.\n" +
 			"- Use compact(obj) to prune nulls/empties from large objects.\n" +
+			"- Build an expensive dataset once, then reuse it across calls instead of recomputing: " +
+			"assign to the `session` object (session.x = ...) to reuse it in a LATER call in THIS " +
+			"session (in-memory, lost on disconnect/restart; only JSON-serializable values survive, " +
+			"and top-level const/let do NOT persist — assign to session.x). For DURABLE, " +
+			"workspace-scoped values that survive restarts and other sessions, use the kv namespace — " +
+			"kv.set({key, value}) then kv.get({key}).\n" +
 			"- print()/console.log output is capped server-side and marked when truncated.\n\n" +
 			"Calling patterns:\n" +
 			"- Sequential (default): calls return values directly, so you can " +
@@ -684,6 +774,12 @@ func (h *handler) buildCodeExecuteTool(ctx context.Context) (Tool, bool) {
 			"script before printing. Extract only the fields you need.\n" +
 			"- For lists: print counts, top-N items, or key fields — not full arrays.\n" +
 			"- Use compact(obj) to prune nulls/empties from large objects.\n" +
+			"- Build an expensive dataset once, then reuse it across calls instead of recomputing: " +
+			"assign to the `session` object (session.x = ...) to reuse it in a LATER call in THIS " +
+			"session (in-memory, lost on disconnect/restart; only JSON-serializable values survive, " +
+			"and top-level const/let do NOT persist — assign to session.x). For DURABLE, " +
+			"workspace-scoped values that survive restarts and other sessions, use the kv namespace — " +
+			"kv.set({key, value}) then kv.get({key}).\n" +
 			"- print()/console.log output is capped server-side and marked when truncated.\n\n" +
 			"Calling patterns:\n" +
 			"- Sequential (default): calls return values directly, so you can " +
