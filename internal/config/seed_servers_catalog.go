@@ -701,4 +701,20 @@ var defaultDownstreamServers = []store.DownstreamServer{
 		Discovery:     "static",
 		Source:        "default",
 	},
+	{
+		ID:            "data-builtin",
+		Name:          "Data Workbench (code-mode scratch datasets: ingest/query/search)",
+		Transport:     "internal",
+		ToolNamespace: "data",
+		Discovery:     "static",
+		Source:        "default",
+	},
+	{
+		ID:            "kv-builtin",
+		Name:          "Code-mode KV (cross-call scratch key/value)",
+		Transport:     "internal",
+		ToolNamespace: "kv",
+		Discovery:     "static",
+		Source:        "default",
+	},
 }
