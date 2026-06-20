@@ -160,7 +160,7 @@ func workerDeleteToolDef() gateway.Tool {
 func workerPauseToolDef() gateway.Tool {
 	return gateway.Tool{
 		Name:        "pause_worker",
-		Description: "Pause a Worker (sets enabled=false). The scheduler stops firing it; in-flight runs are unaffected. Idempotent — pausing an already-paused worker returns it unchanged.",
+		Description: "Pause a Worker (sets enabled=false) and hard-stop any currently running runs for that worker. The scheduler stops firing it. Idempotent — pausing an already-paused worker returns it unchanged.",
 		InputSchema: schema(props{"id": propStr("Worker ID.")}, []string{"id"}),
 	}
 }
