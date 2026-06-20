@@ -108,7 +108,9 @@ func TestSandbox_HelpShowsKvDataState(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := result.Output
-	for _, want := range []string{"Cross-call state", "kv —", "durable", "data —"} {
+	// The TTL caveat is load-bearing: "durable" without it is a correctness
+	// trap (kv silently expires after 2h), surfaced by a fresh-eyes UX review.
+	for _, want := range []string{"Cross-call state", "kv —", "durable", "2h TTL", "pinned", "data —"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("help() index missing %q, got:\n%s", want, out)
 		}

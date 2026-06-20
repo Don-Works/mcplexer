@@ -157,10 +157,10 @@ func buildStateSection(groups map[string][]toolEntry, sessionEnabled bool, sessi
 		if len(sessionKeys) > 0 {
 			held = "currently holds: " + joinCapped(sessionKeys, 12)
 		}
-		fmt.Fprintf(&b, "\n  • session — in-memory, THIS session only. `session.x = build()` now, read `session.x` in a later call (%s).", held)
+		fmt.Fprintf(&b, "\n  • session — in-memory, THIS session only. `session.x = build()` now, read `session.x` in a later call; `delete session.x` to clear (%s).", held)
 	}
 	if hasKV {
-		b.WriteString("\n  • kv — durable, workspace-scoped (survives restart + other sessions): kv.set({key, value}) then kv.get({key}); a missing key returns null.")
+		b.WriteString("\n  • kv — durable, workspace-scoped (survives restart + other sessions): kv.set({key, value}) then kv.get({key}); a missing key returns null. Heads-up: default 2h TTL — pass pinned:true or ttl_minutes to keep a value longer.")
 	}
 	if hasData {
 		b.WriteString("\n  • data — scratch datasets/tables: data.ingest(...) then data.query(...) / data.search(...).")
