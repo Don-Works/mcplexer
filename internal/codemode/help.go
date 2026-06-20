@@ -25,7 +25,6 @@ var helpGlobalHelpers = []string{
 	"sleep(ms)",
 	"atob(b64) / btoa(str)",
 	"help(), help('namespace')",
-	"session (object; assign session.x = ... to reuse it in a later call this session)",
 }
 
 // makeHelpFunc returns the in-sandbox help() introspection function. With no
@@ -38,7 +37,7 @@ var helpGlobalHelpers = []string{
 // rather than returned, so a bare `help()` statement surfaces something — a
 // small/local model that types `help()` to orient itself must never get a
 // silent empty result because it forgot to wrap the call in print().
-func makeHelpFunc(mu *sync.Mutex, output *outputCapture, groups map[string][]toolEntry) func(goja.FunctionCall) goja.Value {
+func makeHelpFunc(mu *sync.Mutex, output *outputCapture, groups map[string][]toolEntry, sessionObj *goja.Object) func(goja.FunctionCall) goja.Value {
 	// Pre-sort namespace names once at registration time; groups is never
 	// mutated after Execute builds it, so this stays valid for every call.
 	nsNames := make([]string, 0, len(groups))
@@ -56,7 +55,10 @@ func makeHelpFunc(mu *sync.Mutex, output *outputCapture, groups map[string][]too
 			}
 		}
 
-		text := buildHelpIndex(nsNames, groups)
+		// Read the live session keys at call time so the index reflects what the
+		// agent has cached so far this run (including assignments earlier in this
+		// same script). Safe: help() runs on the VM goroutine.
+		text := buildHelpIndex(nsNames, groups, sessionObj != nil, sessionKeysOf(sessionObj))
 		if arg != "" {
 			text = buildHelpNamespace(arg, nsNames, groups)
 		}
@@ -75,7 +77,7 @@ func makeHelpFunc(mu *sync.Mutex, output *outputCapture, groups map[string][]too
 // with its tool count, the global helpers, and a pointer to the per-namespace
 // form. The header restates that calls are synchronous so a model reaching
 // for help() also gets the no-await reminder for free.
-func buildHelpIndex(nsNames []string, groups map[string][]toolEntry) string {
+func buildHelpIndex(nsNames []string, groups map[string][]toolEntry, sessionEnabled bool, sessionKeys []string) string {
 	var b strings.Builder
 	if len(nsNames) == 0 {
 		b.WriteString("No tool namespaces are registered in this sandbox.\n")
@@ -88,6 +90,7 @@ func buildHelpIndex(nsNames []string, groups map[string][]toolEntry) string {
 	}
 	b.WriteString("\nGlobal helpers: ")
 	b.WriteString(strings.Join(helpGlobalHelpers, ", "))
+	b.WriteString(buildStateSection(groups, sessionEnabled, sessionKeys))
 
 	example := "memory"
 	if len(nsNames) > 0 {
@@ -132,6 +135,58 @@ func buildHelpNamespace(arg string, nsNames []string, groups map[string][]toolEn
 		}
 	}
 	return strings.TrimRight(b.String(), "\n")
+}
+
+// buildStateSection renders the cross-call state primitives (session/kv/data)
+// with their semantics, and — for session — the keys currently stored this MCP
+// session, so an agent can see at a glance what it has already cached and reuse
+// it instead of rebuilding. Returns "" when none of the three are available, so
+// help() stays clean in a restricted sandbox. This is the single most useful
+// orientation an agent gets: each call runs a fresh VM, so without it a model
+// re-derives expensive datasets call after call.
+func buildStateSection(groups map[string][]toolEntry, sessionEnabled bool, sessionKeys []string) string {
+	_, hasKV := groups["kv"]
+	_, hasData := groups["data"]
+	if !sessionEnabled && !hasKV && !hasData {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("\n\nCross-call state — each call runs a FRESH VM, so top-level const/let do NOT survive across calls:")
+	if sessionEnabled {
+		held := "currently empty"
+		if len(sessionKeys) > 0 {
+			held = "currently holds: " + joinCapped(sessionKeys, 12)
+		}
+		fmt.Fprintf(&b, "\n  • session — in-memory, THIS session only. `session.x = build()` now, read `session.x` in a later call (%s).", held)
+	}
+	if hasKV {
+		b.WriteString("\n  • kv — durable, workspace-scoped (survives restart + other sessions): kv.set({key, value}) then kv.get({key}); a missing key returns null.")
+	}
+	if hasData {
+		b.WriteString("\n  • data — scratch datasets/tables: data.ingest(...) then data.query(...) / data.search(...).")
+	}
+	return b.String()
+}
+
+// sessionKeysOf returns the own-enumerable keys of the live session object, or
+// nil when session-state is disabled. Read at help() call time so it reflects
+// assignments made earlier in the same script.
+func sessionKeysOf(sessionObj *goja.Object) []string {
+	if sessionObj == nil {
+		return nil
+	}
+	return sessionObj.Keys()
+}
+
+// joinCapped sorts and joins names with ", ", capping at max and appending
+// "+N more" so a session with many keys doesn't blow up the help index.
+func joinCapped(names []string, max int) string {
+	sorted := append([]string(nil), names...)
+	sort.Strings(sorted)
+	if len(sorted) <= max {
+		return strings.Join(sorted, ", ")
+	}
+	return strings.Join(sorted[:max], ", ") + fmt.Sprintf(", +%d more", len(sorted)-max)
 }
 
 // plural returns "s" unless n == 1, for "1 tool" / "3 tools" rendering.

@@ -251,11 +251,25 @@ func (s *Sandbox) Execute(ctx context.Context, code string, tools []ToolDef) (*E
 		return nil, fmt.Errorf("set sleep: %w", err)
 	}
 
+	// Build the ephemeral per-session `session` object (when enabled) BEFORE
+	// registering help(), so help() can show the keys the agent already stored
+	// this MCP session. Rehydrates JSON-serializable values assigned in a prior
+	// execute_code call this session; own enumerable props are re-serialized
+	// into result.SessionState after a clean run.
+	var sessionObj *goja.Object
+	if s.sessionStateEnabled {
+		sessionObj = s.buildSessionObject(vm)
+		if err := vm.Set("session", sessionObj); err != nil {
+			return nil, fmt.Errorf("set session: %w", err)
+		}
+	}
+
 	// Register help() — in-sandbox introspection so a model (especially a
 	// small/local one) can discover the available namespaces and a tool's
 	// signature without a search round-trip or guessing. Writes to the same
-	// capture buffer as print(), so a bare `help()` surfaces output.
-	helpFn := makeHelpFunc(&mu, output, groups)
+	// capture buffer as print(), so a bare `help()` surfaces output. Passed the
+	// live session object so the index shows what's currently cached.
+	helpFn := makeHelpFunc(&mu, output, groups, sessionObj)
 	if err := vm.Set("help", helpFn); err != nil {
 		return nil, fmt.Errorf("set help: %w", err)
 	}
@@ -266,19 +280,6 @@ func (s *Sandbox) Execute(ctx context.Context, code string, tools []ToolDef) (*E
 	// non-throwing, grouped formatter.
 	if err := installNumberLocalePolyfill(vm); err != nil {
 		return nil, fmt.Errorf("install number locale polyfill: %w", err)
-	}
-
-	// Rehydrate the ephemeral per-session `session` object (when enabled) so
-	// user code can read values it assigned in a previous execute_code call in
-	// this MCP session. Only JSON-serializable values survive across calls;
-	// after a clean run the object's own enumerable properties are
-	// re-serialized into result.SessionState below.
-	var sessionObj *goja.Object
-	if s.sessionStateEnabled {
-		sessionObj = s.buildSessionObject(vm)
-		if err := vm.Set("session", sessionObj); err != nil {
-			return nil, fmt.Errorf("set session: %w", err)
-		}
 	}
 
 	// Run watchdog: interrupts the VM on (a) ctx cancel/timeout, (b) heap

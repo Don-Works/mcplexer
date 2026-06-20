@@ -56,6 +56,79 @@ func TestSandbox_HelpIndexListsNamespaces(t *testing.T) {
 	}
 }
 
+// TestSandbox_HelpShowsLiveSessionState asserts help() surfaces the Cross-call
+// state section and lists the keys currently held on `session`, so an agent can
+// see what it already cached instead of rebuilding it.
+func TestSandbox_HelpShowsLiveSessionState(t *testing.T) {
+	sandbox := NewSandbox(newMockCaller(), 5*time.Second)
+	sandbox.SetSessionState(map[string]json.RawMessage{
+		"dataset": json.RawMessage(`{"n":3}`),
+		"counter": json.RawMessage(`0`),
+	}, 1<<20)
+	result, err := sandbox.Execute(context.Background(), `help();`, helpTools())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Error != "" {
+		t.Fatalf("help() must not error: %s", result.Error)
+	}
+	out := result.Output
+	for _, want := range []string{"Cross-call state", "session", "currently holds:", "counter", "dataset"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("help() index missing %q, got:\n%s", want, out)
+		}
+	}
+}
+
+// TestSandbox_HelpSessionEmptyWhenNoKeys asserts the session line says
+// "currently empty" when nothing has been stored yet (so the model knows the
+// mechanism exists but is unused, rather than guessing).
+func TestSandbox_HelpSessionEmptyWhenNoKeys(t *testing.T) {
+	sandbox := NewSandbox(newMockCaller(), 5*time.Second)
+	sandbox.SetSessionState(nil, 1<<20)
+	result, err := sandbox.Execute(context.Background(), `help();`, helpTools())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result.Output, "currently empty") {
+		t.Fatalf("expected an empty-session note, got:\n%s", result.Output)
+	}
+}
+
+// TestSandbox_HelpShowsKvDataState asserts the kv/data bullets appear (with
+// their durable/scratch semantics) only when those namespaces are available.
+func TestSandbox_HelpShowsKvDataState(t *testing.T) {
+	tools := append(helpTools(),
+		ToolDef{Name: "kv__set", InputSchema: json.RawMessage(`{"type":"object"}`)},
+		ToolDef{Name: "data__list", InputSchema: json.RawMessage(`{"type":"object"}`)},
+	)
+	sandbox := NewSandbox(newMockCaller(), 5*time.Second)
+	result, err := sandbox.Execute(context.Background(), `help();`, tools)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := result.Output
+	for _, want := range []string{"Cross-call state", "kv —", "durable", "data —"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("help() index missing %q, got:\n%s", want, out)
+		}
+	}
+}
+
+// TestSandbox_HelpNoStateSectionWhenAbsent asserts the state section is omitted
+// entirely when session is off and neither kv nor data is registered, so a
+// restricted sandbox's help() stays clean.
+func TestSandbox_HelpNoStateSectionWhenAbsent(t *testing.T) {
+	sandbox := NewSandbox(newMockCaller(), 5*time.Second)
+	result, err := sandbox.Execute(context.Background(), `help();`, helpTools())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(result.Output, "Cross-call state") {
+		t.Fatalf("did not expect a state section without session/kv/data, got:\n%s", result.Output)
+	}
+}
+
 // TestSandbox_HelpNamespaceShowsSignatures asserts help('github') prints each
 // tool as a copy-pasteable call signature with its lead-line description.
 func TestSandbox_HelpNamespaceShowsSignatures(t *testing.T) {
