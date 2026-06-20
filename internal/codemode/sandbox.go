@@ -481,13 +481,31 @@ const helpHint = "\nCall help() to list namespaces, or help('namespace') for its
 // form (which adds signatures the inline list doesn't).
 const helpNsHint = "\nCall help('namespace') for a namespace's tools and signatures."
 
+// sessionNotEnabledHint signposts the one case where `session` is undefined:
+// the cross-call session object is only exposed when the connection has a
+// stable MCP session id (SetSessionState was called). When enabled, `session`
+// is ALWAYS a defined object, so "ReferenceError: session is not defined" can
+// only mean the feature is off for this connection — which otherwise reads like
+// the agent's own bug rather than an unavailable feature. Point at the durable
+// alternative so the agent isn't left at a dead end.
+const sessionNotEnabledHint = "\n`session` is not available on this connection — the cross-call session object requires a stable MCP session id. For state that must persist across calls here, use kv.set({key, value}) then kv.get({key}) (durable, workspace-scoped)."
+
 // annotateRuntimeError inspects a Goja runtime error and, when it
 // looks like a typo'd identifier or member access, appends did-you-mean
 // suggestions derived from the registered toolNames. Non-typo errors
 // pass through unchanged so users still see the original Goja diagnostic.
 func annotateRuntimeError(msg string, toolNames []string) string {
-	if m := reReferenceError.FindStringSubmatch(msg); len(m) == 2 && len(toolNames) > 0 {
+	if m := reReferenceError.FindStringSubmatch(msg); len(m) == 2 {
 		bad := m[1]
+		// `session` undefined is special: it means session-state is disabled
+		// for this connection, not a typo. Signpost it (no namespace list needed)
+		// even when toolNames is empty.
+		if bad == "session" {
+			return msg + sessionNotEnabledHint
+		}
+		if len(toolNames) == 0 {
+			return msg
+		}
 		nsList := namespacesOf(toolNames)
 		if len(nsList) == 0 {
 			return msg
