@@ -62,6 +62,18 @@ type ExecutionResult struct {
 	OutputBytesOmitted int              `json:"output_bytes_omitted,omitempty"`
 	ToolCalls          []ToolCallRecord `json:"tool_calls"`
 	Error              string           `json:"error,omitempty"`
+
+	// SessionState is the post-run snapshot of the ephemeral `session`
+	// object — the JSON-serializable own properties an agent assigned to it.
+	// Populated only on a CLEAN run when session-state is enabled
+	// (SetSessionState was called). nil means "leave the persisted state
+	// unchanged" (feature off, the run errored, or the snapshot exceeded the
+	// cap). The gateway persists it keyed by MCP session for the next call.
+	SessionState map[string]json.RawMessage `json:"-"`
+	// SessionStateWarning is surfaced to the agent when the snapshot could
+	// not be fully persisted (over the size cap, or a value was not
+	// JSON-serializable, e.g. a function).
+	SessionStateWarning string `json:"session_state_warning,omitempty"`
 }
 
 // Sandbox executes JavaScript code with tool functions bound as
@@ -76,6 +88,13 @@ type Sandbox struct {
 	heapBreaches    int           // consecutive over-limit ticks before abort; 0 = default
 	maxOutputBytes  int           // captured print output cap; 0 = default
 	toolNames       []string      // all registered tool names, for did-you-mean suggestions
+
+	// sessionStateEnabled exposes a persistent `session` object to user code.
+	// When set, initialSessionState is rehydrated into `session` before the
+	// script runs and the object is snapshotted back out after a clean run.
+	sessionStateEnabled  bool
+	initialSessionState  map[string]json.RawMessage // rehydrated into `session`
+	sessionStateMaxBytes int                        // cap on total serialized snapshot
 }
 
 // NewSandbox creates a sandbox with the given tool caller and timeout.
@@ -96,6 +115,22 @@ func NewSandbox(caller ToolCaller, timeout time.Duration) *Sandbox {
 // are clamped so a bad setting cannot re-open unbounded output growth.
 func (s *Sandbox) SetMaxOutputBytes(n int) {
 	s.maxOutputBytes = NormalizeMaxOutputBytes(n)
+}
+
+// SetSessionState enables the ephemeral, per-session `session` object. `initial`
+// (key -> JSON-encoded value, may be nil/empty) is rehydrated into a global
+// `session` object before the script runs; after a CLEAN run the object's
+// JSON-serializable own properties are snapshotted back into
+// ExecutionResult.SessionState so the gateway can persist them for the next
+// execute_code call in the same MCP session. maxBytes caps the total serialized
+// snapshot (non-positive leaves the existing cap). Calling this is what makes
+// `session` available to user code.
+func (s *Sandbox) SetSessionState(initial map[string]json.RawMessage, maxBytes int) {
+	s.sessionStateEnabled = true
+	s.initialSessionState = initial
+	if maxBytes > 0 {
+		s.sessionStateMaxBytes = maxBytes
+	}
 }
 
 // Execute runs JavaScript code in a fresh Goja VM with tool namespaces
@@ -225,6 +260,19 @@ func (s *Sandbox) Execute(ctx context.Context, code string, tools []ToolDef) (*E
 		return nil, fmt.Errorf("set help: %w", err)
 	}
 
+	// Rehydrate the ephemeral per-session `session` object (when enabled) so
+	// user code can read values it assigned in a previous execute_code call in
+	// this MCP session. Only JSON-serializable values survive across calls;
+	// after a clean run the object's own enumerable properties are
+	// re-serialized into result.SessionState below.
+	var sessionObj *goja.Object
+	if s.sessionStateEnabled {
+		sessionObj = s.buildSessionObject(vm)
+		if err := vm.Set("session", sessionObj); err != nil {
+			return nil, fmt.Errorf("set session: %w", err)
+		}
+	}
+
 	// Run watchdog: interrupts the VM on (a) ctx cancel/timeout, (b) heap
 	// growth past the configured limit. Heap growth is approximate — it
 	// observes the entire process heap, not just this VM — so we only abort
@@ -290,10 +338,92 @@ func (s *Sandbox) Execute(ctx context.Context, code string, tools []ToolDef) (*E
 		default:
 			result.Error = annotateRuntimeError(err.Error(), s.toolNames)
 		}
+		// Do NOT snapshot session state on error/timeout: a partially-mutated
+		// `session` object must not clobber the prior good snapshot.
 		return result, nil
 	}
 
+	// Clean run: snapshot the `session` object so the gateway can persist it
+	// for the next call in this MCP session.
+	if s.sessionStateEnabled && sessionObj != nil {
+		result.SessionState, result.SessionStateWarning =
+			snapshotSessionObject(sessionObj, s.sessionStateMaxBytes)
+	}
+
 	return result, nil
+}
+
+// buildSessionObject constructs the `session` global, rehydrating any
+// JSON-serializable values stored from a prior call in this MCP session.
+func (s *Sandbox) buildSessionObject(vm *goja.Runtime) *goja.Object {
+	obj := vm.NewObject()
+	for k, raw := range s.initialSessionState {
+		var v any
+		if err := json.Unmarshal(raw, &v); err != nil {
+			continue
+		}
+		_ = obj.Set(k, vm.ToValue(v))
+	}
+	return obj
+}
+
+// snapshotSessionObject serializes the own-enumerable properties of the
+// `session` object to JSON for persistence. Non-serializable values (e.g.
+// functions, closures) are skipped and named in the returned warning. If the
+// total serialized size exceeds maxBytes the snapshot is dropped (nil return)
+// so the prior good state is preserved, and a warning explains why. An empty
+// (non-nil) map is returned when the object has no persistable keys, so a
+// fully-cleared `session` is reflected.
+func snapshotSessionObject(obj *goja.Object, maxBytes int) (map[string]json.RawMessage, string) {
+	if obj == nil {
+		return nil, ""
+	}
+	out := make(map[string]json.RawMessage)
+	total := 0
+	var skipped []string
+	for _, k := range obj.Keys() {
+		v := obj.Get(k)
+		if v == nil || goja.IsUndefined(v) {
+			// undefined isn't valid JSON; null is kept (it round-trips).
+			continue
+		}
+		data, ok := safeMarshalExport(v)
+		if !ok {
+			skipped = append(skipped, k)
+			continue
+		}
+		total += len(k) + len(data)
+		out[k] = json.RawMessage(data)
+	}
+	if maxBytes > 0 && total > maxBytes {
+		return nil, fmt.Sprintf(
+			"session state (%d bytes) exceeds the %d-byte cap and was NOT persisted; "+
+				"reduce what you keep on `session`, or use kv__set for large/durable values.",
+			total, maxBytes)
+	}
+	if len(skipped) > 0 {
+		return out, fmt.Sprintf(
+			"session keys not persisted (not JSON-serializable): %s. "+
+				"Functions/closures don't survive across calls; store plain data or use kv__set.",
+			strings.Join(skipped, ", "))
+	}
+	return out, ""
+}
+
+// safeMarshalExport JSON-marshals a goja value's exported form, guarding
+// against Export/Marshal panics (e.g. exotic or cyclic values) so one bad
+// property can never crash the snapshot.
+func safeMarshalExport(v goja.Value) (data []byte, ok bool) {
+	defer func() {
+		if recover() != nil {
+			data, ok = nil, false
+		}
+	}()
+	b, err := json.Marshal(v.Export())
+	if err != nil {
+		return nil, false
+	}
+	return b, true
 }
 
 // timeoutErrorMessage surfaces the wall-clock execution timeout and

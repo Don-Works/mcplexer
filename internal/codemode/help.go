@@ -25,6 +25,7 @@ var helpGlobalHelpers = []string{
 	"sleep(ms)",
 	"atob(b64) / btoa(str)",
 	"help(), help('namespace')",
+	"session (object; assign session.x = ... to reuse it in a later call this session)",
 }
 
 // makeHelpFunc returns the in-sandbox help() introspection function. With no
