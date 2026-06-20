@@ -151,6 +151,63 @@ func TestContainsUnquotedMetachar_DoubleQuoteEscaping(t *testing.T) {
 	yes("echo \"hello `whoami`\"")
 }
 
+func TestContainsUnquotedMetachar_AllowsFdRedirects(t *testing.T) {
+	// File-descriptor redirects use '&' but never introduce a second
+	// command — the token next to '&' is an fd number, '-', or a filename
+	// (a redirect target), never an executable. These were the dominant
+	// false-positive class (every `go test ./... 2>&1` was hard-blocked).
+	allow := []struct {
+		name string
+		cmd  string
+	}{
+		{"merge stderr into stdout", `go test ./... 2>&1`},
+		{"merge both to file", `make build &> log.txt`},
+		{"merge both append", `make build &>> log.txt`},
+		{"dup stdout to stderr", `cmd >&2`},
+		{"explicit fd dup", `cmd 1>&2`},
+		{"input fd dup", `cmd 0<&3`},
+		{"dup with space target", `cmd >& file`},
+		{"close output fd", `cmd >&-`},
+		{"close input fd", `cmd <&-`},
+	}
+	for _, tc := range allow {
+		t.Run(tc.name, func(t *testing.T) {
+			if got, ok := ContainsUnquotedMetachar(tc.cmd); ok {
+				t.Fatalf("ContainsUnquotedMetachar(%q): fd-redirect '&' must not be flagged, got %c", tc.cmd, got)
+			}
+		})
+	}
+}
+
+func TestContainsUnquotedMetachar_FdRedirectDoesNotMaskChaining(t *testing.T) {
+	// Allowing the redirect '&' must NOT let a genuine chain that *follows*
+	// a redirect slip through. The redirect '&' is skipped, but the real
+	// chaining metachar later in the command is still flagged.
+	block := []struct {
+		name   string
+		cmd    string
+		wantCh byte
+	}{
+		{"redirect then logical-and", `cmd 2>&1 && other`, '&'},
+		{"redirect then pipe", `./run 2>&1 | tee out`, '|'},
+		{"redirect then semicolon", `cmd >&2; rm -rf /tmp/x`, ';'},
+		{"redirect then background-and-chain", `cmd &>log & evil`, '&'},
+		{"logical-and not a redirect", `cd x && y`, '&'},
+		{"backgrounding stays blocked", `some-cmd &`, '&'},
+	}
+	for _, tc := range block {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := ContainsUnquotedMetachar(tc.cmd)
+			if !ok {
+				t.Fatalf("ContainsUnquotedMetachar(%q): expected metachar %c, got none", tc.cmd, tc.wantCh)
+			}
+			if got != tc.wantCh {
+				t.Fatalf("ContainsUnquotedMetachar(%q): want %c, got %c", tc.cmd, tc.wantCh, got)
+			}
+		})
+	}
+}
+
 func TestContainsUnquotedMetachar_AllowsHeredocBodyMetachars(t *testing.T) {
 	tests := []string{
 		"cat <<EOF\nhello; world\nEOF",

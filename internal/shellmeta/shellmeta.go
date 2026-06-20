@@ -35,6 +35,17 @@ func ContainsUnquotedMetachar(cmd string) (byte, bool) {
 					}
 				}
 			case ';', '|', '&', '`', '\n', '\r':
+				// A '&' that is part of a file-descriptor redirect
+				// (2>&1, >&2, &>file, 1>&2, 0<&3, <&-) is NOT command
+				// chaining — the token after it is a redirect target
+				// (an fd number or a filename), never an executable. Only
+				// a backgrounding '&' (cmd & next) or '&&' chains a second
+				// command, and those are still flagged below. Skip the
+				// redirect form before any heredoc/chain handling so
+				// `go test ./... 2>&1` stops being a false positive.
+				if c == '&' && isRedirectAmpersand(cmd, i) {
+					continue
+				}
 				// Detect closing delim line for pending heredoc (supports mixed quoted/unquoted)
 				if (c == '\n' || c == '\r') && len(heredocs) > 0 {
 					lineStart := i + 1
@@ -208,6 +219,35 @@ func FindUnquotedSubstitution(cmd string) string {
 		}
 	}
 	return ""
+}
+
+// isRedirectAmpersand reports whether the '&' at cmd[i] is part of a
+// file-descriptor redirect rather than command-chaining or backgrounding.
+// Recognised redirect forms (all bash):
+//
+//	&>file   &>>file        // merge stdout+stderr to a file  ('&' then '>')
+//	>&word   N>&M  >&-      // duplicate/close an output fd    ('>' then '&')
+//	<&word   N<&M  <&-      // duplicate/close an input fd     ('<' then '&')
+//
+// In every one of these the token adjacent to '&' is a redirect target (an
+// fd number, '-', or a filename) — never an executable — so the '&' cannot
+// introduce a second command and is safe to ignore. It deliberately does
+// NOT match '&&' (logical-AND chains a command) or a lone backgrounding
+// '&' (cmd & next runs next as a separate command); both stay flagged by
+// the caller. cmd[i] is assumed to be '&'.
+func isRedirectAmpersand(cmd string, i int) bool {
+	// &> / &>> : '&' immediately followed by '>'. A following '&' ('&&')
+	// is logical-AND, not a redirect, so require the next byte to be '>'.
+	if i+1 < len(cmd) && cmd[i+1] == '>' {
+		return true
+	}
+	// >& / <& : '&' immediately preceded by '>' or '<' (an fd-dup redirect
+	// such as 2>&1 or 0<&3). An optional leading fd number before the
+	// '>'/'<' is irrelevant here — we only need the byte just before '&'.
+	if i > 0 && (cmd[i-1] == '>' || cmd[i-1] == '<') {
+		return true
+	}
+	return false
 }
 
 func parseHeredocRedirect(cmd string, i int) (delim string, quoted bool, next int, ok bool) {
