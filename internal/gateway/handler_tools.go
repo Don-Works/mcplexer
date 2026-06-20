@@ -899,6 +899,8 @@ var builtinDownstreamIDs = map[string]struct{}{
 	"task-builtin":   {},
 	"skill-builtin":  {},
 	"brain-builtin":  {},
+	"data-builtin":   {},
+	"kv-builtin":     {},
 }
 
 // isMeshTool returns true if the tool is a mesh tool (mesh__ prefix).

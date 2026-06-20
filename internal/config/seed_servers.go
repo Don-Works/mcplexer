@@ -68,6 +68,8 @@ func ensureRequiredDefaultServers(ctx context.Context, s store.Store, existing [
 		"task-builtin",
 		"skill-builtin",
 		"brain-builtin",
+		"data-builtin",
+		"kv-builtin",
 		"notion",
 		obsidianServerID,
 		aikidoServerID,

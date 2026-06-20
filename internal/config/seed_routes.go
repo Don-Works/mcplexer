@@ -153,6 +153,35 @@ var defaultRouteRules = []store.RouteRule{
 		Source:             "default",
 	},
 	{
+		// data__* (workbench scratch) and kv__* (code-mode key/value) are
+		// code-mode-only built-ins dispatched in-process by handleBuiltinCall.
+		// Each routes to its own internal server whose ToolNamespace matches
+		// the tool prefix — the routing namespace guard (engine.matchRoute)
+		// rejects a rule whose downstream namespace doesn't prefix the tool,
+		// so they cannot share mcpx-builtin (ns "mcpx"). Without these rules
+		// the tools fall to global-deny → "no matching route".
+		ID:                 "data-allow",
+		Name:               "Allow data workbench tools",
+		Priority:           95,
+		WorkspaceID:        "global",
+		PathGlob:           "**",
+		ToolMatch:          json.RawMessage(`["data__*"]`),
+		DownstreamServerID: "data-builtin",
+		Policy:             "allow",
+		Source:             "default",
+	},
+	{
+		ID:                 "kv-allow",
+		Name:               "Allow code-mode kv tools",
+		Priority:           95,
+		WorkspaceID:        "global",
+		PathGlob:           "**",
+		ToolMatch:          json.RawMessage(`["kv__*"]`),
+		DownstreamServerID: "kv-builtin",
+		Policy:             "allow",
+		Source:             "default",
+	},
+	{
 		ID:        "global-deny",
 		Priority:  0,
 		PathGlob:  "**",
@@ -216,6 +245,8 @@ func ensureRequiredDefaultRouteRules(ctx context.Context, s store.Store, existin
 		"memory-allow",
 		"task-allow",
 		"brain-allow",
+		"data-allow",
+		"kv-allow",
 		hammerspoonRouteID,
 	}
 

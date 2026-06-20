@@ -763,11 +763,21 @@ func toolsJSON(tools ...Tool) json.RawMessage {
 }
 
 func newTestHandler(lister ToolLister, servers []store.DownstreamServer) (*handler, *mockStore) {
-	// Always include the mcpx-builtin virtual server for built-in tool routing.
-	allServers := append(servers, store.DownstreamServer{
-		ID: "mcpx-builtin", Name: "MCPlexer Built-in Tools",
-		Transport: "internal", ToolNamespace: "mcpx", Discovery: "static",
-	})
+	// Always include the internal virtual servers for built-in tool routing.
+	allServers := append(servers,
+		store.DownstreamServer{
+			ID: "mcpx-builtin", Name: "MCPlexer Built-in Tools",
+			Transport: "internal", ToolNamespace: "mcpx", Discovery: "static",
+		},
+		store.DownstreamServer{
+			ID: "data-builtin", Name: "Data Workbench",
+			Transport: "internal", ToolNamespace: "data", Discovery: "static",
+		},
+		store.DownstreamServer{
+			ID: "kv-builtin", Name: "Code-mode KV",
+			Transport: "internal", ToolNamespace: "kv", Discovery: "static",
+		},
+	)
 	ms := &mockStore{
 		servers:    allServers,
 		capUpdates: make(map[string]json.RawMessage),
@@ -779,6 +789,24 @@ func newTestHandler(lister ToolLister, servers []store.DownstreamServer) (*handl
 					Priority: 100, PathGlob: "**", Policy: "allow",
 					ToolMatch:          json.RawMessage(`["mcpx__*"]`),
 					DownstreamServerID: "mcpx-builtin",
+				},
+				{
+					// Mirror production seed_routes: data__/kv__ code-mode
+					// builtins dispatch via dedicated internal servers whose
+					// namespace matches the tool prefix (the routing namespace
+					// guard rejects a mismatched downstream). Sits above
+					// allow-all so they reach handleBuiltinCall instead of the
+					// empty-downstream fallback.
+					ID: "data-allow", WorkspaceID: "ws-global",
+					Priority: 95, PathGlob: "**", Policy: "allow",
+					ToolMatch:          json.RawMessage(`["data__*"]`),
+					DownstreamServerID: "data-builtin",
+				},
+				{
+					ID: "kv-allow", WorkspaceID: "ws-global",
+					Priority: 95, PathGlob: "**", Policy: "allow",
+					ToolMatch:          json.RawMessage(`["kv__*"]`),
+					DownstreamServerID: "kv-builtin",
 				},
 				{
 					ID: "allow-all", WorkspaceID: "ws-global",
