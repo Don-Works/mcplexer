@@ -467,6 +467,12 @@ export interface DelegationModelCapacity {
   accounting_known?: boolean
   cost_usd: number
   avg_duration_ms: number
+  // exploration_bonus is the UCB-style optimism folded into capacity_score for
+  // an under-sampled candidate (decays to ~0 as runs accrue). exploring marks a
+  // fresh/rarely-tried model the ranker is still boosting — a "new / promising"
+  // option to try, not yet a proven default.
+  exploration_bonus?: number
+  exploring?: boolean
 }
 
 export interface ListDelegationCapacityParams {

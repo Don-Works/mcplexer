@@ -109,6 +109,61 @@ func CapacityScoreForModelCandidateForTest(
 	}, r, taskKind)
 }
 
+// ExplorationSettledRunsForTest exposes the run count past which a candidate
+// leaves the explore phase, so surfacing tests don't hardcode the constant.
+func ExplorationSettledRunsForTest() int { return explorationSettledRuns }
+
+// ExplorationBonusForTest exposes the UCB-style optimism term so tests can
+// isolate it from the proven-quality terms in the capacity score.
+func ExplorationBonusForTest(runs, success, operationalFailures int) float64 {
+	r := &delegationCandidateRank{
+		runs:                runs,
+		success:             success,
+		operationalFailures: operationalFailures,
+	}
+	return r.explorationBonus()
+}
+
+// ExplorationStateForTest exposes the explore-phase / anti-thrash predicates
+// for the surfacing tests.
+func ExplorationStateForTest(runs, success, operationalFailures int) (underSampled, thrashed bool) {
+	r := delegationCandidateRank{
+		runs:                runs,
+		success:             success,
+		operationalFailures: operationalFailures,
+	}
+	return r.underSampled(), r.explorationThrashed()
+}
+
+// CapacityScoreWithReliabilityForTest exposes capacity scoring with the
+// operational-failure and running counters set, so anti-thrash and
+// broken-model demotion can be table-tested directly against the score.
+func CapacityScoreWithReliabilityForTest(
+	provider, modelID, endpoint, label string,
+	runs, success, failure, running, operationalFailures, unknownCostRuns, reviews int,
+	reviewScore float64,
+	taskKind string,
+) float64 {
+	r := &delegationCandidateRank{
+		runs:                runs,
+		success:             success,
+		failure:             failure,
+		running:             running,
+		operationalFailures: operationalFailures,
+		unknownCostRuns:     unknownCostRuns,
+		reviews:             reviews,
+		recencyScore:        reviewScore,
+	}
+	return capacityScoreForCandidate(delegationResolvedModelCandidate{
+		DelegationModelCandidate: DelegationModelCandidate{
+			Label:            label,
+			ModelProvider:    provider,
+			ModelID:          modelID,
+			ModelEndpointURL: endpoint,
+		},
+	}, r, taskKind)
+}
+
 func AnnotateDeliverableForTest(run *store.WorkerRun) {
 	annotateDeliverable(run)
 }
