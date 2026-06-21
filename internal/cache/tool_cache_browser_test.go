@@ -6,6 +6,7 @@ func TestIsCacheable_BrowserToolsNotCachedByDefault(t *testing.T) {
 	tc := NewToolCache(map[string]ServerCacheConfig{
 		"agent_browser": DefaultServerCacheConfig(),
 		"browser":       DefaultServerCacheConfig(),
+		"brw":           DefaultServerCacheConfig(),
 		"playwright":    DefaultServerCacheConfig(),
 		"puppeteer":     DefaultServerCacheConfig(),
 	})
@@ -20,6 +21,8 @@ func TestIsCacheable_BrowserToolsNotCachedByDefault(t *testing.T) {
 		{"agent_browser navigate", "agent_browser", "agent_browser__browser_navigate", false},
 		{"agent_browser screenshot", "agent_browser", "agent_browser__browser_screenshot", false},
 		{"browser list tabs", "browser", "browser__browser_list_tabs", false},
+		{"brw list tabs", "brw", "brw__brw_list_tabs", false},
+		{"brw read-style tool", "tools", "brw__brw_read", false},
 		{"playwright list tabs", "playwright", "playwright__browser_list_tabs", false},
 		{"puppeteer navigate", "puppeteer", "puppeteer__browser_navigate", false},
 		{"normal get on browser server", "agent_browser", "agent_browser__get_status", false},
@@ -79,6 +82,9 @@ func TestParseServerCacheConfigMergesDefaults(t *testing.T) {
 	}
 	if !matchesAny("browser_list_tabs", cfg.NoCacheablePatterns) {
 		t.Fatal("missing no_cacheable_patterns should inherit browser defaults")
+	}
+	if !matchesAny("brw_read", cfg.NoCacheablePatterns) {
+		t.Fatal("missing no_cacheable_patterns should inherit brw defaults")
 	}
 
 	cfg, err = ParseServerCacheConfig([]byte(`{"enabled":false}`))

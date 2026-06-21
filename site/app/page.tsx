@@ -190,7 +190,7 @@ const integrationGroups = [
   ["Code", "GitHub", "Linear", "ClickUp", "Vercel"],
   ["Comms", "Slack", "Gmail", "Calendar", "Telegram", "OpenWA"],
   ["Data", "Postgres", "SQLite", "fetch", "customer MCP"],
-  ["Browser", "agent_browser", "Playwright", "Hammerspoon"],
+  ["Browser", "brw", "Playwright", "Hammerspoon"],
   ["Content", "WordPress", "WooCommerce", "Obsidian", "Excalidraw"],
   ["AI", "LM Studio", "model providers", "skills", "memory", "task", "mesh"],
 ];

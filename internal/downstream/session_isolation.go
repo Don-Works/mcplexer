@@ -40,6 +40,7 @@ func BrowserSessionIDFromContext(ctx context.Context) string {
 // Mirrors the breadth of the cache layer's isBrowserAutomationServer so the
 // "don't cache" and "don't share the process" decisions stay in lock-step.
 var browserIsolationHints = []string{
+	"brw",        // brw visible Chrome control
 	"browser",    // agent_browser, browser-use, any *browser* server id/ns
 	"playwright", // @playwright/mcp, playwright-mcp
 	"puppeteer",  // puppeteer MCP servers

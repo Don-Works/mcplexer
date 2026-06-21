@@ -18,6 +18,7 @@ func TestShouldIsolatePerSession(t *testing.T) {
 		want bool
 	}{
 		{"playwright by id", store.DownstreamServer{ID: "playwright", ToolNamespace: "playwright"}, true},
+		{"brw by id", store.DownstreamServer{ID: "brw", ToolNamespace: "brw"}, true},
 		{"agent_browser by id", store.DownstreamServer{ID: "agent_browser", ToolNamespace: "agent_browser"}, true},
 		{"puppeteer by namespace", store.DownstreamServer{ID: "p1", ToolNamespace: "puppeteer"}, true},
 		{"browser-use by command", store.DownstreamServer{ID: "auto", ToolNamespace: "auto", Command: "uvx", Args: json.RawMessage(`["browser-use-mcp"]`)}, true},
