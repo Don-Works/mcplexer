@@ -1,5 +1,9 @@
 # MCPlexer
 
+[![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-2ea4e0.svg)](LICENSE)
+[![Go](https://img.shields.io/badge/Go-1.25%2B-2ea4e0.svg)](https://go.dev)
+[![Website](https://img.shields.io/badge/website-mcplexer.com-2ea4e0.svg)](https://mcplexer.com)
+
 Directory-scoped MCP routing and tool control. Like [direnv](https://direnv.net) for MCP.
 
 Route, scope, and secure every AI tool call based on your working directory. Local-first. Auditable. Open source.
@@ -196,6 +200,14 @@ task lint             # go vet + golangci-lint
 - **Frontend:** React 19, TypeScript, Vite, Tailwind CSS v4, shadcn/ui
 - **Encryption:** [filippo.io/age](https://filippo.io/age) for secrets at rest
 - **Config:** YAML ([gopkg.in/yaml.v3](https://pkg.go.dev/gopkg.in/yaml.v3))
+
+## Ecosystem
+
+MCPlexer is part of [Don Works](https://donworks.co.uk) — open source by [Revitt](https://revitt.co).
+
+- **[brw](https://github.com/Don-Works/brw)** — semantic browser control for agents: a real, visible Chrome exposed over MCP and HTTP.
+- **[Don Works](https://donworks.co.uk)** — the umbrella brand for Revitt's open-source work ([github.com/Don-Works](https://github.com/Don-Works)).
+- **[Revitt](https://revitt.co)** — the parent company behind Don Works.
 
 ## License
 
