@@ -628,7 +628,20 @@ func (h *handler) handleToolsCall(
 	result = h.sanitizeToolResult(ctx, result, req.Name)
 
 	// Compact verbose JSON responses to reduce token consumption.
-	if h.compactResponseEnabled(ctx) {
+	//
+	// Skip for internal code-mode calls: CompactToolResult turns an
+	// array-of-objects into the columnar {_cols,_rows,_fixed} shape, which is
+	// great for a model reading a tools/call result directly but breaks JS
+	// consumers inside mcpx__execute_code — `result.map`, `result.filter`,
+	// `result[i].field`, and `Array.isArray(result)` all fail on a columnar
+	// object. The sandbox must receive a naturally iterable plain array. Token
+	// economy on the code-mode path is handled downstream and on demand:
+	// `compactForSandbox` still prunes nulls/empties (more aggressively — it
+	// also strips pagination keys) before the value reaches JS, and `print()`
+	// / the opt-in `compact()` helper re-derive the columnar table from the
+	// plain value at render time. So skipping here costs no tokens the agent
+	// didn't ask to spend; it only keeps the consumed VALUE iterable.
+	if h.compactResponseEnabled(ctx) && !isInternalCodeModeCall(ctx) {
 		result = h.compactor.CompactToolResult(result)
 	}
 

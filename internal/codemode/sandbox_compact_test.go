@@ -331,3 +331,69 @@ func TestSandbox_LastCallMetaSurface(t *testing.T) {
 		t.Fatalf("want _lastCallMeta surfaced, got %q", result.Output)
 	}
 }
+
+// TestSandbox_ArrayResultIsNaturallyIterable guards the contract that a
+// tool-call result which is an array of >=3 objects reaches JS as a plain,
+// iterable array — NOT the columnar {_cols,_rows,_fixed} shape. An agent must
+// be able to call result.map / result.filter / result.find and read
+// result[i].field directly. (The columnar transform is applied — by design —
+// only to the value handed to a direct tools/call client, and on demand by the
+// print()/compact() helpers; it must never reach the value the code consumes.)
+//
+// Regression for: agent ran list_model_profiles().map(p=>p.id), got nothing /
+// read "0 profiles" because the result arrived as {_cols,_rows,_fixed}.
+func TestSandbox_ArrayResultIsNaturallyIterable(t *testing.T) {
+	caller := newMockCaller()
+	// A 3+-object homogeneous array — exactly the shape CompactArray would
+	// columnarize if it ran on the value path.
+	caller.responses["mcplexer__list_model_profiles"] = json.RawMessage(
+		`{"content":[{"type":"text","text":"[{\"id\":\"p1\",\"name\":\"fast\"},{\"id\":\"p2\",\"name\":\"smart\"},{\"id\":\"p3\",\"name\":\"cheap\"}]"}]}`,
+	)
+	tools := []ToolDef{{
+		Name:        "mcplexer__list_model_profiles",
+		InputSchema: json.RawMessage(`{"type":"object","properties":{}}`),
+	}}
+
+	sb := NewSandbox(caller, 5*time.Second)
+	result, err := sb.Execute(context.Background(), `
+const r = mcplexer.list_model_profiles({});
+const ids = r.map(p => p.id).join(",");
+print("isArray=" + Array.isArray(r) + " len=" + r.length + " first=" + r[0].name + " ids=" + ids);`,
+		tools,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Error != "" {
+		t.Fatalf("unexpected sandbox error (columnar value would break .map/[i]): %s", result.Error)
+	}
+	want := "isArray=true len=3 first=fast ids=p1,p2,p3\n"
+	if result.Output != want {
+		t.Fatalf("array result not naturally iterable.\n want: %q\n got:  %q", want, result.Output)
+	}
+}
+
+// TestSandbox_ArrayValuePathNeverColumnar asserts the property directly at the
+// value-conversion seam: compactForSandbox + parseToolResultValue must hand
+// back a plain []any for an array-of-objects payload, never a columnar map.
+// This is the unit-level backstop for the Execute-level test above.
+func TestSandbox_ArrayValuePathNeverColumnar(t *testing.T) {
+	raw := json.RawMessage(
+		`{"content":[{"type":"text","text":"[{\"id\":1,\"name\":\"a\"},{\"id\":2,\"name\":\"b\"},{\"id\":3,\"name\":\"c\"}]"}]}`,
+	)
+	val, errText := parseToolResultValue(compactForSandbox(raw))
+	if errText != "" {
+		t.Fatalf("parse error: %s", errText)
+	}
+	arr, ok := val.([]any)
+	if !ok {
+		t.Fatalf("value path produced %T, want []any (columnar {_cols,_rows,_fixed} leaked to JS)", val)
+	}
+	if len(arr) != 3 {
+		t.Fatalf("want 3 elements, got %d: %#v", len(arr), arr)
+	}
+	first, ok := arr[0].(map[string]any)
+	if !ok || first["name"] != "a" {
+		t.Fatalf("element[0].name not readable: %#v", arr[0])
+	}
+}
