@@ -161,6 +161,12 @@ func (b *InternalBackend) Call(
 	if workerToolNames[toolName] {
 		return b.callWorker(ctx, toolName, args), nil
 	}
+	// Model-profile admin tools share the same *admin.Service the worker
+	// tools use (it holds the ModelProfileStore), so they short-circuit
+	// the (store, args) handler map the same way.
+	if modelProfileToolNames[toolName] {
+		return b.callModelProfile(ctx, toolName, args), nil
+	}
 	// Backup tools need the *backup.Service that lives on InternalBackend,
 	// so they don't fit the (store, args) signature of the regular handler
 	// map. Dispatch them here before the map lookup.

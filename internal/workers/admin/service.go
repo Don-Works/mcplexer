@@ -226,6 +226,24 @@ func (s *Service) RunBus() *runner.RunBus {
 	return s.runBus
 }
 
+// ErrModelProfilesUnavailable is returned by the ModelProfiles facade
+// when no ModelProfileStore was wired into the Service. The MCP handler
+// layer maps it to a structured "not available" errorResult instead of
+// nil-panicking.
+var ErrModelProfilesUnavailable = errors.New("model profile store not available")
+
+// ModelProfiles returns a ModelProfileCore backed by the Service's wired
+// store, or nil when no store was injected. The CWD-gated MCP tools in
+// internal/control reach the SAME validation + Builtin/secret rules as
+// the HTTP handlers through this accessor — there is exactly one core
+// implementation, so the two surfaces cannot drift.
+func (s *Service) ModelProfiles() *ModelProfileCore {
+	if s.modelProfiles == nil {
+		return nil
+	}
+	return NewModelProfileCore(s.modelProfiles)
+}
+
 // defaultSpecValidator accepts any non-empty trimmed string, plus the
 // manual sentinel (schedule_spec="manual" → mesh / RunNow only). Real
 // production wiring uses scheduler.NextRun.
