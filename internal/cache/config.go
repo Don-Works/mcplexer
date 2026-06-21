@@ -39,7 +39,7 @@ var DefaultMutationPatterns = []string{
 // even if they also match a cacheable pattern. Browser automation and
 // stateful session tools return ephemeral state that changes between calls.
 var DefaultNoCacheablePatterns = []string{
-	"browser_*", "agent_browser_*", "playwright_*", "puppeteer_*",
+	"brw_*", "browser_*", "agent_browser_*", "playwright_*", "puppeteer_*",
 	"navigate_*", "screenshot_*",
 }
 

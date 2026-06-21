@@ -175,7 +175,10 @@ func stripNamespace(toolName string) string {
 
 func isBrowserAutomationServer(serverID string) bool {
 	id := strings.ToLower(serverID)
-	return strings.Contains(id, "browser") ||
+	return id == "brw" ||
+		strings.Contains(id, "brw-") ||
+		strings.Contains(id, "brw_") ||
+		strings.Contains(id, "browser") ||
 		strings.Contains(id, "playwright") ||
 		strings.Contains(id, "puppeteer")
 }
