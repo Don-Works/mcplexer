@@ -203,11 +203,11 @@ task lint             # go vet + golangci-lint
 
 ## Ecosystem
 
-MCPlexer is part of [Don Works](https://donworks.co.uk) — open source by [Revitt](https://revitt.co).
+MCPlexer is part of [Don Works](https://donworks.co.uk/?utm_source=mcplexer&utm_medium=readme&utm_campaign=donworks_oss) — open source by [Revitt](https://revitt.co/?utm_source=mcplexer&utm_medium=readme&utm_campaign=donworks_oss).
 
-- **[brw](https://github.com/Don-Works/brw)** — semantic browser control for agents: a real, visible Chrome exposed over MCP and HTTP.
-- **[Don Works](https://donworks.co.uk)** — the umbrella brand for Revitt's open-source work ([github.com/Don-Works](https://github.com/Don-Works)).
-- **[Revitt](https://revitt.co)** — the parent company behind Don Works.
+- **[brw](https://brw.donworks.co.uk/?utm_source=mcplexer&utm_medium=readme&utm_campaign=donworks_oss)** — semantic browser control for agents: a real, visible Chrome exposed over MCP and HTTP ([github.com/Don-Works/brw](https://github.com/Don-Works/brw)).
+- **[Don Works](https://donworks.co.uk/?utm_source=mcplexer&utm_medium=readme&utm_campaign=donworks_oss)** — the umbrella brand for Revitt's open-source work ([github.com/Don-Works](https://github.com/Don-Works)).
+- **[Revitt](https://revitt.co/?utm_source=mcplexer&utm_medium=readme&utm_campaign=donworks_oss)** — the parent company behind Don Works.
 
 ## License
 
