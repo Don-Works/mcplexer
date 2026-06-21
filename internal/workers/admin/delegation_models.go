@@ -20,6 +20,34 @@ const (
 	delegationModelSelectionCapacity   = "capacity"
 )
 
+const (
+	// explorationWeight is the UCB-style optimism granted to an unsampled
+	// candidate, decayed by 1/sqrt(runs+1). A freshly-registered model
+	// (0 runs) gets the full bonus so it floats ABOVE proven incumbents in
+	// capacity ranking and is scheduled soon after registration; the bonus
+	// fades as runs accrue (≈+60 at 0 runs, ≈+27 at 4 runs, ≈+19 at 9 runs,
+	// ≈+11 at 30 runs) so exploit naturally takes over from explore. The
+	// weight is sized so a 0-run candidate (base ≈54 after the unreviewed
+	// penalty) clears a strongly-reviewed, fully-reliable incumbent (EWMA
+	// ≈85 + reliability ≈+10 + its own small ≈+11 decayed bonus ≈106): the
+	// newcomer scores ≈114, a comfortable ~8pt lift. Without this a 0-run
+	// unreviewed candidate scores ~46-54 while a proven reviewed model
+	// scores its 70-90 EWMA, so the newcomer is never SELECTED → never
+	// accrues runs/reviews → stuck forever.
+	explorationWeight = 60.0
+	// explorationSettledRuns is the run count past which a candidate is no
+	// longer "under-sampled": the exploration flag clears and the decayed
+	// bonus is small. Used to surface a "new / promising" marker on the
+	// capacity row while a candidate is still in the explore phase.
+	explorationSettledRuns = 8
+	// explorationFailureCutoff is the anti-thrash guard. Once a candidate
+	// has accumulated this many operational (adapter/launch) failures with
+	// no successful run, the exploration bonus is suppressed entirely so a
+	// genuinely-broken model (e.g. the mimo 400 "Not supported model"
+	// dispatch deaths) stops being force-explored forever.
+	explorationFailureCutoff = 3
+)
+
 func (s *Service) resolveDelegationModelCandidates(
 	ctx context.Context,
 	in *DelegationInput,
@@ -582,6 +610,41 @@ func (r delegationCandidateRank) averageDuration() int64 {
 	return (r.durationMS - r.unknownDurationMS) / int64(known)
 }
 
+// explorationThrashed reports whether the anti-thrash guard has tripped:
+// the candidate keeps dying at the adapter/launch stage (operational
+// failures) and has produced no successful run. Such a model is genuinely
+// broken — keep exploring it and we just burn parallelism on a launch that
+// never gets off the pad. Once tripped, the exploration bonus is withheld
+// so the candidate falls to its (low) base score and stops being scheduled.
+func (r delegationCandidateRank) explorationThrashed() bool {
+	return r.operationalFailures >= explorationFailureCutoff && r.success == 0
+}
+
+// explorationBonus returns the UCB-style optimism added to the capacity
+// score for an under-sampled candidate. It decays as 1/sqrt(runs+1) so a
+// brand-new (0-run) model floats near the top of the ranking and is
+// scheduled soon, then the bonus fades as the model accrues its own runs.
+// The bonus is suppressed entirely once the anti-thrash guard trips
+// (operational failures with no success), so a broken adapter is not
+// force-explored forever.
+func (r delegationCandidateRank) explorationBonus() float64 {
+	if r.explorationThrashed() {
+		return 0
+	}
+	return explorationWeight / math.Sqrt(float64(r.runs)+1)
+}
+
+// underSampled reports whether the candidate is still in the explore phase:
+// it has fewer than explorationSettledRuns runs and has not been demoted by
+// the anti-thrash guard. Surfaced on the capacity row so the UI + agents can
+// mark a fresh model as "new / promising".
+func (r delegationCandidateRank) underSampled() bool {
+	if r.explorationThrashed() {
+		return false
+	}
+	return r.runs < explorationSettledRuns
+}
+
 func capacityScoreForCandidate(
 	c delegationResolvedModelCandidate,
 	r *delegationCandidateRank,
@@ -625,7 +688,25 @@ func capacityScoreForCandidate(
 			score -= 8
 		}
 	}
+	// Explore/exploit: lift under-sampled candidates with UCB-style optimism
+	// so a freshly-registered model is scheduled soon after registration
+	// instead of being starved by proven incumbents (the cold-start trap).
+	// The bonus decays with runs (1/sqrt(runs+1)) and is withheld entirely
+	// once the anti-thrash guard trips, so a broken adapter is not explored
+	// forever. Added on top of every existing nuanced term — it changes WHEN
+	// a model is tried, not how its proven quality is measured.
+	score += capacityExplorationBonus(r)
 	return score
+}
+
+// capacityExplorationBonus returns the exploration optimism for a candidate
+// rank, treating a nil rank (a candidate the ledger has never seen) the same
+// as a 0-run rank so a brand-new model still floats up.
+func capacityExplorationBonus(r *delegationCandidateRank) float64 {
+	if r == nil {
+		return explorationWeight
+	}
+	return r.explorationBonus()
 }
 
 func candidateNeedsConservativeRouting(c delegationResolvedModelCandidate) bool {

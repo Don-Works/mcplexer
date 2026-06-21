@@ -54,6 +54,17 @@ type DelegationModelCapacity struct {
 	AccountingKnown bool    `json:"accounting_known"`
 	CostUSD         float64 `json:"cost_usd"`
 	AvgDurationMS   int64   `json:"avg_duration_ms"`
+	// ExplorationBonus is the UCB-style optimism (1/sqrt(runs+1)) folded into
+	// CapacityScore for an under-sampled candidate. It is the portion of the
+	// score that exists to get a new/rarely-tried model SCHEDULED rather than
+	// to measure its proven quality, and decays to ~0 as runs accrue. Withheld
+	// once the anti-thrash guard trips (operational failures, no success).
+	ExplorationBonus float64 `json:"exploration_bonus,omitempty"`
+	// Exploring marks a candidate the ranker is still optimistically boosting:
+	// under explorationSettledRuns runs and not demoted by the anti-thrash
+	// guard. The UI + agents use it to present the model as "new / promising"
+	// — a good option to try, not yet a proven default.
+	Exploring bool `json:"exploring,omitempty"`
 }
 
 func (s *Service) ListDelegationModelCapacity(
@@ -114,6 +125,11 @@ func (s *Service) ListDelegationModelCapacity(
 		row.OutputModalities = resolved.OutputModalities
 		row.Available = true
 		row.CapacityScore = capacityScoreForCandidate(resolved, rank, in.TaskKind)
+		// Surface the explore/exploit signal so the UI + agents can mark a
+		// fresh model as "new / promising". A nil rank is a never-seen
+		// candidate — treat it as fully under-sampled.
+		row.ExplorationBonus = capacityExplorationBonus(rank)
+		row.Exploring = rank == nil || rank.underSampled()
 		if rank != nil {
 			row.Runs = rank.runs
 			row.Success = rank.success

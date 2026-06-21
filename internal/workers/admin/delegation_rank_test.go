@@ -53,7 +53,11 @@ func TestDelegationRankRatesCLIMissingAccounting(t *testing.T) {
 
 func TestCapacityScoreUsesNeutralReliabilityWhenAccountingMissing(t *testing.T) {
 	const review = 80.0
-	cliScore := admin.CapacityScoreForCandidateForTest(3, 3, 0, 3, 1, review, "coding")
+	// Subtract the explore/exploit optimism so this case isolates the
+	// accounting/reliability terms it is about. A 3-run candidate still
+	// carries a (decayed) exploration bonus folded into the capacity score.
+	explore := admin.ExplorationBonusForTest(3, 3, 0)
+	cliScore := admin.CapacityScoreForCandidateForTest(3, 3, 0, 3, 1, review, "coding") - explore
 	poisonedScore := review + (0.0-0.5)*20 - 4
 	neutralScore := review - 4
 	if math.Abs(cliScore-neutralScore) > 0.01 {

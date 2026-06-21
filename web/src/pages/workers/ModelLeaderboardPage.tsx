@@ -169,7 +169,18 @@ function LeaderboardRow({ row, rank }: { row: DelegationModelCapacity; rank: num
       <TableCell className="text-right font-mono text-xs text-muted-foreground">{rank}</TableCell>
       <TableCell>
         <div className="min-w-0">
-          <div className="truncate text-sm font-medium">{modelLabel}</div>
+          <div className="flex items-center gap-1.5">
+            <span className="truncate text-sm font-medium">{modelLabel}</span>
+            {row.exploring ? (
+              <Badge
+                variant="outline"
+                className="shrink-0 rounded-sm border-violet-400/50 px-1.5 py-0 text-[10px] text-violet-300"
+                title={`New / under-sampled — boosted by +${formatScore(row.exploration_bonus ?? 0)} so it gets scheduled and proves itself`}
+              >
+                new
+              </Badge>
+            ) : null}
+          </div>
           <div className="truncate font-mono text-[11px] text-muted-foreground">{modelKey}</div>
           {row.capability_tags && row.capability_tags.length > 0 ? (
             <div className="mt-1 flex flex-wrap gap-1">
