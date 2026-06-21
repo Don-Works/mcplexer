@@ -377,6 +377,18 @@ func allTools() []gateway.Tool {
 		workerInstallTemplateToolDef(),
 		workerListTemplatesToolDef(),
 
+		// Model profiles — reusable provider+endpoint+secret+known-models
+		// bundles a Worker references by id. The known_models list is the
+		// delegation candidate pool; this CRUD surface lets an admin agent
+		// curate it without raw SQL (parity with the REST + dashboard
+		// surface). Builtin rows refuse mutate/delete.
+		modelProfileListToolDef(),
+		modelProfileGetToolDef(),
+		modelProfileCreateToolDef(),
+		modelProfileUpdateToolDef(),
+		modelProfileSetKnownModelsToolDef(),
+		modelProfileDeleteToolDef(),
+
 		// M0.7 — MCP-only admin parity: cost rollup + tool discovery.
 		workerCostAggregateToolDef(),
 		listAvailableToolsToolDef(),
@@ -519,12 +531,18 @@ var adminTools = map[string]bool{
 	"create_worker":             true,
 	"update_worker":             true,
 	"delete_worker":             true,
-	"pause_worker":              true,
-	"resume_worker":             true,
-	"run_worker_now":            true,
-	"cancel_worker_run":         true,
-	"approve_worker_approval":   true,
-	"reject_worker_approval":    true,
+	// Model profiles — list/get are read-only (visible to read-only admin
+	// sessions, like list_workers); the mutators below require admin.
+	"create_model_profile":           true,
+	"update_model_profile":           true,
+	"set_model_profile_known_models": true,
+	"delete_model_profile":           true,
+	"pause_worker":                   true,
+	"resume_worker":                  true,
+	"run_worker_now":                 true,
+	"cancel_worker_run":              true,
+	"approve_worker_approval":        true,
+	"reject_worker_approval":         true,
 	// M3 — publishable Worker templates. publish + install mutate the
 	// registry / worker catalog. list_worker_templates is read-only.
 	"publish_worker_as_template": true,

@@ -28,8 +28,20 @@ import (
 // ModelProfileHandlers exposes the five CRUD endpoints. Wired into the
 // router by the main package — this file deliberately does not import
 // any routing/mux types so the package stays HTTP-framework neutral.
+//
+// All mutation + validation lives in ModelProfileCore (see
+// model_profile_service.go); these handlers are pure transport — decode
+// the request, call the core, map the typed result/error onto an HTTP
+// status code. The CWD-gated MCP tools call the SAME core, so the two
+// surfaces can never drift on the Builtin / secret-required rules.
 type ModelProfileHandlers struct {
 	Store store.ModelProfileStore
+}
+
+// core lazily wraps Store in a ModelProfileCore. Constructed per-call so
+// the router wiring (which only sets Store) stays unchanged.
+func (h *ModelProfileHandlers) core() *ModelProfileCore {
+	return NewModelProfileCore(h.Store)
 }
 
 // validProviders is the closed set the validator accepts. Adding a new
@@ -52,13 +64,10 @@ const maxProfileNameLen = 80
 
 // List returns every ModelProfile ordered by name ASC.
 func (h *ModelProfileHandlers) List(w http.ResponseWriter, r *http.Request) {
-	profiles, err := h.Store.ListModelProfiles(r.Context())
+	profiles, err := h.core().List(r.Context())
 	if err != nil {
 		mpWriteError(w, http.StatusInternalServerError, "failed to list model profiles")
 		return
-	}
-	if profiles == nil {
-		profiles = []store.ModelProfile{}
 	}
 	mpWriteJSON(w, http.StatusOK, profiles)
 }
@@ -66,7 +75,7 @@ func (h *ModelProfileHandlers) List(w http.ResponseWriter, r *http.Request) {
 // Get returns one ModelProfile by id (path value "id").
 func (h *ModelProfileHandlers) Get(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	p, err := h.Store.GetModelProfile(r.Context(), id)
+	p, err := h.core().Get(r.Context(), id)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			mpWriteError(w, http.StatusNotFound, "model profile not found")
@@ -86,70 +95,63 @@ func (h *ModelProfileHandlers) Create(w http.ResponseWriter, r *http.Request) {
 		mpWriteError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	if err := validateModelProfile(&p); err != nil {
-		mpWriteErrorDetail(w, http.StatusBadRequest, "invalid model profile", err.Error())
-		return
-	}
-	// Builtin is daemon-managed — refuse to let the API mint a builtin row.
-	p.Builtin = false
-	if err := h.Store.CreateModelProfile(r.Context(), &p); err != nil {
+	created, err := h.core().Create(r.Context(), &p)
+	if err != nil {
 		if errors.Is(err, store.ErrAlreadyExists) {
 			mpWriteError(w, http.StatusConflict, "model profile name already exists")
+			return
+		}
+		if isModelProfileValidationErr(err) {
+			mpWriteErrorDetail(w, http.StatusBadRequest, "invalid model profile", err.Error())
 			return
 		}
 		mpWriteErrorDetail(w, http.StatusInternalServerError,
 			"failed to create model profile", err.Error())
 		return
 	}
-	mpWriteJSON(w, http.StatusCreated, p)
+	mpWriteJSON(w, http.StatusCreated, created)
 }
 
 // Update overwrites every mutable field on the profile (after
 // validation). Refuses to mutate Builtin=true rows. Returns 404 when
 // the row is missing, 409 on unique-name conflict.
+//
+// The REST contract is a full replace: every body field maps to a patch
+// field (including the zero value), so omitted fields are cleared just as
+// they were before the core refactor. The MCP update tool, by contrast,
+// uses a sparse patch (omit = unchanged).
 func (h *ModelProfileHandlers) Update(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	existing, err := h.Store.GetModelProfile(r.Context(), id)
-	if err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			mpWriteError(w, http.StatusNotFound, "model profile not found")
-			return
-		}
-		mpWriteError(w, http.StatusInternalServerError, "failed to get model profile")
-		return
-	}
-	if existing.Builtin {
-		mpWriteError(w, http.StatusForbidden,
-			"cannot modify builtin model profile")
-		return
-	}
 	var p store.ModelProfile
 	if err := mpDecodeJSON(r, &p); err != nil {
 		mpWriteError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	p.ID = id
-	// Builtin is daemon-managed; preserve whatever the existing row had
-	// (which we've already confirmed is false here).
-	p.Builtin = existing.Builtin
-	if err := validateModelProfile(&p); err != nil {
-		mpWriteErrorDetail(w, http.StatusBadRequest, "invalid model profile", err.Error())
-		return
+	patch := ModelProfilePatch{
+		Name:          &p.Name,
+		Provider:      &p.Provider,
+		EndpointURL:   &p.EndpointURL,
+		SecretScopeID: &p.SecretScopeID,
+		KnownModels:   &p.KnownModels,
 	}
-	if err := h.Store.UpdateModelProfile(r.Context(), &p); err != nil {
-		if errors.Is(err, store.ErrAlreadyExists) {
-			mpWriteError(w, http.StatusConflict, "model profile name already exists")
-			return
-		}
-		if errors.Is(err, store.ErrNotFound) {
+	updated, err := h.core().Update(r.Context(), id, patch)
+	if err != nil {
+		switch {
+		case errors.Is(err, store.ErrNotFound):
 			mpWriteError(w, http.StatusNotFound, "model profile not found")
-			return
+		case errors.Is(err, ErrModelProfileBuiltin):
+			mpWriteError(w, http.StatusForbidden, "cannot modify builtin model profile")
+		case errors.Is(err, store.ErrAlreadyExists):
+			mpWriteError(w, http.StatusConflict, "model profile name already exists")
+		case isModelProfileValidationErr(err):
+			mpWriteErrorDetail(w, http.StatusBadRequest, "invalid model profile", err.Error())
+		default:
+			mpWriteErrorDetail(w, http.StatusInternalServerError,
+				"failed to update model profile", err.Error())
 		}
-		mpWriteErrorDetail(w, http.StatusInternalServerError,
-			"failed to update model profile", err.Error())
 		return
 	}
-	mpWriteJSON(w, http.StatusOK, p)
+	mpWriteJSON(w, http.StatusOK, updated)
 }
 
 // Delete hard-deletes the row. Refuses to delete Builtin rows.
@@ -157,26 +159,15 @@ func (h *ModelProfileHandlers) Update(w http.ResponseWriter, r *http.Request) {
 // NULL by the FK's ON DELETE SET NULL clause (migration 056).
 func (h *ModelProfileHandlers) Delete(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	existing, err := h.Store.GetModelProfile(r.Context(), id)
-	if err != nil {
-		if errors.Is(err, store.ErrNotFound) {
+	if err := h.core().Delete(r.Context(), id); err != nil {
+		switch {
+		case errors.Is(err, store.ErrNotFound):
 			mpWriteError(w, http.StatusNotFound, "model profile not found")
-			return
+		case errors.Is(err, ErrModelProfileBuiltin):
+			mpWriteError(w, http.StatusForbidden, "cannot delete builtin model profile")
+		default:
+			mpWriteError(w, http.StatusInternalServerError, "failed to delete model profile")
 		}
-		mpWriteError(w, http.StatusInternalServerError, "failed to get model profile")
-		return
-	}
-	if existing.Builtin {
-		mpWriteError(w, http.StatusForbidden,
-			"cannot delete builtin model profile")
-		return
-	}
-	if err := h.Store.DeleteModelProfile(r.Context(), id); err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			mpWriteError(w, http.StatusNotFound, "model profile not found")
-			return
-		}
-		mpWriteError(w, http.StatusInternalServerError, "failed to delete model profile")
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
