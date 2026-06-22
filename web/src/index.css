@@ -15,8 +15,8 @@
   --color-popover: hsl(224 14% 9%);
   --color-popover-foreground: hsl(210 20% 93%);
 
-  /* ── Primary: electric cyan-blue accent ── */
-  --color-primary: hsl(205 95% 55%);
+  /* ── Primary: electric violet accent (mcplexer brand #a06cff) ── */
+  --color-primary: hsl(261 95% 55%);
   --color-primary-foreground: hsl(225 14% 5%);
 
   /* ── Secondary: subtle elevated surface ── */
@@ -28,8 +28,8 @@
   --color-muted-foreground: hsl(215 14% 63%);
 
   /* ── Accent: matches primary glow ── */
-  --color-accent: hsl(205 90% 14%);
-  --color-accent-foreground: hsl(205 95% 65%);
+  --color-accent: hsl(261 90% 14%);
+  --color-accent-foreground: hsl(261 95% 65%);
 
   /* ── Destructive: red-orange tint ── */
   --color-destructive: hsl(0 72% 51%);
@@ -38,20 +38,20 @@
   /* ── Borders & inputs ── */
   --color-border: hsl(224 12% 18%);
   --color-input: hsl(224 12% 18%);
-  --color-ring: hsl(205 95% 55%);
+  --color-ring: hsl(261 95% 55%);
 
   /* ── Sidebar: matches the deep dark theme ── */
   --color-sidebar-background: hsl(226 16% 4%);
   --color-sidebar-foreground: hsl(215 14% 65%);
-  --color-sidebar-primary: hsl(205 95% 55%);
+  --color-sidebar-primary: hsl(261 95% 55%);
   --color-sidebar-primary-foreground: hsl(225 14% 5%);
   --color-sidebar-accent: hsl(224 12% 11%);
   --color-sidebar-accent-foreground: hsl(210 20% 93%);
   --color-sidebar-border: hsl(224 12% 16%);
-  --color-sidebar-ring: hsl(205 95% 55%);
+  --color-sidebar-ring: hsl(261 95% 55%);
 
   /* ── Chart colors: vibrant palette for data viz ── */
-  --color-chart-1: hsl(205 95% 55%);
+  --color-chart-1: hsl(261 95% 55%);
   --color-chart-2: hsl(160 70% 45%);
   --color-chart-3: hsl(280 65% 60%);
   --color-chart-4: hsl(40 90% 55%);
@@ -80,7 +80,7 @@
 @keyframes audit-in {
   from {
     opacity: 0;
-    background-color: hsl(205 95% 55% / 0.08);
+    background-color: hsl(261 95% 55% / 0.08);
   }
   to {
     opacity: 1;
@@ -110,9 +110,9 @@
   background-image: linear-gradient(
     90deg,
     transparent 0%,
-    hsl(205 95% 55% / 0.08) 45%,
-    hsl(205 95% 55% / 0.18) 50%,
-    hsl(205 95% 55% / 0.08) 55%,
+    hsl(261 95% 55% / 0.08) 45%,
+    hsl(261 95% 55% / 0.18) 50%,
+    hsl(261 95% 55% / 0.08) 55%,
     transparent 100%
   );
   background-size: 200% 100%;
@@ -129,7 +129,7 @@
     background-image: linear-gradient(
       90deg,
       transparent 0%,
-      hsl(205 95% 55% / 0.12) 50%,
+      hsl(261 95% 55% / 0.12) 50%,
       transparent 100%
     );
     background-position: 0 0;
@@ -194,7 +194,7 @@
 
   /* Selection highlight with accent color */
   ::selection {
-    background-color: hsl(205 95% 55% / 0.25);
+    background-color: hsl(261 95% 55% / 0.25);
     color: hsl(210 20% 95%);
   }
 
