@@ -1,8 +1,8 @@
 # MCPlexer
 
-[![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-a06cff.svg)](LICENSE)
-[![Go](https://img.shields.io/badge/Go-1.25%2B-a06cff.svg)](https://go.dev)
-[![Website](https://img.shields.io/badge/website-mcplexer.com-a06cff.svg)](https://mcplexer.com)
+[![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-3b82f6.svg)](LICENSE)
+[![Go](https://img.shields.io/badge/Go-1.25%2B-3b82f6.svg)](https://go.dev)
+[![Website](https://img.shields.io/badge/website-mcplexer.com-3b82f6.svg)](https://mcplexer.com)
 
 Directory-scoped MCP routing and tool control. Like [direnv](https://direnv.net) for MCP.
 

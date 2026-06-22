@@ -5,9 +5,9 @@ This guide is based on the public MCPlexer website style and is intended for reu
 ## 1. Brand Direction
 
 - Tone: technical, security-focused, local-first, terminal-native.
-- Aesthetic: dark control-plane UI with violet (`#a06cff`) as the primary signal color.
+- Aesthetic: dark control-plane UI with electric blue (`#3b82f6`) as the primary signal color.
 - Personality: precise, trustworthy, minimal marketing fluff.
-- Part of the Don Works dot-peen family — DonWorks lime (~75°), brw cyan/magenta (~190°), mcplexer violet (~275°) — all sharing the same cyan + red RGB-split glitch ghosts. The brand mark is a 5×7 pin-stamp dot-matrix wordmark (`MCP` / `LEXER`); cyan stays a secondary data-accent.
+- Part of the Don Works dot-peen family — DonWorks lime (~75°), brw magenta (~315°), mcplexer electric blue (~217°) — all sharing the same cyan + red RGB-split glitch ghosts. The brand mark is a 5×7 pin-stamp dot-matrix wordmark of the full word `MCPLEXER` (MCP + multiplexer); cyan stays a secondary data-accent.
 
 ## 2. Design Tokens
 
@@ -15,22 +15,22 @@ Use these as CSS variables in every project:
 
 ```css
 :root {
-  --color-bg: #0a0810;
-  --color-bg-alt: #07060c;
-  --color-surface: #14101e;
-  --color-surface-hover: #1a1528;
-  --color-surface-elevated: #1e1830;
-  --color-border: #251f3a;
-  --color-border-hover: #3a2f5c;
+  --color-bg: #0a0b10;
+  --color-bg-alt: #07080c;
+  --color-surface: #12131a;
+  --color-surface-hover: #1a1b24;
+  --color-surface-elevated: #1e1f2a;
+  --color-border: #1e2030;
+  --color-border-hover: #2a2d42;
 
-  --color-text: #e7e3f2;
-  --color-text-muted: #9b93b3;
-  --color-text-dim: #645c7e;
+  --color-text: #e0e4ef;
+  --color-text-muted: #8b90a0;
+  --color-text-dim: #5a5f72;
 
-  /* brand — violet */
-  --color-violet: #a06cff;
-  --color-violet-light: #c0a0ff;
-  --color-violet-dark: #7d4fe0;
+  /* brand — electric blue */
+  --color-blue: #3b82f6;
+  --color-blue-light: #60a5fa;
+  --color-blue-dark: #2563eb;
 
   /* dot-peen glitch ghosts (also used as secondary data-accents) */
   --color-cyan: #19e6ff;
@@ -69,7 +69,7 @@ Use these as CSS variables in every project:
 - Optional noise layer using low-opacity SVG turbulence.
 - Optional radial vignette in hero.
 - Accent effects:
-- Violet glow (`glow-violet` / `glow-violet-sm`) for hero terminal and final CTA.
+- Blue glow (`glow-blue` / `glow-blue-sm`) for hero terminal and final CTA.
 - `text-gradient` only for short emphasis text.
 
 ## 6. Motion
