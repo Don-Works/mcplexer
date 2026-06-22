@@ -256,19 +256,35 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
   )
 }
 
+const MX_FONT: Record<string, string[]> = {
+  M: ['10001', '11011', '10101', '10101', '10001', '10001', '10001'],
+  X: ['10001', '10001', '01010', '00100', '01010', '10001', '10001'],
+}
+
+// Dot-peen "MX" monogram — same 5x7 pin-stamp matrix as the MCPLEXER wordmark.
 function McplexerLogo({ className }: { className?: string }) {
+  const p = 12
+  const glyphW = 4 * p, gap = p * 1.45, r = p * 0.34, padX = p * 1.6, padY = p * 1.6
+  const lineW = 2 * glyphW + gap
+  const width = +(lineW + padX * 2 + 2 * r).toFixed(2)
+  const height = +(6 * p + 2 * r + padY * 2).toFixed(2)
+  const dots: { cx: number; cy: number }[] = []
+  let cx0 = (width - lineW) / 2 + r
+  const oy = padY + r
+  for (const ch of 'MX') {
+    const rows = MX_FONT[ch]
+    for (let y = 0; y < 7; y++)
+      for (let x = 0; x < 5; x++)
+        if (rows[y][x] === '1') dots.push({ cx: +(cx0 + x * p).toFixed(2), cy: +(oy + y * p).toFixed(2) })
+    cx0 += glyphW + gap
+  }
   return (
-    <svg
-      viewBox="0 0 32 32"
-      fill="none"
-      className={className}
-      xmlns="http://www.w3.org/2000/svg"
-    >
-      <path d="M3 7H9L17 16" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
-      <path d="M3 16H17" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
-      <path d="M3 25H9L17 16" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
-      <path d="M17 16H29" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
-      <circle cx="17" cy="16" r="2.5" fill="currentColor" />
+    <svg viewBox={`0 0 ${width} ${height}`} className={className} xmlns="http://www.w3.org/2000/svg" aria-label="MCPlexer" role="img">
+      <g fill="currentColor">
+        {dots.map((d, i) => (
+          <circle key={i} cx={d.cx} cy={d.cy} r={r} />
+        ))}
+      </g>
     </svg>
   )
 }
