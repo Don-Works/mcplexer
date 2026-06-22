@@ -276,9 +276,12 @@ function McplexerLogo({ className }: { className?: string }) {
 function BrandHeader() {
   return (
     <div className="flex h-14 items-center gap-2.5 border-b border-sidebar-border px-4">
-      <McplexerLogo className="h-5 w-5 text-primary" />
-      <span className="text-[15px] font-semibold tracking-tight text-foreground">
-        MCPlexer
+      <span className="relative inline-flex items-center justify-center">
+        <McplexerLogo className="relative z-10 h-5 w-5 text-primary" />
+        <span className="absolute inset-0 bg-primary/20 blur-md" aria-hidden="true" />
+      </span>
+      <span className="font-mono text-[15px] font-bold uppercase tracking-tight text-foreground">
+        MCPLEXER
       </span>
     </div>
   )
