@@ -40,6 +40,8 @@ func run() error {
 		return cmdMigrateSkills(args)
 	case "migrate-commands":
 		return cmdMigrateCommands(args)
+	case "migrate-ledger":
+		return cmdMigrateLedger(args)
 	case "memory":
 		return cmdMemory(args)
 	case "mesh":
@@ -63,6 +65,6 @@ func run() error {
 	case "doctor":
 		return cmdDoctor(args)
 	default:
-		return fmt.Errorf("unknown command: %s\nUsage: mcplexer [serve|connect|init|status|dry-run|secret|skill|migrate-skills|migrate-commands|memory|mesh|daemon|setup|control-server|run-job|rules|harness|scrub-audit|config|doctor]", subcmd)
+		return fmt.Errorf("unknown command: %s\nUsage: mcplexer [serve|connect|init|status|dry-run|secret|skill|migrate-skills|migrate-commands|migrate-ledger|memory|mesh|daemon|setup|control-server|run-job|rules|harness|scrub-audit|config|doctor]", subcmd)
 	}
 }

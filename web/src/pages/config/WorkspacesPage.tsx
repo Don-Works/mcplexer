@@ -157,20 +157,20 @@ export function WorkspacesPage() {
               Workspaces
             </Link>
           </Button>
-          <h1 className="text-xl font-semibold">Workspace Settings</h1>
+          <h1 className="text-xl font-semibold">Workspace Setup</h1>
         </div>
         <Button variant="outline" asChild>
           <Link to="/workspaces/routes">
             <Route className="mr-1.5 h-4 w-4" />
-            Routing rules
+            Server access
           </Link>
         </Button>
       </div>
       <div className="flex items-start justify-between gap-4">
         <p className="max-w-2xl text-sm text-muted-foreground">
-          A workspace is a directory tree paired with a default route policy. Routes match incoming
-          tool calls against the workspace's root path; the default policy decides what happens
-          when no rule matches.
+          Define the workspace itself: name, root path, tags, and default
+          policy. Use Server access to connect tools, credentials, approvals,
+          and matching rules to a workspace.
         </p>
         <Button onClick={openCreate} data-testid="workspace-add">
           <Plus className="mr-2 h-4 w-4" />
@@ -252,7 +252,7 @@ export function WorkspacesPage() {
                                 </Link>
                               </Button>
                             </TooltipTrigger>
-                            <TooltipContent>Routes</TooltipContent>
+                            <TooltipContent>Server access</TooltipContent>
                           </Tooltip>
                           <Tooltip>
                             <TooltipTrigger asChild>

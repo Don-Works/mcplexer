@@ -10,12 +10,14 @@ interface UseApiReturn<T> extends UseApiState<T> {
   refetch: () => void
 }
 
+type ApiFetcher<T> = (signal: AbortSignal) => Promise<T>
+
 // Hard timeout for a single fetch — caps the "Loading…" spinner so a
 // hung request never silently strands the user. 15s is generous; even
 // the dashboard endpoint (the heaviest one) returns in ~50ms.
 const FETCH_TIMEOUT_MS = 15_000
 
-export function useApi<T>(fetcher: () => Promise<T>): UseApiReturn<T> {
+export function useApi<T>(fetcher: ApiFetcher<T>): UseApiReturn<T> {
   const [state, setState] = useState<UseApiState<T>>({
     data: null,
     loading: true,
@@ -29,6 +31,7 @@ export function useApi<T>(fetcher: () => Promise<T>): UseApiReturn<T> {
 
   useEffect(() => {
     let active = true
+    const controller = new AbortController()
 
     // On refetch, mark loading but keep existing data so the user keeps
     // seeing the previous render instead of flashing back to a spinner.
@@ -42,6 +45,7 @@ export function useApi<T>(fetcher: () => Promise<T>): UseApiReturn<T> {
     // the user sees "Loading…" with no recovery path.
     const timeoutId = setTimeout(() => {
       if (active) {
+        controller.abort()
         setState((prev) => ({
           data: prev.data,
           loading: false,
@@ -51,7 +55,7 @@ export function useApi<T>(fetcher: () => Promise<T>): UseApiReturn<T> {
       }
     }, FETCH_TIMEOUT_MS)
 
-    fetcher()
+    fetcher(controller.signal)
       .then((data) => {
         if (active) {
           clearTimeout(timeoutId)
@@ -68,6 +72,7 @@ export function useApi<T>(fetcher: () => Promise<T>): UseApiReturn<T> {
 
     return () => {
       active = false
+      controller.abort()
       clearTimeout(timeoutId)
     }
   }, [fetcher, trigger])

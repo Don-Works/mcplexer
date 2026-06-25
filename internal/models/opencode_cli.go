@@ -180,9 +180,11 @@ func (a *opencodeCLIAdapter) Send(ctx context.Context, req SendRequest) (*SendRe
 // empty-text retry in Send. The managed `opencode serve` is crash-prone;
 // when it dies mid-run its supervisor restarts it within ~1s (capped
 // backoff starts at 1s), so a single re-attach after a short pause
-// recovers the turn instead of killing the whole worker run with
-// "Error: Session not found".
-const maxOpenCodeTransientRetries = 3
+// often recovers the turn instead of killing the whole worker run with
+// "Error: Session not found". Cold async startup can also take several
+// seconds, so keep this window long enough to bridge readiness without
+// blocking delegation creation.
+const maxOpenCodeTransientRetries = 6
 
 // isTransientOpenCodeError reports whether err looks like a recoverable
 // server-side hiccup (the managed server crashed / is mid-restart, or the
