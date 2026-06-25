@@ -1285,14 +1285,14 @@ func modelStatsForDelegation(d DelegationContext) []DelegationModelStat {
 
 func delegationReviewRequired(in DelegationInput) bool {
 	if in.ReviewRequired == nil {
-		return true
+		return false
 	}
 	return *in.ReviewRequired
 }
 
 func delegationMetadataReviewRequired(meta delegationMetadata) bool {
 	if meta.ReviewRequired == nil {
-		return true
+		return false
 	}
 	return *meta.ReviewRequired
 }

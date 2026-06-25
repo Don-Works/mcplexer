@@ -89,6 +89,30 @@ func (h *handler) handleListDelegations(ctx context.Context, raw json.RawMessage
 	return marshalJSONResult(map[string]any{"delegations": out, "count": len(out)})
 }
 
+func (h *handler) handleExtendDelegationBudget(ctx context.Context, raw json.RawMessage) (json.RawMessage, *RPCError) {
+	if h.workerAdmin == nil {
+		return marshalErrorResult("worker delegation is not enabled"), nil
+	}
+	var in workersadmin.DelegationBudgetInput
+	if err := json.Unmarshal(raw, &in); err != nil {
+		return nil, &RPCError{Code: CodeInvalidParams, Message: err.Error()}
+	}
+	if in.WorkspaceID == "" {
+		in.WorkspaceID = h.currentWorkspaceID(ctx)
+	}
+	if in.WorkspaceID == "" {
+		return nil, &RPCError{Code: CodeInvalidParams, Message: "workspace_id required (session is not bound to a workspace)"}
+	}
+	if rpc := h.requireWorkspaceWrite(ctx, in.WorkspaceID); rpc != nil {
+		return nil, rpc
+	}
+	out, err := h.workerAdmin.ExtendDelegationBudget(ctx, in)
+	if err != nil {
+		return marshalErrorResult(err.Error()), nil
+	}
+	return marshalJSONResult(out)
+}
+
 func (h *handler) handleInvokeModel(ctx context.Context, raw json.RawMessage) (json.RawMessage, *RPCError) {
 	if h.workerAdmin == nil {
 		return marshalErrorResult("worker delegation is not enabled"), nil

@@ -196,6 +196,34 @@ func (h *workersHandler) reviewDelegation(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusOK, out)
 }
 
+// extendDelegationBudget serves POST /api/v1/delegations/{id}/budget.
+func (h *workersHandler) extendDelegationBudget(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "delegation id is required")
+		return
+	}
+	var in workersadmin.DelegationBudgetInput
+	if err := decodeJSON(r, &in); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	in.DelegationID = id
+	out, err := h.svc.ExtendDelegationBudget(r.Context(), in)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "delegation not found")
+			return
+		}
+		writeErrorDetail(w, http.StatusBadRequest, "failed to extend delegation budget", err.Error())
+		return
+	}
+	if bus := h.svc.RunBus(); bus != nil {
+		bus.Publish(&runner.RunEvent{Kind: "delegation_updated", DelegationID: out.DelegationID, Note: "budget_extended"})
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
 // update serves PATCH /api/v1/workers/{id}.
 func (h *workersHandler) update(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")

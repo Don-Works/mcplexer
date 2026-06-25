@@ -23,11 +23,17 @@ type fakeRunner struct {
 	// runner owns (single-writer path), false models no live entry.
 	cancelCalls  [][2]string
 	cancelReturn bool
+	refreshCalls []string
 }
 
 func (f *fakeRunner) Cancel(runID, reason string) bool {
 	f.cancelCalls = append(f.cancelCalls, [2]string{runID, reason})
 	return f.cancelReturn
+}
+
+func (f *fakeRunner) RefreshRunCaps(runID string, _ *store.Worker) bool {
+	f.refreshCalls = append(f.refreshCalls, runID)
+	return true
 }
 
 func (f *fakeRunner) RunWithOpts(_ context.Context, _ string, opts runner.RunOpts) (string, error) {

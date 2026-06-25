@@ -19,8 +19,9 @@ import (
 // Resource limits for sandboxed execution. Tunable via the Sandbox struct
 // for tests; defaults are sized for typical Code Mode workloads.
 const (
-	defaultMaxCallStack    = 256 // recursion guard
-	defaultMaxHeapGrowthMB = 256 // abort VM if process heap grows > this since exec start
+	defaultMaxCallStack    = 256  // recursion guard
+	DefaultMaxHeapGrowthMB = 2048 // abort VM if process heap grows > this since exec start
+	HardMaxHeapGrowthMB    = 2048
 	defaultWatchdogPeriod  = 50 * time.Millisecond
 	// DefaultMaxOutputBytes caps captured print()/console.log output during
 	// execution. This prevents a script from building an unbounded MCP result.
@@ -103,11 +104,25 @@ func NewSandbox(caller ToolCaller, timeout time.Duration) *Sandbox {
 		caller:          caller,
 		timeout:         timeout,
 		maxCallStack:    defaultMaxCallStack,
-		maxHeapGrowthMB: defaultMaxHeapGrowthMB,
+		maxHeapGrowthMB: DefaultMaxHeapGrowthMB,
 		watchdogPeriod:  defaultWatchdogPeriod,
 		heapBreaches:    defaultHeapBreaches,
 		maxOutputBytes:  DefaultMaxOutputBytes,
 	}
+}
+
+// SetMaxHeapGrowthMB configures the process-heap growth watchdog. Non-positive
+// values fall back to the default; values above the hard maximum are clamped so
+// one execute_code call cannot reopen daemon-wide OOM risk.
+func (s *Sandbox) SetMaxHeapGrowthMB(n int) {
+	if n <= 0 {
+		s.maxHeapGrowthMB = DefaultMaxHeapGrowthMB
+		return
+	}
+	if n > HardMaxHeapGrowthMB {
+		n = HardMaxHeapGrowthMB
+	}
+	s.maxHeapGrowthMB = uint64(n)
 }
 
 // SetMaxOutputBytes configures the captured print()/console.log output cap.

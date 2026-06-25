@@ -313,7 +313,7 @@ func contentV7() string {
 
 Delegation is the default execution path for token-heavy work. The parent/frontier session frames the problem, decomposes work, reviews/scored results, integrates diffs, handles secrets, and talks to the user. Bounded mcplexer Workers do broad codebase scans, implementation after the architecture is clear, mechanical edits, test writing, log triage, migration drafting, and parallel investigation.
 
-Use ` + "`mcpx__delegate_worker`" + ` to create, ` + "`mcpx__list_delegations`" + ` to poll, and ` + "`mcpx__review_delegation`" + ` to score. Leave ` + "`review_required:true`" + ` unless the user explicitly asked for fire-and-forget telemetry. Every delegation must be reviewed in the spawning session; an unreviewed delegation is unfinished work.
+Use ` + "`mcpx__delegate_worker`" + ` to create and ` + "`mcpx__list_delegations`" + ` to poll. Review is encouraged when the result affects model ranking, safety, merges, or user-visible quality; set ` + "`review_required:true`" + ` only when the parent review should gate completion. Optional delegations may still be scored later with ` + "`mcpx__review_delegation`" + ` when the parent has useful judgement to record.
 
 Handoffs must name: objective, scope/allowed paths, known facts with file refs, constraints/no-go areas, acceptance criteria, verification commands, and return contract. Workers must use isolated git worktrees and must not touch ` + "`~/.mcplexer/`" + ` directly — config/state goes through MCP tools, never raw SQL or protected files.
 

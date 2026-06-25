@@ -168,16 +168,20 @@ export function liveDurableWorkers(rows: WorkerSummary[] | null | undefined): Wo
 
 export function isLiveDelegationWorker(row: WorkerSummary): boolean {
   if (!isDelegationWorker(row)) return false
-  return (
-    row.last_run_status === 'running' ||
-    row.last_run_status === 'awaiting_approval' ||
-    !row.last_run_status
-  )
+  return row.last_run_status === 'running' || row.last_run_status === 'awaiting_approval'
 }
 
 export function liveDelegationWorkers(rows: WorkerSummary[] | null | undefined): WorkerSummary[] {
   if (!rows) return []
   return rows.filter(isLiveDelegationWorker)
+}
+
+export function liveDelegationCount(rows: WorkerSummary[] | null | undefined): number {
+  const ids = new Set<string>()
+  for (const row of liveDelegationWorkers(rows)) {
+    ids.add(row.delegation_id || row.id)
+  }
+  return ids.size
 }
 
 // shortID renders a long worker / run ID as the last 8 characters with

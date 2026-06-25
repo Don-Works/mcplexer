@@ -35,6 +35,8 @@ func (s *stubRunner) Cancel(runID, reason string) bool {
 	return s.cancelReturn
 }
 
+func (s *stubRunner) RefreshRunCaps(_ string, _ *store.Worker) bool { return false }
+
 func TestServiceRunNowDelegatesToRunner(t *testing.T) {
 	_, db, wsID, scopeID := newTestService(t)
 	ctx := context.Background()

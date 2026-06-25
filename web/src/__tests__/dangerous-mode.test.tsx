@@ -32,6 +32,7 @@ const baseSettings: Settings = {
   log_level: 'info',
   code_mode_timeout_sec: 30,
   code_mode_max_output_bytes: 24 * 1024,
+  code_mode_max_heap_growth_mb: 2048,
   mesh_enabled: false,
   mesh_receive_max_results: 20,
   mesh_receive_preview_bytes: 512,
