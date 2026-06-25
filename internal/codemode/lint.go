@@ -109,7 +109,7 @@ func LintWithTools(code string, toolNames []string) LintResult {
 
 	// Check for redundant JSON.parse on tool results.
 	for _, loc := range findAllLocations(reJSONParse, code) {
-		if !insideStringLiteral(code, loc) {
+		if !insideStringLiteral(code, loc) && !looksLikeUntrustedContentParser(code) {
 			line := lineNumber(lines, loc)
 			warnings = append(warnings, LintWarning{
 				Line:     line,
@@ -184,6 +184,10 @@ func LintWithTools(code string, toolNames []string) LintResult {
 		Warnings: warnings,
 		Code:     code,
 	}
+}
+
+func looksLikeUntrustedContentParser(code string) bool {
+	return strings.Contains(code, "untrusted-content")
 }
 
 // lintToolCallTypos walks every `ns.member(` site in masked code and

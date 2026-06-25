@@ -12,3 +12,11 @@ import "log/slog"
 // distribution to other machines, where the user's local install path
 // will recompile with cgo enabled via `make install` / `make upgrade`.
 func requestAccessibility(_ *slog.Logger) {}
+
+func accessibilityTrusted() bool {
+	return true
+}
+
+func promptAccessibility() bool {
+	return true
+}

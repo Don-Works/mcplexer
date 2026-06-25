@@ -86,12 +86,12 @@ func TestRenderV4HasTaskDiscipline(t *testing.T) {
 	}
 }
 
-// TestCurrentVersionIsV8 — guard rail so a future bump that forgets
+// TestCurrentVersionIsV9 — guard rail so a future bump that forgets
 // to add the matching contentVN switch case fails fast in tests
 // rather than silently shipping a stale block.
-func TestCurrentVersionIsV8(t *testing.T) {
-	if CurrentVersion != 8 {
-		t.Fatalf("CurrentVersion=%d; expected 8. If you bumped it, add the matching contentVN + test coverage.", CurrentVersion)
+func TestCurrentVersionIsV9(t *testing.T) {
+	if CurrentVersion != 9 {
+		t.Fatalf("CurrentVersion=%d; expected 9. If you bumped it, add the matching contentVN + test coverage.", CurrentVersion)
 	}
 }
 
@@ -191,6 +191,33 @@ func TestRenderV8HasMemoryContract(t *testing.T) {
 	for _, s := range mustContain {
 		if !strings.Contains(out, s) {
 			t.Errorf("Render(8) missing required substring %q", s)
+		}
+	}
+}
+
+// TestRenderV9HasBrowserAutomation pins the v9 contract: generated
+// agent rules tell agents to prefer brw for browser control when the
+// namespace is installed, and to fetch an installed browser skill for
+// non-trivial browser workflows.
+func TestRenderV9HasBrowserAutomation(t *testing.T) {
+	out := Render(9)
+	mustContain := []string{
+		"<!-- MCPLEXER:BEGIN v9 -->",
+		"Browser automation",
+		"`brw`/browser tools first",
+		"mcplexer browser-control surface",
+		"browser skill",
+		"mcpx.skill_search",
+		"generic-browser-operator",
+		"playwright-browser",
+		"cmux-browser",
+		// v9 must inherit v8's memory contract + v7's delegation-first.
+		"Memory contract",
+		"Delegation-first",
+	}
+	for _, s := range mustContain {
+		if !strings.Contains(out, s) {
+			t.Errorf("Render(9) missing required substring %q", s)
 		}
 	}
 }

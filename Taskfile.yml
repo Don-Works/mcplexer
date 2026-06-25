@@ -128,15 +128,7 @@ tasks:
       - go build -ldflags "{{.GO_LDFLAGS}}" -o bin/mcplexer ./cmd/mcplexer
       - |
         if [ "$(uname -s)" = "Darwin" ]; then
-          # Sign with a stable self-signed identity so macOS Accessibility/TCC
-          # grants survive rebuilds (ad-hoc signing changes identity every build,
-          # forcing a re-prompt). Falls back to ad-hoc when the cert is absent.
-          SIGN_ID="${MCPLEXER_SIGN_ID:-MCPlexer Dev}"
-          if security find-identity -v -p codesigning 2>/dev/null | grep -q "$SIGN_ID"; then
-            codesign --force -s "$SIGN_ID" --identifier dev.mcplexer.daemon bin/mcplexer
-          else
-            codesign --force -s - bin/mcplexer
-          fi
+          sh scripts/codesign-darwin.sh bin/mcplexer com.donworks.mcplexer
         fi
 
   go-build-p2p:
@@ -145,14 +137,7 @@ tasks:
       - go build -tags p2p -ldflags "{{.GO_LDFLAGS}}" -o bin/mcplexer-p2p ./cmd/mcplexer
       - |
         if [ "$(uname -s)" = "Darwin" ]; then
-          # Stable self-signed identity (see go-build) so Accessibility/TCC grants
-          # persist across rebuilds; ad-hoc fallback when the cert is absent.
-          SIGN_ID="${MCPLEXER_SIGN_ID:-MCPlexer Dev}"
-          if security find-identity -v -p codesigning 2>/dev/null | grep -q "$SIGN_ID"; then
-            codesign --force -s "$SIGN_ID" --identifier dev.mcplexer.daemon bin/mcplexer-p2p
-          else
-            codesign --force -s - bin/mcplexer-p2p
-          fi
+          sh scripts/codesign-darwin.sh bin/mcplexer-p2p com.donworks.mcplexer
         fi
 
   run:

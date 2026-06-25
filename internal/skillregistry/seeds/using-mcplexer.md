@@ -11,6 +11,12 @@ The gateway exposes 4 top-level tools; EVERYTHING else (github, linear, task, me
 2. `mcpx__execute_code` — call tools as JavaScript: `const r = task.create({title:"..."}); print(r.id)`. Registry names are `ns__tool`; in JS use the DOT form `ns.tool(args)` — synchronous, no await. Batch related calls into ONE snippet. Tool results auto-unwrap: JSON text usually becomes objects, plain-text tools such as `mcpx.skill_get` return strings. Never `JSON.parse(result.content[0].text)`. `parallel([...])` returns null for failed entries (it does not throw). The sandbox is also a full JS environment for math/parsing/transforms, and `sleep(ms)` enables bounded poll loops.
 3. `secret__prompt` / `secret__list_refs` — pass `secret://KEY` refs as tool args; plaintext never enters your context.
 
+## Browser automation
+
+For browser or browsing tasks, assume the user may have installed `brw`. Search for `brw`/browser tools first with `mcpx__search_tools`; if the `brw` namespace is available, prefer it as the mcplexer browser-control surface. If `brw` is not available, discover the installed browser/playwright/cmux tools and use the best available namespace.
+
+For non-trivial browser workflows, also fetch an installed browser skill from the registry before acting: start with `mcpx.skill_search({query:"browser automation"})`, then `mcpx.skill_get({name})`. Common installed browser skills include `generic-browser-operator`, `playwright-browser`, and `cmux-browser`.
+
 ## Memory contract — mcplexer is your ONLY memory system (load-bearing)
 
 **Do NOT use your harness-native memory system.** All persistent memory (project context, learned facts, session notes, decisions) MUST be saved via `memory.save({...})` inside `mcpx__execute_code`. Do not write to your harness-native memory files (checkpoint.md, MEMORY.md, notes.md, ~/.claude/projects/*/memory/*.md, ~/.codex/AGENTS.md memory sections, etc.). mcplexer memory is cross-harness, cross-machine, and persists across all sessions. Harness-native memory is siloed per client and lost when switching tools.

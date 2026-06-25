@@ -6,8 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/don-works/mcplexer/internal/cache"
@@ -219,69 +219,134 @@ func (h *handler) toolInputStringFields(ctx context.Context, serverID, originalT
 	return nil
 }
 
-// triggerBackgroundRefresh spawns a single goroutine (via sync.Once, keyed by
-// cache key) that queries downstream servers live, updates the DB and
-// in-memory caches, and sends a tools/list_changed notification when done.
-// Per-key gating ensures each server group (e.g. static vs. dynamic) gets one
-// initial refresh shot rather than only the first group consuming the once.
+// backgroundRefreshInterval bounds how often a given server-group catalog is
+// re-introspected from live downstreams. The first trigger for a key fires
+// immediately (upgrading the instant DB-cache response to live data); subsequent
+// triggers wait out this interval. This is what lets a redeployed/restarted
+// downstream's new tools become visible without a manual reload_server, while
+// keeping introspection load bounded.
+const backgroundRefreshInterval = 60 * time.Second
+
+// triggerBackgroundRefresh queries downstream servers live, updates the DB and
+// in-memory caches, and sends a tools/list_changed notification ONLY when the
+// live catalog differs from the cached one. It re-arms on backgroundRefreshInterval
+// (not once-ever) so a downstream that changes its tool surface after restart is
+// picked up; bgRefreshInFlight collapses concurrent triggers for the same key.
 func (h *handler) triggerBackgroundRefresh(cacheKey string, serverIDs []string) {
-	onceI, _ := h.backgroundRefreshOnceByKey.LoadOrStore(cacheKey, &sync.Once{})
-	once := onceI.(*sync.Once)
-	once.Do(func() {
-		ctx := h.bgCtx
-		if ctx == nil {
-			ctx = context.Background()
-		}
-		go func() {
-			liveIDs, skippedAutoStart := h.liveCatalogDiscoveryServerIDs(ctx, serverIDs)
-			if len(liveIDs) == 0 {
-				if skippedAutoStart > 0 {
-					slog.Info("background refresh: skipped auto-start-unsafe servers",
-						"cache_key", cacheKey,
-						"skipped_auto_start_unsafe", skippedAutoStart,
-					)
-				}
-				return
-			}
-			slog.Info("background refresh: querying downstream servers",
-				"cache_key", cacheKey,
-				"servers", len(liveIDs),
-				"skipped_auto_start_unsafe", skippedAutoStart,
-			)
+	h.bgRefreshMu.Lock()
+	if h.bgRefreshInFlight[cacheKey] {
+		h.bgRefreshMu.Unlock()
+		return
+	}
+	if last, ok := h.bgRefreshAt[cacheKey]; ok && time.Since(last) < backgroundRefreshInterval {
+		h.bgRefreshMu.Unlock()
+		return
+	}
+	h.bgRefreshInFlight[cacheKey] = true
+	h.bgRefreshAt[cacheKey] = time.Now()
+	h.bgRefreshMu.Unlock()
 
-			started := time.Now()
-			result, err := h.manager.ListToolsForServers(ctx, liveIDs)
-			elapsed := time.Since(started)
-			if err != nil {
-				slog.Warn("background refresh failed",
-					"error", err,
-					"elapsed_ms", elapsed.Milliseconds(),
+	ctx := h.bgCtx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	go func() {
+		defer func() {
+			h.bgRefreshMu.Lock()
+			h.bgRefreshInFlight[cacheKey] = false
+			h.bgRefreshMu.Unlock()
+		}()
+
+		liveIDs, skippedAutoStart := h.liveCatalogDiscoveryServerIDs(ctx, serverIDs)
+		if len(liveIDs) == 0 {
+			if skippedAutoStart > 0 {
+				slog.Info("background refresh: skipped auto-start-unsafe servers",
+					"cache_key", cacheKey,
+					"skipped_auto_start_unsafe", skippedAutoStart,
 				)
-				return
 			}
+			return
+		}
+		slog.Info("background refresh: querying downstream servers",
+			"cache_key", cacheKey,
+			"servers", len(liveIDs),
+			"skipped_auto_start_unsafe", skippedAutoStart,
+		)
 
-			for serverID, rawResult := range result {
-				if err := h.store.UpdateCapabilitiesCache(ctx, serverID, rawResult); err != nil {
-					slog.Warn("background refresh: failed to update capabilities cache",
-						"server", serverID, "error", err)
-				}
-			}
-
-			h.toolsListCache.Flush()
-			h.sendToolsListChanged()
-
-			// Catalog refresh visibility: log the wall-clock cost alongside
-			// how many servers actually responded vs. were asked. The gap
-			// between `servers` (input) and `responded` (output) is the
-			// signal that one or more downstreams timed out.
-			slog.Info("background refresh complete",
-				"cache_key", cacheKey,
-				"asked", len(liveIDs),
-				"responded", len(result),
+		started := time.Now()
+		result, err := h.manager.ListToolsForServers(ctx, liveIDs)
+		elapsed := time.Since(started)
+		if err != nil {
+			slog.Warn("background refresh failed",
+				"error", err,
 				"elapsed_ms", elapsed.Milliseconds(),
 			)
-		}()
-	})
+			return
+		}
+
+		changed := false
+		for serverID, rawResult := range result {
+			if !h.capabilitiesUnchanged(ctx, serverID, rawResult) {
+				changed = true
+			}
+			if err := h.store.UpdateCapabilitiesCache(ctx, serverID, rawResult); err != nil {
+				slog.Warn("background refresh: failed to update capabilities cache",
+					"server", serverID, "error", err)
+			}
+		}
+
+		h.toolsListCache.Flush()
+		// Only nudge the client to re-fetch when the surface actually moved, so a
+		// steady catalog does not spam tools/list_changed every interval.
+		if changed {
+			h.sendToolsListChanged()
+		}
+
+		// Catalog refresh visibility: log the wall-clock cost alongside how many
+		// servers actually responded vs. were asked. The gap between `servers`
+		// (input) and `responded` (output) is the signal that one or more
+		// downstreams timed out.
+		slog.Info("background refresh complete",
+			"cache_key", cacheKey,
+			"asked", len(liveIDs),
+			"responded", len(result),
+			"changed", changed,
+			"elapsed_ms", elapsed.Milliseconds(),
+		)
+	}()
+}
+
+// capabilitiesUnchanged reports whether a server's freshly-introspected tool
+// surface matches what is already in the DB CapabilitiesCache. It compares an
+// order-insensitive signature of the tool entries so reordering does not count as
+// a change while an added/removed tool or an altered input schema does.
+func (h *handler) capabilitiesUnchanged(ctx context.Context, serverID string, newRaw json.RawMessage) bool {
+	srv, err := h.store.GetDownstreamServer(ctx, serverID)
+	if err != nil || srv == nil {
+		return false
+	}
+	return toolsetSignature(srv.CapabilitiesCache) == toolsetSignature(newRaw)
+}
+
+// toolsetSignature returns an order-insensitive signature of a {"tools":[...]}
+// payload: the tool entries sorted and joined. Falls back to the raw bytes when
+// the shape is unexpected.
+func toolsetSignature(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var parsed struct {
+		Tools []json.RawMessage `json:"tools"`
+	}
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		return string(raw)
+	}
+	entries := make([]string, 0, len(parsed.Tools))
+	for _, t := range parsed.Tools {
+		entries = append(entries, string(t))
+	}
+	sort.Strings(entries)
+	return strings.Join(entries, "\x1f")
 }
 
 // sendToolsListChanged sends a tools/list_changed notification if a notifier is available.

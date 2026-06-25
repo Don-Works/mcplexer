@@ -113,13 +113,18 @@ type handler struct {
 
 	// bgCtx is a long-lived context for background goroutines (set from run()).
 	bgCtx context.Context
-	// backgroundRefreshOnceByKey ensures we only trigger one background
-	// refresh per cache key (per server group) after returning cached
-	// capabilities. Without per-key gating, the static-group call consumed
-	// the once and the dynamic group never got a refresh — leaving
-	// newly-seeded dynamic servers (empty capabilities_cache) permanently
-	// invisible to mcpx__execute_code.
-	backgroundRefreshOnceByKey sync.Map // map[string]*sync.Once
+	// Background catalog refresh state, keyed by cache key (server group). The
+	// refresh re-arms on an interval (backgroundRefreshInterval) instead of firing
+	// once-ever: a downstream MCP server that restarts with a changed tool surface
+	// (e.g. a redeployed binary that adds a tool) was otherwise never re-introspected,
+	// so the gateway kept serving the stale DB CapabilitiesCache until a manual
+	// reload_server. bgRefreshInFlight collapses concurrent triggers for the same key
+	// to a single in-flight goroutine; bgRefreshAt records the last refresh start so
+	// the next trigger waits out the interval. A tools/list_changed notification is
+	// sent only when the live catalog actually differs from the cached one.
+	bgRefreshMu       sync.Mutex
+	bgRefreshAt       map[string]time.Time
+	bgRefreshInFlight map[string]bool
 
 	// lastCreatedTask tracks the most-recent task id created by each
 	// (sessionID, workspaceID) pair this process has seen. Backs the
@@ -219,29 +224,31 @@ func newHandler(
 	sr.Register("github", GitHubExtractor{})
 
 	return &handler{
-		store:          s,
-		engine:         e,
-		manager:        m,
-		sessions:       newSessionManager(s, e, t, sessionBus),
-		auditor:        a,
-		approvals:      approvals,
-		mesh:           meshMgr,
-		bridge:         telegramMgr,
-		settingsSvc:    settingsSvc,
-		compactor:      compact.New(),
-		toolsListCache: cache.New[string, json.RawMessage](10, ttl),
-		addonRegistry:  addonReg,
-		addonExecutor:  addonExec,
-		secretPrompts:  secretPromptMgr,
-		secretsManager: secretsMgr,
-		skillShare:     skillShare,
-		skillRegistry:  skillRegistry,
-		registryShare:  registryShare,
-		memorySvc:      memorySvc,
-		memoryShare:    memoryShare,
-		adminGate:      adminGate,
-		scopeRegistry:  sr,
-		sanitizer:      sanitize.DefaultDenylist(),
+		store:             s,
+		engine:            e,
+		manager:           m,
+		sessions:          newSessionManager(s, e, t, sessionBus),
+		auditor:           a,
+		approvals:         approvals,
+		mesh:              meshMgr,
+		bridge:            telegramMgr,
+		settingsSvc:       settingsSvc,
+		compactor:         compact.New(),
+		toolsListCache:    cache.New[string, json.RawMessage](10, ttl),
+		bgRefreshAt:       map[string]time.Time{},
+		bgRefreshInFlight: map[string]bool{},
+		addonRegistry:     addonReg,
+		addonExecutor:     addonExec,
+		secretPrompts:     secretPromptMgr,
+		secretsManager:    secretsMgr,
+		skillShare:        skillShare,
+		skillRegistry:     skillRegistry,
+		registryShare:     registryShare,
+		memorySvc:         memorySvc,
+		memoryShare:       memoryShare,
+		adminGate:         adminGate,
+		scopeRegistry:     sr,
+		sanitizer:         sanitize.DefaultDenylist(),
 	}
 }
 

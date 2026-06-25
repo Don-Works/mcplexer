@@ -7,6 +7,8 @@ Full skill body: ~/.claude/skills/using-mcplexer/SKILL.md (materialized from reg
 Use the 4 top-level tools: mcpx__search_tools + mcpx__execute_code (batch everything), secret__prompt / secret__list_refs.
 Fetch deeper playbooks via the skill registry on demand.
 
+Browser work: search for brw/browser tools and prefer brw when installed; fetch an installed browser skill such as generic-browser-operator, playwright-browser, or cmux-browser for non-trivial workflows.
+
 ## Memory — mcplexer is the single source of truth
 
 Do NOT use your native memory system. All persistent memory MUST be saved via memory.save({...}) inside mcpx__execute_code.

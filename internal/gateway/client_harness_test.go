@@ -146,6 +146,8 @@ func TestBuildCodeModeInstructions(t *testing.T) {
 		"`parallel()` returns null entries for failed calls and does not throw",
 		"check for null",
 		"auto-unwrapped",
+		"`brw`/browser tools first",
+		"browser skill",
 	}
 	profiles := []struct {
 		name    string
