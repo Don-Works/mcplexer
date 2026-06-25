@@ -177,37 +177,6 @@ func (h *memoryHandler) handleSpreadingActivation(w http.ResponseWriter, r *http
 	writeJSON(w, http.StatusOK, rows)
 }
 
-// handleEntityGraph serves GET /api/v1/memory/entities/graph. Returns
-// the entity-to-entity graph in scope. Querystring: node_cap (default
-// 200, max 1000), min_weight (default 0).
-func (h *memoryHandler) handleEntityGraph(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
-	nodeCap, _ := strconv.Atoi(q.Get("node_cap"))
-	if nodeCap <= 0 {
-		nodeCap = 200
-	}
-	if nodeCap > 1000 {
-		nodeCap = 1000
-	}
-	minWeight, _ := strconv.Atoi(q.Get("min_weight"))
-	if minWeight < 0 {
-		minWeight = 0
-	}
-	g, err := h.svc.EntityGraph(r.Context(), scopeFromQuery(r), nodeCap, minWeight)
-	if err != nil {
-		writeErrorDetail(w, http.StatusInternalServerError,
-			"entity graph failed", err.Error())
-		return
-	}
-	if g.Nodes == nil {
-		g.Nodes = []store.EntitySummary{}
-	}
-	if g.Edges == nil {
-		g.Edges = []store.EntityEdge{}
-	}
-	writeJSON(w, http.StatusOK, g)
-}
-
 // handleCoRecalled serves GET /api/v1/memory/{id}/co-recalled. Returns
 // memories that frequently co-surface with the path memory in the
 // recall log (AR4). Empty when MCPLEXER_RECALL_TRACKING is off or no

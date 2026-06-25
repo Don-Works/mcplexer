@@ -77,27 +77,34 @@ func autoInstallConsolidator(
 	}
 }
 
-// pickConsolidatorScope mirrors the API handler's pickDefaultSecretScope
-// logic (most-recently-updated api_key wins). Returns ok=false when no
-// api_key scope exists; the autoinstall is a no-op in that case so the
-// user can configure one and the next boot will wire things up.
+// pickConsolidatorScope picks the scope_id the worker row needs to satisfy
+// the NOT NULL SecretScopeID column. It PREFERS a most-recently-updated
+// api_key scope (the consolidator's default claude_cli provider ignores it
+// at runtime, but an operator who later switches to an API-key model wants a
+// real key bound). When no api_key scope exists it FALLS BACK to any auth
+// scope — previously the autoinstall skipped entirely here, which is the
+// reason subscription-only setups (no api_key) never got a consolidator at
+// all. Returns ok=false only when there are NO auth scopes whatsoever (then
+// there's nothing to satisfy the placeholder and the next boot retries).
 func pickConsolidatorScope(ctx context.Context, db store.Store) (string, bool) {
 	scopes, err := db.ListAuthScopes(ctx)
-	if err != nil {
+	if err != nil || len(scopes) == 0 {
 		return "", false
 	}
-	var best *store.AuthScope
+	var bestAPIKey, bestAny *store.AuthScope
 	for i := range scopes {
 		s := &scopes[i]
-		if !strings.EqualFold(s.Type, "api_key") {
-			continue
+		if bestAny == nil || s.UpdatedAt.After(bestAny.UpdatedAt) {
+			bestAny = s
 		}
-		if best == nil || s.UpdatedAt.After(best.UpdatedAt) {
-			best = s
+		if strings.EqualFold(s.Type, "api_key") {
+			if bestAPIKey == nil || s.UpdatedAt.After(bestAPIKey.UpdatedAt) {
+				bestAPIKey = s
+			}
 		}
 	}
-	if best == nil {
-		return "", false
+	if bestAPIKey != nil {
+		return bestAPIKey.ID, true
 	}
-	return best.ID, true
+	return bestAny.ID, true
 }

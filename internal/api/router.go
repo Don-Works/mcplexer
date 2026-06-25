@@ -784,11 +784,6 @@ func NewRouter(deps RouterDeps) http.Handler {
 		// of the brain: totals, type mix, recency, sparkline, decay).
 		// Lives in memory_stats_handler.go.
 		mux.HandleFunc("GET /api/v1/memory/stats", mem.handleStats)
-		// Graph view powers the /memory/graph dashboard visualisation.
-		// Lives in memory_graph_handler.go to keep memory_handler.go
-		// under 300 lines.
-		gh := newMemoryGraphHandler(deps.MemorySvc)
-		mux.HandleFunc("GET /api/v1/memory/graph", gh.handleGraph)
 		mux.HandleFunc("POST /api/v1/memory", mem.handleCreate)
 		mux.HandleFunc("POST /api/v1/memory/search", mem.handleSearch)
 		mux.HandleFunc("POST /api/v1/memory/forget-by-source", mem.handleForgetBySource)
@@ -798,8 +793,7 @@ func NewRouter(deps RouterDeps) http.Handler {
 		// Entity-link surface (migration 076). Static /entities BEFORE the
 		// parameterised /{id} variants so the mux picks specificity first.
 		mux.HandleFunc("GET /api/v1/memory/entities", mem.handleListEntities)
-		// Associative-recall surfaces (AR1, AR2, AR3).
-		mux.HandleFunc("GET /api/v1/memory/entities/graph", mem.handleEntityGraph)
+		// Associative-recall surfaces (AR1, AR2).
 		mux.HandleFunc("GET /api/v1/memory/entities/{kind}/{id}/related", mem.handleRelatedEntities)
 		mux.HandleFunc("GET /api/v1/memory/entities/{kind}/{id}/spreading", mem.handleSpreadingActivation)
 		mux.HandleFunc("GET /api/v1/memory/{id}/entities", mem.handleListMemoryEntities)
@@ -824,6 +818,25 @@ func NewRouter(deps RouterDeps) http.Handler {
 			mux.HandleFunc("POST /api/v1/memory/consolidate/disable", ch.handleDisable)
 			mux.HandleFunc("POST /api/v1/memory/consolidate/run", ch.handleRunNow)
 		}
+
+		// Embeddings config surface — backs Settings → Memory → Embeddings.
+		// Lets the user wire a local/OpenAI vector provider in-product
+		// (auto-detect + backfill) so semantic recall stops being dark.
+		// Needs the settings service to persist the chosen provider.
+		if deps.SettingsSvc != nil {
+			eh := newEmbeddingsHandler(deps.MemorySvc, deps.SettingsSvc)
+			mux.HandleFunc("GET /api/v1/memory/embeddings/status", eh.handleStatus)
+			mux.HandleFunc("POST /api/v1/memory/embeddings/detect", eh.handleDetect)
+			mux.HandleFunc("POST /api/v1/memory/embeddings/configure", eh.handleConfigure)
+			mux.HandleFunc("POST /api/v1/memory/embeddings/backfill", eh.handleBackfill)
+		}
+
+		// Conflict-queue surface — backs /memory/conflicts. The note-write
+		// neighbour scan persists possible duplicates/conflicts (migration
+		// 116); this lets the operator review + resolve them.
+		cfh := newConflictsHandler(deps.MemorySvc)
+		mux.HandleFunc("GET /api/v1/memory/conflicts", cfh.handleList)
+		mux.HandleFunc("POST /api/v1/memory/conflicts/{id}/resolve", cfh.handleResolve)
 	}
 
 	if deps.SkillRegistry != nil {
@@ -869,19 +882,12 @@ func NewRouter(deps RouterDeps) http.Handler {
 	mux.HandleFunc("GET /api/v1/skills/{name}/runs", srun.listForSkill)
 	mux.HandleFunc("GET /api/v1/skill-runs/{id}", srun.get)
 
-	// W6 — reputation stats (aggregator over W2 runs) + composition graph
-	// (built from W4 produces/consumes manifest extras). Stats register
-	// unconditionally; the graph route requires SkillRegistry (no skills
-	// = nothing to graph). Static /skills/stats path comes BEFORE the
-	// /skills/{name}/stats parameterised path so the Go 1.22 mux picks
-	// the most-specific match for batch requests.
+	// W6 — reputation stats (aggregator over W2 runs). Static /skills/stats
+	// path comes BEFORE the /skills/{name}/stats parameterised path so the
+	// Go 1.22 mux picks the most-specific match for batch requests.
 	sstats := &skillStatsHandler{store: deps.Store}
 	mux.HandleFunc("GET /api/v1/skills/stats", sstats.getBatch)
 	mux.HandleFunc("GET /api/v1/skills/{name}/stats", sstats.getForSkill)
-	if deps.SkillRegistry != nil {
-		sgraph := &skillGraphHandler{store: deps.Store, registry: deps.SkillRegistry}
-		mux.HandleFunc("GET /api/v1/skills/graph", sgraph.handleGraph)
-	}
 
 	// Telegram routes: always register read-only + token-storage endpoints so
 	// the UI can populate before a token is set + server restarted. Handlers

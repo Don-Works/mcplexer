@@ -70,21 +70,36 @@ func newWorkerAdminWithTemplates(t *testing.T, db *sqlite.DB) *workersadmin.Serv
 	return svc
 }
 
-// TestPickConsolidatorScope_NoApiKey returns ok=false when no api_key scope
-// exists.
-func TestPickConsolidatorScope_NoApiKey(t *testing.T) {
+// TestPickConsolidatorScope_FallsBackToAnyScope: with no api_key scope but
+// SOME other scope present, the picker now falls back to that scope instead of
+// refusing to install. The consolidator's default claude_cli provider ignores
+// the bound scope at runtime, so any scope satisfies the NOT NULL placeholder —
+// this is the fix for "consolidation never installs for subscription users".
+func TestPickConsolidatorScope_FallsBackToAnyScope(t *testing.T) {
 	ctx := context.Background()
 	db := newAutoinstallDB(t)
 
-	// Seed a non-api_key scope to confirm the filter is type-specific.
 	envScope := &store.AuthScope{Name: "some-env", Type: "env"}
 	if err := db.CreateAuthScope(ctx, envScope); err != nil {
 		t.Fatalf("CreateAuthScope: %v", err)
 	}
 
-	_, ok := pickConsolidatorScope(ctx, db)
-	if ok {
-		t.Error("expected ok=false when no api_key scope configured, got true")
+	id, ok := pickConsolidatorScope(ctx, db)
+	if !ok {
+		t.Fatal("expected ok=true falling back to a non-api_key scope")
+	}
+	if id != envScope.ID {
+		t.Fatalf("expected fallback to the env scope %q, got %q", envScope.ID, id)
+	}
+}
+
+// TestPickConsolidatorScope_NoScopesAtAll returns ok=false ONLY when there are
+// zero auth scopes (nothing to satisfy the placeholder); the next boot retries.
+func TestPickConsolidatorScope_NoScopesAtAll(t *testing.T) {
+	ctx := context.Background()
+	db := newAutoinstallDB(t)
+	if _, ok := pickConsolidatorScope(ctx, db); ok {
+		t.Error("expected ok=false when no auth scopes exist at all")
 	}
 }
 

@@ -8,14 +8,15 @@
 // Presentational helpers (tiles, activity card, quick links) live in
 // MemoryLandingTiles.tsx to keep this page file under 300 lines.
 
-import { useMemo } from 'react'
-import { BookOpen, Inbox, Workflow } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
+import { AlertTriangle, BookOpen, BrainCircuit, Inbox, Workflow } from 'lucide-react'
 import { useSignal } from '@/components/notifications/use-signal'
 import {
   useConsolidatorSummary,
   useMemoryCount,
   useMemoryOffers,
 } from '@/hooks/use-memory'
+import { getEmbeddingsStatus, getMemoryConflicts, type EmbeddingsStatus } from '@/api/memory'
 import {
   ActivityCard,
   HarnessImportCard,
@@ -32,6 +33,14 @@ export function MemoryLandingPage() {
   const { data: offers } = useMemoryOffers({ pending_only: true })
   const { data: consolidator } = useConsolidatorSummary()
   const { events } = useSignal()
+  const [embed, setEmbed] = useState<EmbeddingsStatus | null>(null)
+  const [conflictCount, setConflictCount] = useState<number | null>(null)
+  useEffect(() => {
+    void getEmbeddingsStatus().then(setEmbed).catch(() => {})
+    void getMemoryConflicts(200)
+      .then((o) => setConflictCount(o.conflicts?.length ?? 0))
+      .catch(() => {})
+  }, [])
 
   const memoryEvents = useMemo(
     () => events.filter((e) => isMemoryEvent(e.kind, e.source)).slice(0, 15),
@@ -73,7 +82,37 @@ export function MemoryLandingPage() {
 
       {/* Navigational vitals — operator destinations not surfaced in the
           brain-stats header. */}
-      <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-4">
+        <VitalsTile
+          icon={<AlertTriangle className="h-4 w-4" />}
+          label="Conflicts to review"
+          value={conflictCount === null ? '—' : String(conflictCount)}
+          detail={
+            conflictCount === null
+              ? 'loading…'
+              : conflictCount > 0
+                ? 'duplicates / contradictions'
+                : 'nothing to review'
+          }
+          accent={(conflictCount ?? 0) > 0 ? 'awaiting' : 'idle'}
+          dim={!conflictCount}
+          href="/memory/conflicts"
+        />
+        <VitalsTile
+          icon={<BrainCircuit className="h-4 w-4" />}
+          label="Semantic recall"
+          value={embed ? (embed.embedder_active ? 'active' : 'keyword-only') : '—'}
+          detail={
+            embed
+              ? embed.embedder_active
+                ? `${embed.embedded}/${embed.total} embedded${embed.running ? ' · backfilling' : ''}`
+                : 'no vector provider — configure'
+              : 'loading…'
+          }
+          accent={embed && !embed.embedder_active ? 'awaiting' : 'idle'}
+          dim={!embed?.embedder_active}
+          href="/memory/embeddings"
+        />
         <VitalsTile
           icon={<Workflow className="h-4 w-4" />}
           label="Last consolidation"

@@ -436,6 +436,21 @@ func (m *mockRouteStore) VectorSearchMemories(context.Context, store.MemoryFilte
 func (m *mockRouteStore) UpsertMemoryEmbedding(context.Context, string, string, int, []float32) error {
 	return nil
 }
+func (m *mockRouteStore) ListMemoriesNeedingEmbedding(context.Context, int) ([]store.MemoryEmbedTarget, error) {
+	return nil, nil
+}
+func (m *mockRouteStore) CountMemoriesNeedingEmbedding(context.Context) (int, int, error) {
+	return 0, 0, nil
+}
+func (m *mockRouteStore) RecordMemoryConflicts(context.Context, []store.MemoryConflict) error {
+	return nil
+}
+func (m *mockRouteStore) ListOpenMemoryConflicts(context.Context, int) ([]store.MemoryConflict, error) {
+	return nil, nil
+}
+func (m *mockRouteStore) ResolveMemoryConflict(context.Context, string, string) error {
+	return nil
+}
 func (m *mockRouteStore) GetMemoryEmbedding(context.Context, string) (string, []float32, error) {
 	return "", nil, store.ErrNotFound
 }
@@ -496,9 +511,6 @@ func (m *mockRouteStore) ListEntities(context.Context, store.EntityFilter) ([]st
 }
 func (m *mockRouteStore) RelatedEntities(context.Context, store.EntityRef, store.SkillScope, int) ([]store.EntityCoLink, error) {
 	return nil, nil
-}
-func (m *mockRouteStore) BuildEntityGraph(context.Context, store.SkillScope, int, int) (store.EntityGraph, error) {
-	return store.EntityGraph{}, nil
 }
 func (m *mockRouteStore) LogMemoryRecallEvents(context.Context, []store.MemoryRecallEvent) error {
 	return nil

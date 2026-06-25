@@ -53,10 +53,37 @@ func TestMemorySave_SurfacesPossibleDuplicates(t *testing.T) {
 	if len(dup) != 1 || dup[0] != firstID {
 		t.Fatalf("second save should surface the first note %q as a duplicate, got %v", firstID, dup)
 	}
-	txt := toolResultText(t, second)
-	if !strings.Contains(txt, "possibly-related") || !strings.Contains(txt, firstID) {
-		t.Fatalf("second save text should name the possibly-related id %q; got %q", firstID, txt)
+	// The enriched conflicts array carries the same id plus a kind + reason.
+	conflicts := conflictCandidates(t, second)
+	if len(conflicts) != 1 || conflicts[0].ID != firstID || conflicts[0].Kind == "" || conflicts[0].Reason == "" {
+		t.Fatalf("second save should surface an enriched conflict for %q, got %+v", firstID, conflicts)
 	}
+	txt := toolResultText(t, second)
+	if !strings.Contains(txt, "possibly-related") {
+		t.Fatalf("second save text should mention possibly-related; got %q", txt)
+	}
+}
+
+// conflictCand mirrors memory.ContradictionCandidate for the structured-block
+// assertion (the handler emits these under structuredContent.conflicts).
+type conflictCand struct {
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Kind   string `json:"kind"`
+	Reason string `json:"reason"`
+}
+
+func conflictCandidates(t *testing.T, resp json.RawMessage) []conflictCand {
+	t.Helper()
+	var env struct {
+		Structured struct {
+			Conflicts []conflictCand `json:"conflicts"`
+		} `json:"structuredContent"`
+	}
+	if err := json.Unmarshal(resp, &env); err != nil {
+		t.Fatalf("unmarshal conflicts: %v (raw=%s)", err, string(resp))
+	}
+	return env.Structured.Conflicts
 }
 
 // possibleDuplicates reads structuredContent.possible_duplicates (nil/absent

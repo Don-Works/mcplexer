@@ -182,6 +182,56 @@ func (d *DB) UpsertMemoryEmbedding(
 	})
 }
 
+// ListMemoriesNeedingEmbedding returns up to limit active memories with no
+// stored vector yet (embed_model empty/null) and non-empty content, oldest
+// first so a resumable backfill makes monotonic progress.
+func (d *DB) ListMemoriesNeedingEmbedding(
+	ctx context.Context, limit int,
+) ([]store.MemoryEmbedTarget, error) {
+	if limit <= 0 {
+		limit = 200
+	}
+	rows, err := d.q.QueryContext(ctx, `
+		SELECT id, content FROM memories
+		WHERE (embed_model IS NULL OR embed_model = '')
+		  AND deleted_at IS NULL
+		  AND content != ''
+		ORDER BY created_at ASC
+		LIMIT ?`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list memories needing embedding: %w", err)
+	}
+	defer rows.Close() //nolint:errcheck
+	var out []store.MemoryEmbedTarget
+	for rows.Next() {
+		var t store.MemoryEmbedTarget
+		if err := rows.Scan(&t.ID, &t.Content); err != nil {
+			return nil, fmt.Errorf("scan embed target: %w", err)
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+// CountMemoriesNeedingEmbedding returns (pending, total) over active rows:
+// pending = active memories with non-empty content but no vector yet;
+// total = all active memories. Backfill progress = (total-pending)/total.
+func (d *DB) CountMemoriesNeedingEmbedding(
+	ctx context.Context,
+) (pending, total int, err error) {
+	row := d.q.QueryRowContext(ctx, `
+		SELECT
+		  COALESCE(SUM(CASE WHEN (embed_model IS NULL OR embed_model = '')
+		                     AND content != '' THEN 1 ELSE 0 END), 0),
+		  COUNT(*)
+		FROM memories
+		WHERE deleted_at IS NULL`)
+	if err := row.Scan(&pending, &total); err != nil {
+		return 0, 0, fmt.Errorf("count memories needing embedding: %w", err)
+	}
+	return pending, total, nil
+}
+
 // GetMemoryEmbedding returns the stored vector for one memory ID plus
 // the embed_model it was written under. The vector lives in the vec0
 // virtual table memories_vec; the model is read from the memories row.

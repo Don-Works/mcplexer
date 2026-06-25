@@ -107,7 +107,6 @@ Everything reachable from the PWA is also reachable via REST
 GET    /api/v1/memory                              # list (filters in querystring)
 GET    /api/v1/memory/count
 GET    /api/v1/memory/stats                        # brain-stats aggregate
-GET    /api/v1/memory/graph                        # memory ↔ memory graph (tag co-occurrence)
 POST   /api/v1/memory                              # create — body.entities supported
 POST   /api/v1/memory/search                       # entities + entities_any supported
 POST   /api/v1/memory/forget-by-source
@@ -118,7 +117,6 @@ POST   /api/v1/memory/{id}/pin       /unpin
 DELETE /api/v1/memory/{id}
 
 GET    /api/v1/memory/entities                     # distinct entities, ranked
-GET    /api/v1/memory/entities/graph               # entity ↔ entity graph (AR3)
 GET    /api/v1/memory/entities/{kind}/{id}/related # AR1
 GET    /api/v1/memory/entities/{kind}/{id}/spreading # AR2
 
@@ -141,8 +139,6 @@ The PWA serves the same data at `http://localhost:13333`:
 /memory                            landing — brain stats + top entities
 /memory/all                        list + filters + URL-backed drawer
 /memory/about/:kind/:id            "everything about" pivot
-/memory/entities/graph             entity ↔ entity force-directed graph
-/memory/graph                      memory ↔ memory graph (tag co-occurrence)
 /memory/shared                     incoming peer offers
 /memory/consolidation              consolidator template management
 ```

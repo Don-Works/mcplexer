@@ -14,10 +14,11 @@
 // shim) works without code changes — point MCPLEXER_EMBED_BASE_URL at it
 // and set MCPLEXER_EMBED_MODEL. The API key is optional for local
 // servers (most accept any/empty bearer); NewLocalEmbedder injects a
-// sentinel so HasModel stays true. CRITICAL: memories_vec is
-// FLOAT[1536]. The local model MUST emit exactly 1536-dim vectors — Embed
-// returns a clear dim-mismatch error otherwise. We do NOT support
-// dynamic or variable dimensions; pick a 1536-dim local model.
+// sentinel so HasModel stays true. memories_vec is FLOAT[1536]; a local
+// model whose native width is SMALLER (the common 384/768/1024 case) is
+// zero-padded to 1536 by Embed (cosine-preserving — see fitToEmbedDim), so
+// any local embedding model with <=1536 dims works. Only models WIDER than
+// 1536 are rejected (truncation would not preserve similarity).
 //
 // # Cross-encoder rerank (RerankProvider)
 //
@@ -109,9 +110,9 @@ const localEmbedKeySentinel = "local-no-key"
 // OpenAI-compatible /embeddings endpoint (LM Studio, llama.cpp, Ollama's
 // OpenAI shim). baseURL is mandatory; model defaults to a generic name
 // when empty; apiKey is optional (a sentinel is injected so the provider
-// stays "active"). The model MUST emit 1536-dim vectors — see the package
-// doc + Embed's dim check; a mismatch returns a clear error at recall
-// time rather than corrupting the fixed-dimension vector table.
+// stays "active"). The model's native dim must be <=1536; smaller dims are
+// zero-padded to 1536 by Embed (cosine-preserving), so the common local
+// 384/768/1024-dim models work. Wider-than-1536 models are rejected.
 func NewLocalEmbedder(baseURL, model, apiKey string) (*OpenAIEmbedder, error) {
 	if strings.TrimSpace(baseURL) == "" {
 		return nil, errors.New("memory: local embedder requires MCPLEXER_EMBED_BASE_URL")
@@ -180,11 +181,42 @@ func (e *OpenAIEmbedder) Embed(ctx context.Context, inputs []string) ([][]float3
 	}
 	vecs := make([][]float32, 0, len(out.Data))
 	for _, d := range out.Data {
-		if len(d.Embedding) != EmbedDim {
-			return nil, "", fmt.Errorf("embed dim mismatch: got %d, want %d",
-				len(d.Embedding), EmbedDim)
+		v, err := fitToEmbedDim(d.Embedding)
+		if err != nil {
+			return nil, "", err
 		}
-		vecs = append(vecs, d.Embedding)
+		vecs = append(vecs, v)
 	}
 	return vecs, e.Model, nil
+}
+
+// fitToEmbedDim normalises a provider's native vector width to the fixed
+// memories_vec dimension (EmbedDim = 1536):
+//
+//   - == EmbedDim: passed through unchanged (OpenAI text-embedding-3-small,
+//     or 3-large downscaled via the dimensions param).
+//   - <  EmbedDim: ZERO-PADDED up to EmbedDim. This is the key to local
+//     models — most LM Studio / Ollama embedding models emit 384/768/1024
+//     dims, not 1536. Zero-padding is cosine-PRESERVING: appended zeros add
+//     nothing to the dot product or to either magnitude, so similarity
+//     between two padded vectors equals similarity between the originals.
+//     Query and stored vectors come from the same model, so they pad
+//     identically and recall ranking is unaffected.
+//   - >  EmbedDim: rejected — truncation would NOT preserve cosine, so we
+//     fail loudly rather than silently degrade. Pick a model with <=1536
+//     dims (or, for OpenAI, the dimensions param already caps it).
+func fitToEmbedDim(v []float32) ([]float32, error) {
+	switch {
+	case len(v) == EmbedDim:
+		return v, nil
+	case len(v) == 0:
+		return nil, fmt.Errorf("embed returned an empty vector")
+	case len(v) < EmbedDim:
+		padded := make([]float32, EmbedDim)
+		copy(padded, v)
+		return padded, nil
+	default:
+		return nil, fmt.Errorf("embed dim %d exceeds max %d — use an embedding model with <=%d dimensions",
+			len(v), EmbedDim, EmbedDim)
+	}
 }

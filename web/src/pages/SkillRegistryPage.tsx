@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { useApi } from '@/hooks/use-api'
@@ -15,7 +14,6 @@ import {
 } from '@/api/client'
 import {
   Loader2,
-  Network,
   Package,
   Plus,
   SearchX,
@@ -210,12 +208,6 @@ export function SkillRegistryPage() {
           </p>
         </div>
         <div className="flex shrink-0 items-end gap-2">
-          <Link to="/skills/graph">
-            <Button variant="ghost" size="sm">
-              <Network className="mr-1.5 h-3 w-3" />
-              Graph
-            </Button>
-          </Link>
           <Button onClick={() => setPublishOpen(true)} data-testid="skill-publish">
             <Plus className="mr-2 h-4 w-4" />
             {serverMode ? 'New global skill' : 'New skill'}
