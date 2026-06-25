@@ -149,6 +149,37 @@ export function runningWorkers(rows: WorkerSummary[] | null | undefined): Worker
   return rows.filter((r) => r.last_run_status === 'running')
 }
 
+export function isDelegationWorker(row: WorkerSummary): boolean {
+  return Boolean(row.ephemeral || row.delegation_id)
+}
+
+export function isDurableWorker(row: WorkerSummary): boolean {
+  return !isDelegationWorker(row)
+}
+
+export function durableWorkers(rows: WorkerSummary[] | null | undefined): WorkerSummary[] {
+  if (!rows) return []
+  return rows.filter(isDurableWorker)
+}
+
+export function liveDurableWorkers(rows: WorkerSummary[] | null | undefined): WorkerSummary[] {
+  return durableWorkers(rows).filter((row) => row.last_run_status === 'running')
+}
+
+export function isLiveDelegationWorker(row: WorkerSummary): boolean {
+  if (!isDelegationWorker(row)) return false
+  return (
+    row.last_run_status === 'running' ||
+    row.last_run_status === 'awaiting_approval' ||
+    !row.last_run_status
+  )
+}
+
+export function liveDelegationWorkers(rows: WorkerSummary[] | null | undefined): WorkerSummary[] {
+  if (!rows) return []
+  return rows.filter(isLiveDelegationWorker)
+}
+
 // shortID renders a long worker / run ID as the last 8 characters with
 // an em-dash prefix so users still see "this is shorthand". Used in
 // vitals strips and headers where the full ID is overkill.

@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Layers, Plug, Plus, Search } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -150,7 +151,10 @@ function ConnectionSections({
   filter: ConnectionFilter
   onOpenConnection: (row: WorkspaceConnectionRow) => void
 }) {
+  const [availableOpen, setAvailableOpen] = useState(false)
   if (visibleRows.length === 0) return <NoMatches query={query} filter={filter} />
+
+  const forceAvailableOpen = filter === 'available' || query.trim().length > 0
 
   return (
     <div className="space-y-4">
@@ -173,6 +177,9 @@ function ConnectionSections({
           title={rows.some((row) => row.route) ? 'Available To Connect' : 'Available Servers'}
           rows={availableRows}
           onOpen={onOpenConnection}
+          collapsible
+          open={availableOpen || forceAvailableOpen}
+          onOpenChange={setAvailableOpen}
         />
       )}
     </div>
