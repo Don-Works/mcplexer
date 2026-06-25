@@ -16,6 +16,7 @@ import type { Task } from '@/api/tasks'
 import type { DelegationContext, WorkerApproval } from '@/api/workers'
 import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
+import { getErrorReason } from '@/lib/audit-semantics'
 import type { WorkspaceConnectionRow } from './connection-model'
 
 export type CommandTone = 'warn' | 'critical' | 'info' | 'success' | 'muted'
@@ -117,12 +118,17 @@ export function buildActionItems(input: {
   }
 
   if (input.auditProblems.length > 0) {
+    const first = input.auditProblems[0]
+    // Use the shared error-reason semantics so the banner reads the same as the
+    // audit row/inspector ("blocked" / "no route" folded), falling back to the
+    // tool name when there's no descriptor. Detection itself is unchanged: the
+    // caller still scopes auditProblems to error+blocked rows.
     items.push({
       key: 'audit-problems',
       tone: 'critical',
       icon: <AlertTriangle className="h-4 w-4" />,
       title: `${input.auditProblems.length} recent audit problem${input.auditProblems.length === 1 ? '' : 's'}`,
-      detail: input.auditProblems[0].error_message || input.auditProblems[0].tool_name,
+      detail: getErrorReason(first) || first.tool_name,
       href: `/audit?workspace_id=${encodeURIComponent(input.workspace.id)}`,
       cta: 'Inspect',
     })

@@ -1,23 +1,53 @@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table'
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import type { AuditRecord } from '@/api/types'
-import { ReasonBadge, SecretEventBadge } from '@/components/AuditDetailDialog'
-import { classifySecretEvent, normalizeStatus } from '@/lib/audit-semantics'
-import { formatTime } from './chart-components'
-import { Layers, Monitor } from 'lucide-react'
+import type { AuditFilter, AuditRecord } from '@/api/types'
+import { AuditTable } from '@/components/audit/AuditTable'
 import { useNavigate } from 'react-router-dom'
 
 function isBlocked(record: AuditRecord): boolean {
   return record.status === 'blocked'
+}
+
+// The dashboard tiles share one compact column set: drop session / client /
+// cache / group so the table stays tight on the home grid. Session + execution
+// remain reachable via the inspector the row click opens, and their badges are
+// still clickable through the onFilter deep-link below.
+const DASH_COLUMNS = {
+  timestamp: true,
+  tool: true,
+  workspace: true,
+  status: true,
+  reason: true,
+  latency: true,
+  session: false,
+  client: false,
+  cache: false,
+  group: false,
+} as const
+
+// A compact variant for the errors tile: no Workspace / Client / Cache and no
+// Latency (a failed call's latency is noise), but KEEP Session + Group so their
+// clickable badges still deep-link to /audit, matching the bespoke errors rows.
+const ERROR_COLUMNS = {
+  timestamp: true,
+  tool: true,
+  status: true,
+  reason: true,
+  session: true,
+  group: true,
+  workspace: false,
+  client: false,
+  cache: false,
+  latency: false,
+} as const
+
+// Clickable session / execution badges deep-link into the audit page with the
+// matching facet pre-applied: the same targets the bespoke rows used to
+// navigate to, now driven through AuditRow's onFilter contract.
+function navFilterFor(navigate: (to: string) => void) {
+  return (patch: Partial<AuditFilter>) => {
+    if (patch.session_id) navigate(`/audit?session_id=${patch.session_id}`)
+    else if (patch.execution_id) navigate(`/audit?execution_id=${patch.execution_id}`)
+  }
 }
 
 export function RecentCallsTable({
@@ -78,117 +108,14 @@ export function RecentCallsTable({
             </p>
           </div>
         ) : (
-          <Table className="table-fixed">
-            <colgroup>
-              <col className="w-[5rem]" />
-              <col className="w-[18rem]" />
-              <col className="hidden md:table-column w-[10rem]" />
-              <col className="w-[6rem]" />
-              <col />
-              <col className="hidden lg:table-column w-[8rem]" />
-              <col className="hidden lg:table-column w-[8rem]" />
-              <col className="hidden sm:table-column w-[5rem]" />
-            </colgroup>
-            <TableHeader>
-              <TableRow className="border-border/50 hover:bg-transparent">
-                <TableHead>Time</TableHead>
-                <TableHead>Tool</TableHead>
-                <TableHead className="hidden md:table-cell">Workspace</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Reason</TableHead>
-                <TableHead className="hidden lg:table-cell">Session</TableHead>
-                <TableHead className="hidden lg:table-cell">Execution</TableHead>
-                <TableHead className="hidden sm:table-cell text-right">Latency</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {recentCalls.map((call, idx) => (
-                <TableRow
-                  key={call.id}
-                  className={`cursor-pointer border-border/30 hover:bg-muted/30 ${
-                    idx === 0 ? 'animate-[audit-in_0.3s_ease-out]' : ''
-                  }`}
-                  onClick={() => onSelect(call)}
-                >
-                  <TableCell className="whitespace-nowrap font-mono text-xs text-muted-foreground">
-                    {formatTime(call.timestamp)}
-                  </TableCell>
-                  <TableCell>
-                    <div className="max-w-[20rem] truncate font-mono text-sm text-accent-foreground" title={call.tool_name}>
-                      {call.tool_name}
-                    </div>
-                    {classifySecretEvent(call.tool_name) && (
-                      <div className="mt-1">
-                        <SecretEventBadge toolName={call.tool_name} />
-                      </div>
-                    )}
-                  </TableCell>
-                  <TableCell className="hidden md:table-cell text-muted-foreground">
-                    <div className="max-w-[10rem] truncate">{call.workspace_name || (call.workspace_id ? wsName(call.workspace_id) : '-')}</div>
-                  </TableCell>
-                  <TableCell>
-                    {(() => {
-                      const tone = normalizeStatus(call.status)
-                      return (
-                        <Badge
-                          variant={tone === 'success' ? 'secondary' : tone === 'blocked' ? 'outline' : 'destructive'}
-                          className={tone === 'blocked' ? 'border-amber-500/40 text-amber-500' : ''}
-                        >
-                          {call.status}
-                        </Badge>
-                      )
-                    })()}
-                  </TableCell>
-                  <TableCell className="align-top">
-                    <ReasonBadge record={call} />
-                  </TableCell>
-                  <TableCell className="hidden lg:table-cell">
-                    {call.session_id && (
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Badge
-                            variant="outline"
-                            className="cursor-pointer border-cyan-500/40 text-cyan-400 hover:bg-cyan-500/10"
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              navigate(`/audit?session_id=${call.session_id}`)
-                            }}
-                          >
-                            <Monitor className="mr-1 h-3 w-3" />
-                            {call.session_id.slice(0, 8)}
-                          </Badge>
-                        </TooltipTrigger>
-                        <TooltipContent>View all calls in this session</TooltipContent>
-                      </Tooltip>
-                    )}
-                  </TableCell>
-                  <TableCell className="hidden lg:table-cell">
-                    {call.execution_id && (
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Badge
-                            variant="outline"
-                            className="cursor-pointer border-violet-500/40 text-violet-400 hover:bg-violet-500/10"
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              navigate(`/audit?execution_id=${call.execution_id}`)
-                            }}
-                          >
-                            <Layers className="mr-1 h-3 w-3" />
-                            {call.execution_id.slice(0, 8)}
-                          </Badge>
-                        </TooltipTrigger>
-                        <TooltipContent>View all calls in this execution</TooltipContent>
-                      </Tooltip>
-                    )}
-                  </TableCell>
-                  <TableCell className="hidden sm:table-cell text-right font-mono text-sm text-muted-foreground">
-                    {call.latency_ms}ms
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+          <AuditTable
+            records={recentCalls}
+            columns={DASH_COLUMNS}
+            liveCount={1}
+            wsName={wsName}
+            onSelect={onSelect}
+            onFilter={navFilterFor(navigate)}
+          />
         )}
       </CardContent>
     </Card>
@@ -223,103 +150,13 @@ export function RecentErrorsTable({
         </div>
       </CardHeader>
       <CardContent>
-        <Table className="table-fixed">
-          <colgroup>
-            <col className="w-[5rem]" />
-            <col className="w-[18rem]" />
-            <col className="w-[5rem]" />
-            <col />
-            <col className="hidden lg:table-column w-[8rem]" />
-            <col className="hidden lg:table-column w-[8rem]" />
-          </colgroup>
-          <TableHeader>
-            <TableRow className="border-border/50 hover:bg-transparent">
-              <TableHead>Time</TableHead>
-              <TableHead>Tool</TableHead>
-              <TableHead>Type</TableHead>
-              <TableHead>Reason</TableHead>
-              <TableHead className="hidden lg:table-cell">Session</TableHead>
-              <TableHead className="hidden lg:table-cell">Execution</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {recentErrors.map((err) => {
-              const blocked = isBlocked(err)
-              return (
-                <TableRow
-                  key={err.id}
-                  className={`cursor-pointer border-border/30 ${
-                    blocked ? 'hover:bg-amber-500/5' : 'hover:bg-destructive/5'
-                  }`}
-                  onClick={() => onSelect(err)}
-                >
-                  <TableCell className="whitespace-nowrap font-mono text-xs text-muted-foreground">
-                    {formatTime(err.timestamp)}
-                  </TableCell>
-                  <TableCell>
-                    <div className="max-w-[20rem] truncate font-mono text-sm text-accent-foreground" title={err.tool_name}>
-                      {err.tool_name}
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <Badge
-                      variant="outline"
-                      className={blocked
-                        ? 'border-amber-500/40 text-amber-500'
-                        : 'border-destructive/40 text-destructive'
-                      }
-                    >
-                      {blocked ? 'blocked' : 'error'}
-                    </Badge>
-                  </TableCell>
-                  <TableCell className="align-top">
-                    <ReasonBadge record={err} />
-                  </TableCell>
-                  <TableCell className="hidden lg:table-cell">
-                    {err.session_id && (
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Badge
-                            variant="outline"
-                            className="cursor-pointer border-cyan-500/40 text-cyan-400 hover:bg-cyan-500/10"
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              navigate(`/audit?session_id=${err.session_id}`)
-                            }}
-                          >
-                            <Monitor className="mr-1 h-3 w-3" />
-                            {err.session_id.slice(0, 8)}
-                          </Badge>
-                        </TooltipTrigger>
-                        <TooltipContent>View all calls in this session</TooltipContent>
-                      </Tooltip>
-                    )}
-                  </TableCell>
-                  <TableCell className="hidden lg:table-cell">
-                    {err.execution_id && (
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Badge
-                            variant="outline"
-                            className="cursor-pointer border-violet-500/40 text-violet-400 hover:bg-violet-500/10"
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              navigate(`/audit?execution_id=${err.execution_id}`)
-                            }}
-                          >
-                            <Layers className="mr-1 h-3 w-3" />
-                            {err.execution_id.slice(0, 8)}
-                          </Badge>
-                        </TooltipTrigger>
-                        <TooltipContent>View all calls in this execution</TooltipContent>
-                      </Tooltip>
-                    )}
-                  </TableCell>
-                </TableRow>
-              )
-            })}
-          </TableBody>
-        </Table>
+        <AuditTable
+          records={recentErrors}
+          columns={ERROR_COLUMNS}
+          emptyHint="Errors and blocked calls will appear here"
+          onSelect={onSelect}
+          onFilter={navFilterFor(navigate)}
+        />
       </CardContent>
     </Card>
   )

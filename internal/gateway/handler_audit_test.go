@@ -55,6 +55,34 @@ func (failingAuditStore) PruneAuditRecords(_ context.Context, _ time.Time) (int6
 func (failingAuditStore) CountChildCLIToolCalls(_ context.Context, _ string, _, _ time.Time, _ []string) (int, error) {
 	return 0, nil
 }
+func (failingAuditStore) SearchAuditRecords(_ context.Context, _ store.AuditFilter, _ int) ([]store.AuditRecord, string, error) {
+	return nil, "fts", nil
+}
+func (failingAuditStore) AuditAnomalies(_ context.Context, _ string, _ time.Duration) ([]store.AuditAlert, error) {
+	return nil, nil
+}
+func (failingAuditStore) AuditSecurityEvents(_ context.Context, _ string, _ time.Duration) ([]store.AuditAlert, error) {
+	return nil, nil
+}
+func (failingAuditStore) CountAuditMatching(_ context.Context, _ store.AuditFilter) (int, error) {
+	return 0, nil
+}
+func (failingAuditStore) ListSavedSearches(_ context.Context) ([]store.SavedSearch, error) {
+	return nil, nil
+}
+func (failingAuditStore) GetSavedSearch(_ context.Context, _ string) (*store.SavedSearch, error) {
+	return nil, nil
+}
+func (failingAuditStore) CreateSavedSearch(_ context.Context, _ *store.SavedSearch) error {
+	return nil
+}
+func (failingAuditStore) UpdateSavedSearch(_ context.Context, _ *store.SavedSearch) error {
+	return nil
+}
+func (failingAuditStore) DeleteSavedSearch(_ context.Context, _ string) error { return nil }
+func (failingAuditStore) EvaluateSavedSearches(_ context.Context, _ time.Time) ([]store.FiredSavedSearch, error) {
+	return nil, nil
+}
 
 // noopScopeStore satisfies AuthScopeStore. Tests use the empty
 // AuthScopeID path so GetAuthScope is never reached.

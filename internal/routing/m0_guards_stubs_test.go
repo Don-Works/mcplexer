@@ -187,6 +187,33 @@ func (m *mockRouteStore) CountChildCLIToolCalls(context.Context, string, time.Ti
 	return 0, nil
 }
 
+// Audit overhaul — search / alerts / saved-search surface. Routing tests
+// never reach these.
+func (m *mockRouteStore) SearchAuditRecords(context.Context, store.AuditFilter, int) ([]store.AuditRecord, string, error) {
+	return nil, "fts", nil
+}
+func (m *mockRouteStore) AuditAnomalies(context.Context, string, time.Duration) ([]store.AuditAlert, error) {
+	return nil, nil
+}
+func (m *mockRouteStore) AuditSecurityEvents(context.Context, string, time.Duration) ([]store.AuditAlert, error) {
+	return nil, nil
+}
+func (m *mockRouteStore) CountAuditMatching(context.Context, store.AuditFilter) (int, error) {
+	return 0, nil
+}
+func (m *mockRouteStore) ListSavedSearches(context.Context) ([]store.SavedSearch, error) {
+	return nil, nil
+}
+func (m *mockRouteStore) GetSavedSearch(context.Context, string) (*store.SavedSearch, error) {
+	return nil, nil
+}
+func (m *mockRouteStore) CreateSavedSearch(context.Context, *store.SavedSearch) error { return nil }
+func (m *mockRouteStore) UpdateSavedSearch(context.Context, *store.SavedSearch) error { return nil }
+func (m *mockRouteStore) DeleteSavedSearch(context.Context, string) error             { return nil }
+func (m *mockRouteStore) EvaluateSavedSearches(context.Context, time.Time) ([]store.FiredSavedSearch, error) {
+	return nil, nil
+}
+
 // M4 (Workers mesh triggers) — stubs for the WorkerMeshTrigger surface
 // + peer-scope check. Routing tests never reach these.
 func (m *mockRouteStore) ListWorkerMeshTriggers(context.Context, string) ([]*store.WorkerMeshTrigger, error) {
