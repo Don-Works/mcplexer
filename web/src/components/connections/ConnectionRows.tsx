@@ -7,6 +7,7 @@ import {
   Plus,
   ShieldOff,
 } from 'lucide-react'
+import { useState } from 'react'
 import { Badge } from '@/components/ui/badge'
 import { scopeLabel } from '@/lib/scope-label'
 import type { CellKind } from './ConnectionCell'
@@ -17,35 +18,39 @@ export function ConnectionSection({
   rows,
   onOpen,
   collapsible = false,
-  open = true,
-  onOpenChange,
+  defaultCollapsed = false,
 }: {
   title: string
   rows: WorkspaceConnectionRow[]
   onOpen: (row: WorkspaceConnectionRow) => void
   collapsible?: boolean
-  open?: boolean
-  onOpenChange?: (open: boolean) => void
+  defaultCollapsed?: boolean
 }) {
-  const expanded = !collapsible || open
+  const [collapsed, setCollapsed] = useState(defaultCollapsed)
+  const contentId = `connection-section-${title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`
+
   return (
     <section className="rounded-md border border-border/50 bg-card/20">
       {collapsible ? (
         <button
           type="button"
-          onClick={() => onOpenChange?.(!expanded)}
-          aria-expanded={expanded}
-          className="flex w-full items-center justify-between border-b border-border/50 px-3 py-2 text-left transition-colors hover:bg-muted/20 focus:outline-none focus:ring-1 focus:ring-primary/60"
+          className="flex w-full items-center justify-between gap-3 border-b border-border/50 px-3 py-2 text-left transition-colors hover:bg-muted/30"
+          aria-expanded={!collapsed}
+          aria-controls={contentId}
+          onClick={() => setCollapsed((current) => !current)}
         >
-          <span className="inline-flex items-center gap-2">
-            {expanded ? (
-              <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+          <span className="flex min-w-0 items-center gap-2">
+            {collapsed ? (
+              <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
             ) : (
-              <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
+              <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
             )}
-            <span className="text-sm font-semibold">{title}</span>
+            <span className="truncate text-sm font-semibold">{title}</span>
           </span>
-          <span className="text-xs text-muted-foreground">{rows.length}</span>
+          <span className="text-xs text-muted-foreground">
+            {rows.length}
+            {collapsed ? ' hidden' : ''}
+          </span>
         </button>
       ) : (
         <div className="flex items-center justify-between border-b border-border/50 px-3 py-2">
@@ -53,8 +58,8 @@ export function ConnectionSection({
           <span className="text-xs text-muted-foreground">{rows.length}</span>
         </div>
       )}
-      {expanded && (
-        <div className="divide-y divide-border/50">
+      {!collapsed && (
+        <div id={contentId} className="divide-y divide-border/50">
           {rows.map((row) => (
             <ConnectionRowButton key={row.server.id} row={row} onOpen={() => onOpen(row)} />
           ))}

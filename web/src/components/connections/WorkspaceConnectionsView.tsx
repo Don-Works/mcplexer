@@ -1,4 +1,3 @@
-import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Layers, Plug, Plus, Search } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -9,7 +8,7 @@ import {
   type WorkspaceConnectionRow,
   type WorkspaceConnectionSummary,
 } from './connection-model'
-import { WorkspaceHeader, WorkspaceRail } from './WorkspaceRail'
+import { WorkspaceRail } from './WorkspaceRail'
 import { ConnectionSection } from './ConnectionRows'
 import { ConnectionFilterChips } from './ConnectionFilterChips'
 import {
@@ -18,6 +17,10 @@ import {
   ErrorBlock,
   NoMatches,
 } from './ConnectionEmptyStates'
+import {
+  WorkspaceCommandCenter,
+  type WorkspaceCommandCenterData,
+} from './WorkspaceCommandCenter'
 
 interface Props {
   workspaces: Workspace[]
@@ -27,6 +30,7 @@ interface Props {
   rows: WorkspaceConnectionRow[]
   visibleRows: WorkspaceConnectionRow[]
   counts: { all: number; connected: number; needsAuth: number; available: number }
+  operations: WorkspaceCommandCenterData
   filter: ConnectionFilter
   query: string
   loading: boolean
@@ -46,6 +50,7 @@ export function WorkspaceConnectionsView({
   rows,
   visibleRows,
   counts,
+  operations,
   filter,
   query,
   loading,
@@ -57,6 +62,14 @@ export function WorkspaceConnectionsView({
   onOpenConnection,
 }: Props) {
   if (loading && (serverCount === 0 || workspaces.length === 0)) return <ConnectionsSkeleton />
+  if (error && (serverCount === 0 || workspaces.length === 0)) {
+    return (
+      <div className="space-y-4">
+        <ErrorBlock message={error} onRetry={onRetry} />
+        <ConnectionsSkeleton />
+      </div>
+    )
+  }
   if (serverCount === 0) return <NoServers />
   if (workspaces.length === 0) return <NoWorkspaces />
   if (!selectedWorkspace) return null
@@ -71,14 +84,22 @@ export function WorkspaceConnectionsView({
       {error && <ErrorBlock message={error} onRetry={onRetry} />}
 
       <div className="grid gap-4 xl:grid-cols-[18rem_1fr]">
-        <WorkspaceRail
-          summaries={summaries}
-          selectedWorkspaceId={selectedWorkspace.id}
-          onSelect={onSelectWorkspace}
-        />
+        <div className="order-2 xl:order-1">
+          <WorkspaceRail
+            summaries={summaries}
+            selectedWorkspaceId={selectedWorkspace.id}
+            onSelect={onSelectWorkspace}
+          />
+        </div>
 
-        <section className="min-w-0 space-y-4">
-          <WorkspaceHeader workspace={selectedWorkspace} summary={selectedSummary} />
+        <section className="order-1 min-w-0 space-y-4 xl:order-2">
+          <WorkspaceCommandCenter
+            workspace={selectedWorkspace}
+            summary={selectedSummary}
+            rows={rows}
+            operations={operations}
+            onOpenConnection={onOpenConnection}
+          />
           <ConnectionToolbar
             query={query}
             filter={filter}
@@ -151,10 +172,7 @@ function ConnectionSections({
   filter: ConnectionFilter
   onOpenConnection: (row: WorkspaceConnectionRow) => void
 }) {
-  const [availableOpen, setAvailableOpen] = useState(false)
   if (visibleRows.length === 0) return <NoMatches query={query} filter={filter} />
-
-  const forceAvailableOpen = filter === 'available' || query.trim().length > 0
 
   return (
     <div className="space-y-4">
@@ -174,12 +192,12 @@ function ConnectionSections({
       )}
       {availableRows.length > 0 && (
         <ConnectionSection
+          key={`${availableRows[0]?.workspace.id ?? 'workspace'}-${filter}-${query.trim() ? 'searched' : 'default'}`}
           title={rows.some((row) => row.route) ? 'Available To Connect' : 'Available Servers'}
           rows={availableRows}
           onOpen={onOpenConnection}
           collapsible
-          open={availableOpen || forceAvailableOpen}
-          onOpenChange={setAvailableOpen}
+          defaultCollapsed={filter === 'all' && query.trim() === ''}
         />
       )}
     </div>

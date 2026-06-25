@@ -17,6 +17,7 @@ import { useApi } from '@/hooks/use-api'
 import type { CellState } from '@/components/connections/ConnectionCell'
 import { ConnectionDrawer } from '@/components/connections/ConnectionDrawer'
 import { WorkspaceConnectionsView } from '@/components/connections/WorkspaceConnectionsView'
+import { useWorkspaceOperations } from '@/components/connections/use-workspace-operations'
 import {
   buildWorkspaceRows,
   buildWorkspaceSummaries,
@@ -39,10 +40,10 @@ interface DrawerTarget {
 }
 
 export function ConnectionsPage() {
-  const serversFetcher = useCallback(() => listDownstreams(), [])
-  const workspacesFetcher = useCallback(() => listWorkspaces(), [])
-  const routesFetcher = useCallback(() => listRoutes(), [])
-  const scopesFetcher = useCallback(() => listAuthScopes(), [])
+  const serversFetcher = useCallback((signal: AbortSignal) => listDownstreams({ signal }), [])
+  const workspacesFetcher = useCallback((signal: AbortSignal) => listWorkspaces({ signal }), [])
+  const routesFetcher = useCallback((signal: AbortSignal) => listRoutes({ signal }), [])
+  const scopesFetcher = useCallback((signal: AbortSignal) => listAuthScopes({ signal }), [])
 
   const {
     data: servers,
@@ -101,6 +102,8 @@ export function ConnectionsPage() {
     if (!workspaces?.length) return null
     return workspaces.find((workspace) => workspace.id === selectedWorkspaceId) ?? workspaces[0]
   }, [workspaces, selectedWorkspaceId])
+  const selectedWorkspaceID = selectedWorkspace?.id ?? ''
+  const operations = useWorkspaceOperations(selectedWorkspaceID, routes ?? [])
 
   const rows = useMemo<WorkspaceConnectionRow[]>(() => {
     if (!selectedWorkspace) return []
@@ -212,17 +215,17 @@ export function ConnectionsPage() {
     <div className="space-y-5">
       <header className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
         <div className="space-y-1">
-          <h1 className="text-xl font-semibold">Workspaces</h1>
+          <h1 className="text-xl font-semibold">Workspace command center</h1>
           <p className="max-w-2xl text-sm text-muted-foreground">
-            Each workspace scopes which servers, credentials, and tools an agent
-            can reach. Pick a workspace to see its permissions and connections.
+            Start from a workspace to see access, routing, pending actions,
+            automation, memory, tasks, and recent tool activity in one place.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Button variant="outline" asChild>
             <Link to="/workspaces/routes">
               <Route className="mr-1.5 h-4 w-4" />
-              Routing rules
+              Server access
             </Link>
           </Button>
           <Button variant="outline" asChild>
@@ -248,6 +251,7 @@ export function ConnectionsPage() {
         rows={rows}
         visibleRows={visibleRows}
         counts={counts}
+        operations={operations}
         filter={filter}
         query={query}
         loading={loading}
@@ -266,6 +270,8 @@ export function ConnectionsPage() {
         state={drawer?.state ?? null}
         route={drawer?.route ?? null}
         scopes={scopes ?? []}
+        workspaces={workspaces ?? []}
+        downstreams={servers ?? []}
         onClose={handleDrawerClose}
         onChanged={handleDrawerChanged}
       />

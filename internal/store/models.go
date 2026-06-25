@@ -224,8 +224,88 @@ type AuditFilter struct {
 	ExecutionID *string    `json:"execution_id,omitempty"`
 	After       *time.Time `json:"after,omitempty"`
 	Before      *time.Time `json:"before,omitempty"`
-	Limit       int        `json:"limit"`
-	Offset      int        `json:"offset"`
+
+	// Richer exact-match filters (audit overhaul). All optional —
+	// nil/empty means "no constraint on that dimension".
+	ActorKind          *string `json:"actor_kind,omitempty"`
+	ActorID            *string `json:"actor_id,omitempty"`
+	DownstreamServerID *string `json:"downstream_server_id,omitempty"`
+	RouteRuleID        *string `json:"route_rule_id,omitempty"`
+	ClientType         *string `json:"client_type,omitempty"`
+	ErrorCode          *string `json:"error_code,omitempty"`
+	Tier               *string `json:"tier,omitempty"`
+	CacheHit           *bool   `json:"cache_hit,omitempty"`
+	MinLatencyMs       *int    `json:"min_latency_ms,omitempty"`
+
+	// Q is a free-text FTS5 query. When non-empty it AND-restricts the
+	// result set to rows matching the audit_records_fts index (sanitised
+	// before MATCH). Ordering/pagination are unaffected — still
+	// timestamp/sort-driven + keyset/offset paged.
+	Q string `json:"q,omitempty"`
+
+	// Sort selects the ordering. One of "time_desc" (default), "time_asc",
+	// "latency_desc", "latency_asc". Validated against an allowlist; an
+	// unknown value falls back to time_desc.
+	Sort string `json:"sort,omitempty"`
+
+	// CursorTs/CursorID carry an opaque keyset cursor ("<RFC3339Nano>|<id>").
+	// When CursorTs is non-nil, offset is ignored and the page advances by
+	// (timestamp,id) strictly past the cursor in the sort direction.
+	CursorTs *time.Time `json:"-"`
+	CursorID string     `json:"-"`
+
+	Limit  int `json:"limit"`
+	Offset int `json:"offset"`
+}
+
+// AuditAlert is a deterministic, locally-computed anomaly or security
+// finding over the audit log. No external LLM — every alert is a
+// threshold crossing the store can explain. Filter is a deep-link subset
+// of AuditFilter fields so the UI can jump straight to the matching rows.
+type AuditAlert struct {
+	ID          string  `json:"id"`
+	Kind        string  `json:"kind"`     // "anomaly" | "security"
+	Severity    string  `json:"severity"` // "info" | "warning" | "critical"
+	Title       string  `json:"title"`
+	Detail      string  `json:"detail"`
+	ToolName    string  `json:"tool_name,omitempty"`
+	WorkspaceID string  `json:"workspace_id,omitempty"`
+	Count       int     `json:"count"`
+	Metric      float64 `json:"metric,omitempty"`
+	Baseline    float64 `json:"baseline,omitempty"`
+
+	FirstSeen time.Time `json:"first_seen"`
+	LastSeen  time.Time `json:"last_seen"`
+
+	// Filter is the deep-link AuditFilter subset (e.g.
+	// {"tool_name":"x","status":"error"}) the UI uses to navigate to the
+	// matching audit rows. Serialised as a JSON object.
+	Filter map[string]any `json:"filter,omitempty"`
+}
+
+// SavedSearch is a persisted audit query that the saved-search evaluator
+// turns into a notification when its match count over a rolling window
+// crosses threshold_count. Filter is a JSON object of AuditFilter fields.
+type SavedSearch struct {
+	ID             string         `json:"id"`
+	Name           string         `json:"name"`
+	Q              string         `json:"q"`
+	Filter         map[string]any `json:"filter"`
+	ThresholdCount int            `json:"threshold_count"`
+	WindowSec      int            `json:"window_sec"`
+	WorkspaceID    string         `json:"workspace_id"`
+	Enabled        bool           `json:"enabled"`
+	LastFiredAt    *time.Time     `json:"last_fired_at,omitempty"`
+	CreatedAt      time.Time      `json:"created_at"`
+}
+
+// AuditSearchResult bundles a ranked record list with the tier that
+// actually produced it: "vector" (query-time embedding rerank), "tfidf"
+// (local TF-IDF over the FTS candidate pool), or "fts" (lexical/recency
+// fallback when the query has no usable terms).
+type AuditSearchResult struct {
+	Records []AuditRecord `json:"data"`
+	Mode    string        `json:"mode"`
 }
 
 // TimeSeriesPoint holds minute-bucketed aggregate metrics.

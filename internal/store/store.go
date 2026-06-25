@@ -981,6 +981,56 @@ type AuditStore interface {
 	// Callers normalise the list (claude_cli, opencode, opencode_cli,
 	// grok, grok_cli, xai, xai_cli, mimo, mimo_cli, mimocode, claude_code, claude-code).
 	CountChildCLIToolCalls(ctx context.Context, workspaceID string, start, end time.Time, clientTypes []string) (int, error)
+
+	// SearchAuditRecords runs a ranked relevance search over the audit
+	// log: an FTS5 candidate pool (scoped by f, recency-capped) re-ranked
+	// in Go with a local TF-IDF index — no network, no embedding model.
+	// Returns the records in ranked order plus the mode that ran:
+	// "tfidf" (query had usable terms) or "fts" (no usable terms → recency
+	// fallback). k caps the result count. The vector tier (query-time
+	// embedding rerank) is layered in the API, not here.
+	SearchAuditRecords(ctx context.Context, f AuditFilter, k int) (records []AuditRecord, mode string, err error)
+
+	// AuditAnomalies computes deterministic operational anomalies over the
+	// trailing window vs the prior equal-length baseline window: error-rate
+	// spikes, p95 latency spikes, and volume surges per (tool_name[,
+	// workspace]). ws scopes to one workspace ("" = all). Each returned
+	// alert is a threshold crossing the store can fully explain.
+	AuditAnomalies(ctx context.Context, ws string, window time.Duration) ([]AuditAlert, error)
+
+	// AuditSecurityEvents surfaces security-relevant signal over the
+	// window: blocked/denied counts, rows carrying a denial_reason,
+	// cross-org tier shares, and secret.* tool-access spikes. ws scopes to
+	// one workspace ("" = all).
+	AuditSecurityEvents(ctx context.Context, ws string, window time.Duration) ([]AuditAlert, error)
+
+	// CountAuditMatching returns the number of audit_records matching the
+	// filter (honouring q + every exact-match dimension). Backs the
+	// saved-search evaluator's threshold check.
+	CountAuditMatching(ctx context.Context, f AuditFilter) (int, error)
+
+	// Saved-search CRUD — persisted audit alert definitions.
+	ListSavedSearches(ctx context.Context) ([]SavedSearch, error)
+	GetSavedSearch(ctx context.Context, id string) (*SavedSearch, error)
+	CreateSavedSearch(ctx context.Context, s *SavedSearch) error
+	UpdateSavedSearch(ctx context.Context, s *SavedSearch) error
+	DeleteSavedSearch(ctx context.Context, id string) error
+
+	// EvaluateSavedSearches runs every enabled saved search: counts matches
+	// over its rolling window and, when count >= threshold, stamps
+	// last_fired_at and returns a fired-alert descriptor so the caller
+	// (the ticker) can emit a notification. Debounced by last_fired_at:
+	// a search won't re-fire within its own window. Returns the alerts
+	// that crossed threshold this tick (empty when nothing fired).
+	EvaluateSavedSearches(ctx context.Context, now time.Time) ([]FiredSavedSearch, error)
+}
+
+// FiredSavedSearch is returned by EvaluateSavedSearches for each saved
+// search whose count crossed threshold this tick. The ticker turns it
+// into a notify.Event.
+type FiredSavedSearch struct {
+	Search SavedSearch `json:"search"`
+	Count  int         `json:"count"`
 }
 
 // MeshStore manages mesh messages and agent records.

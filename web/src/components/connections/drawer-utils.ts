@@ -17,15 +17,15 @@ export function filterCompatibleScopes(
 }
 
 export function describeState(state: CellState | null): string {
-  if (!state) return 'Configure the route between this server and workspace.'
+  if (!state) return 'Configure server access for this workspace.'
   switch (state.kind) {
     case 'connected':
-      return 'Route is live. Pick a different credential or remove it below.'
+      return 'Access is live. Edit matching, approval, credential, policy, or remove it below.'
     case 'needs-auth':
-      return 'Route exists but the credential needs setup.'
+      return 'Access is configured, but the selected credential still needs setup.'
     case 'add':
-      return 'No route yet. Pick a credential (or none) and click Connect.'
+      return 'No access rule yet. Configure it, then connect this server to the workspace.'
     case 'disabled':
-      return 'Route is set to deny. Save to switch to allow, or remove it.'
+      return 'Access is set to deny. Review the rule, switch policy, or remove it.'
   }
 }

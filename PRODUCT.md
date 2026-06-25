@@ -1,33 +1,40 @@
-# Product
+# MCPlexer Product Context
+
+## Product Purpose
+
+MCPlexer is a local-first MCP gateway and dashboard for routing AI tool calls by workspace. It sits between AI clients and downstream MCP servers, enforcing workspace-scoped access, approvals, credential injection, auditability, worker delegation, memory, tasks, and peer/mesh coordination.
 
 ## Register
 
 product
 
-## Users
+## Primary Users
 
-Developers, operators, and AI-agent power users who need to route, audit, and control MCP tool access from a local machine. They are usually inside an active coding or operations workflow, often checking what an agent can reach, what is running, and what needs human approval.
+- Operators and developers running multiple AI harnesses against local projects.
+- Power users who need clear control over what each workspace can access.
+- Agent operators reviewing approvals, delegations, worker runs, memory, tasks, and audit trails.
+- Open-source adopters evaluating trust, setup, and daily operability.
 
-## Product Purpose
+## Core UX Principle
 
-MCPlexer is a local-first MCP gateway for directory-scoped routing, credential injection, approvals, audit logging, and workspace-aware tool control. Success means an operator can understand and adjust agent access quickly, with clear boundaries between workspaces, servers, credentials, workers, and ephemeral runs.
+Workspace is the primary mental model. A workspace represents a directory tree and the policy boundary around it. The UI should let users start from a workspace, understand what is connected, what is allowed, what needs attention, and which agents or knowledge primitives are active in that scope.
 
-## Brand Personality
+## Strategic Principles
 
-Precise, trustworthy, terminal-native. The interface should feel like a dark control plane for serious agent operations: data-dense, restrained, fast to scan, and low on marketing flourish.
+- Preserve feature visibility while reducing taxonomy drift.
+- Prefer operational command surfaces over marketing or explanatory screens.
+- Show actionable work first: approvals, missing credentials, failed/running delegations, active workers, open tasks, fresh memory, and recent audit activity.
+- Deep specialist pages remain available, but workspace-scoped rollups should explain where to go next.
+- Keep the interface dense, dark, square, and utilitarian per DESIGN.md.
+- Use copy that names the real system concepts: workspace, route, approval, delegation, worker, memory, task, audit.
+- Avoid hiding advanced control behind vague labels.
 
-## Anti-references
+## Anti-Patterns
 
-Avoid generic SaaS gloss, over-rounded consumer-app controls, decorative gradients, glassmorphism, nested cards, side-stripe accents, emoji, and playful motion. Do not make core product surfaces feel like a landing page or a hero section.
+- Competing navigation taxonomies for the same object.
+- Separate global pages that cannot be understood from workspace context.
+- Duplicate setup flows with unclear priority.
+- Card grids that only repeat icon, heading, and prose.
+- Decorative visual treatment that slows down scanning.
+- Removing visibility to make the UI feel simpler.
 
-## Design Principles
-
-- Keep operational state legible at a glance: labels, counts, and section states should explain what is live, configured, available, or historical.
-- Preserve workspace as the primary scope boundary: navigation and page structure should reinforce that workspace access is the control-plane concept.
-- Prefer dense but calm interfaces: use flat dividers, restrained cyan selection, and predictable shadcn/lucide affordances.
-- Make ephemeral work visibly ephemeral: live runs and delegations belong in live activity surfaces, while persistent workers and workflows belong in stable inventory surfaces.
-- Respect the terminal-native identity: square geometry, dark cool neutrals, high contrast, and monospace only where it identifies machine output.
-
-## Accessibility & Inclusion
-
-Target readable contrast in dark mode, keyboard-reachable controls, visible focus states, stable layout at desktop and mobile widths, and reduced-motion-safe interactions. Interactive disclosure controls must expose expanded/collapsed state to assistive technology.

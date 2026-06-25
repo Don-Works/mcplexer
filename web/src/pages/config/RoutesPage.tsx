@@ -17,7 +17,11 @@ import { ArrowLeft, Plus, RotateCw, Server } from 'lucide-react'
 import { toast } from 'sonner'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { RouteDialog, emptyForm } from './RouteDialog'
-import type { RouteFormData } from './RouteDialog'
+import {
+  newRouteFormForWorkspace,
+  routeToForm,
+  type RouteFormData,
+} from '@/components/routes/route-form-model'
 import { BulkEnableDialog } from './BulkEnableDialog'
 import { RouteWorkspaceGroup } from './RouteWorkspaceGroup'
 
@@ -122,7 +126,7 @@ export function RoutesPage() {
     setReloading(true)
     try {
       await flushCache('all')
-      toast.success('Routes reloaded — changes are live for new tool calls')
+      toast.success('Access rules reloaded — changes are live for new tool calls')
       refetch()
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : 'Failed to reload routes')
@@ -169,29 +173,14 @@ export function RoutesPage() {
 
   function openCreate(prefillWorkspaceId?: string) {
     setEditing(null)
-    setForm({ ...emptyForm, workspace_id: prefillWorkspaceId ?? '' })
+    setForm(newRouteFormForWorkspace(prefillWorkspaceId))
     setSaveError(null)
     setDialogOpen(true)
   }
 
   function openEdit(r: RouteRule) {
     setEditing(r)
-    const tm = Array.isArray(r.tool_match) ? (r.tool_match as string[]) : []
-    const normalizedToolMatch = tm.length === 1 && tm[0] === '*' ? [] : tm
-    setForm({
-      name: r.name || '',
-      priority: r.priority,
-      workspace_id: r.workspace_id,
-      path_glob: r.path_glob || '**',
-      tool_match: normalizedToolMatch,
-      scope_policy: r.scope_policy ?? {},
-      downstream_server_id: r.downstream_server_id,
-      auth_scope_id: r.auth_scope_id,
-      policy: r.policy,
-      log_level: r.log_level,
-      approval_mode: r.approval_mode ?? 'none',
-      approval_timeout: r.approval_timeout ?? 300,
-    })
+    setForm(routeToForm(r))
     setSaveError(null)
     setDialogOpen(true)
   }
@@ -213,6 +202,12 @@ export function RoutesPage() {
     } finally {
       setSaving(false)
     }
+  }
+
+  function handleDeleteFromDialog() {
+    if (!editing) return
+    setDeleteTarget(editing)
+    setDialogOpen(false)
   }
 
   async function confirmDelete() {
@@ -237,11 +232,11 @@ export function RoutesPage() {
               Workspaces
             </Link>
           </Button>
-          <h1 className="text-xl font-semibold">Workspace Routing</h1>
+          <h1 className="text-xl font-semibold">Server Access</h1>
           <p className="max-w-2xl text-sm text-muted-foreground">
-            Route rules decide which server and credential handle matching tool
-            calls in each workspace. Rules are evaluated by priority; first
-            match wins.
+            Choose which servers each workspace can use. Access rules set the
+            server, credential, approval gate, and optional file or tool
+            matching.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -253,7 +248,7 @@ export function RoutesPage() {
           </Button>
           <Button onClick={() => openCreate()} data-testid="route-add">
             <Plus className="mr-1.5 h-4 w-4" />
-            Add rule
+            Add access rule
           </Button>
           <Button
             variant="outline"
@@ -300,8 +295,8 @@ export function RoutesPage() {
 
       {workspaces && routes && groups.length === 0 && (
         <div className="text-center py-12 text-muted-foreground">
-          <p className="text-sm">No route rules configured yet.</p>
-          <p className="text-xs mt-1">Create a workspace, then add a route to connect a server to it.</p>
+          <p className="text-sm">No access rules configured yet.</p>
+          <p className="text-xs mt-1">Create a workspace, then connect servers to it.</p>
         </div>
       )}
 
@@ -311,6 +306,7 @@ export function RoutesPage() {
         form={form}
         setForm={setForm}
         onSave={handleSave}
+        onDelete={editing ? handleDeleteFromDialog : undefined}
         saving={saving}
         editing={!!editing}
         workspaces={workspaces ?? []}
@@ -335,8 +331,8 @@ export function RoutesPage() {
       <ConfirmDialog
         open={!!deleteTarget}
         onOpenChange={(open) => !open && setDeleteTarget(null)}
-        title="Delete route rule"
-        description="Are you sure you want to delete this route rule?"
+        title="Delete access rule"
+        description="Are you sure you want to delete this access rule?"
         confirmLabel="Delete"
         variant="destructive"
         onConfirm={confirmDelete}
