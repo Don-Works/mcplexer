@@ -141,6 +141,25 @@ type Settings struct {
 	// the historical hard-block on chaining metacharacters without a code
 	// change — the reversible escape hatch.
 	ShellGuardAllowChaining bool `json:"shell_guard_allow_chaining"`
+
+	// MemoryEmbedProvider selects the embedding backend that powers semantic
+	// (vector) memory recall:
+	//   "auto"   — (default) probe for a local OpenAI-compatible endpoint
+	//              (LM Studio / Ollama / llama.cpp) at boot and use it if a
+	//              1536-dim embedding model is loaded; otherwise FTS5-only.
+	//   "local"  — use MemoryEmbedBaseURL + MemoryEmbedModel explicitly.
+	//   "openai" — use OpenAI text-embedding-3-small via MCPLEXER_OPENAI_API_KEY.
+	//   "none"   — disable vectors; keyword (FTS5) recall only.
+	// The MCPLEXER_EMBED_BASE_URL / MCPLEXER_OPENAI_API_KEY env vars still
+	// take precedence over this setting (headless / CI override).
+	MemoryEmbedProvider string `json:"memory_embed_provider,omitempty"`
+	// MemoryEmbedBaseURL is the OpenAI-compatible /v1 base URL for the
+	// "local" provider (e.g. http://localhost:1234/v1). Also recorded after
+	// a successful "auto" detection so the dashboard shows what was found.
+	MemoryEmbedBaseURL string `json:"memory_embed_base_url,omitempty"`
+	// MemoryEmbedModel is the embedding model id for local/auto providers.
+	// It MUST emit 1536-dim vectors (memories_vec is FLOAT[1536]).
+	MemoryEmbedModel string `json:"memory_embed_model,omitempty"`
 }
 
 // DefaultSettings returns settings with sensible defaults.
@@ -167,6 +186,7 @@ func DefaultSettings() Settings {
 		DelegationDisabledProviders: map[string]bool{},
 		AutoUpdateBootstrap:         true,
 		ShellGuardAllowChaining:     true,
+		MemoryEmbedProvider:         "auto",
 	}
 }
 

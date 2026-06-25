@@ -13,7 +13,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { ArrowLeft, Clock, Globe, Layers, Loader2, Play, Power, Workflow } from 'lucide-react'
+import { AlertTriangle, ArrowLeft, Clock, Globe, Layers, Loader2, Play, Power, Workflow } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -152,9 +152,9 @@ export function MemoryConsolidationPage() {
       {!topLevelLoading && rows.length === 0 && (
         <Card>
           <CardContent className="p-6 text-center text-sm text-muted-foreground">
-            No workspaces yet. Once you have at least one workspace and an api_key
-            auth scope, the consolidator will install itself on the next daemon
-            restart.
+            No workspaces yet. Once you have at least one workspace and any
+            configured auth scope, the consolidator installs itself on the next
+            daemon restart.
           </CardContent>
         </Card>
       )}
@@ -260,6 +260,16 @@ function WorkspaceCard({
           </Badge>
         </div>
 
+        {status?.installed && status.can_run === false && (
+          <div className="flex items-start gap-2 border border-amber-500/40 bg-amber-500/10 px-2.5 py-2 text-[11px] text-amber-200/90">
+            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-400" />
+            <span>
+              <span className="font-semibold">Installed but can&apos;t run.</span>{' '}
+              {status.run_blocked_reason || 'The configured model provider is unavailable.'}
+            </span>
+          </div>
+        )}
+
         <div className="grid grid-cols-2 gap-2 border-t border-border/40 pt-3">
           <Stat icon={<Layers className="h-3.5 w-3.5" />} label="Recent runs" value={status?.recent_runs ? String(status.recent_runs) : '—'} />
           <Stat icon={<Clock className="h-3.5 w-3.5" />} label="Last run" value={lastRun.value} hint={lastRun.hint} />
@@ -285,7 +295,7 @@ function WorkspaceCard({
           )}
           {!status?.installed && (
             <span className="text-[11px] text-muted-foreground">
-              Daemon will auto-install on next boot when an api_key auth scope exists.
+              Daemon will auto-install on next boot once any auth scope exists.
             </span>
           )}
           {status?.worker_id && (

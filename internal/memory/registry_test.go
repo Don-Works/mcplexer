@@ -584,7 +584,7 @@ func TestWriteSurfacesContradictionCandidates(t *testing.T) {
 	}
 	found := false
 	for _, c := range dup.Candidates {
-		if c == firstID.ID {
+		if c.ID == firstID.ID {
 			found = true
 		}
 	}

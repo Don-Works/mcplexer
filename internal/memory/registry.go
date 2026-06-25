@@ -64,10 +64,23 @@ import (
 // only persists events when MCPLEXER_RECALL_TRACKING=1. Off-state =
 // drain-to-noop, so logging adds zero DB cost when disabled.
 type Service struct {
-	store    store.MemoryStore
-	embedder EmbedProvider
+	store store.MemoryStore
+	// embedder is hot-swappable at runtime (dashboard/settings can wire a
+	// local or OpenAI embedding provider without a daemon restart). Stored
+	// behind an atomic.Pointer so the recall/write hot paths read it
+	// lock-free; SetEmbedder publishes a new provider. Always read via
+	// getEmbedder(), never the field directly.
+	embedder atomic.Pointer[EmbedProvider]
 	reranker RerankProvider
 	digest   Digester
+
+	// Embeddings-backfill progress (lock-free). When a vector provider is
+	// first wired, StartBackfillAsync embeds the existing corpus so old
+	// memories become semantically searchable; these expose live progress
+	// to the dashboard. See backfill.go.
+	backfillRunning atomic.Bool
+	backfillDone    atomic.Int64
+	backfillTotal   atomic.Int64
 
 	// rrfWFTS / rrfWVec are the per-arm weights for the reciprocal rank
 	// fusion in Recall. Package-level tunable (NOT per-workspace config) —
@@ -115,6 +128,38 @@ type Service struct {
 	// closing it would risk a send-on-closed-channel panic.
 	stopCh    chan struct{}
 	closeOnce sync.Once
+}
+
+// getEmbedder returns the currently-wired embedding provider, lock-free.
+// Never nil: falls back to NoopEmbedder when nothing has been published.
+func (s *Service) getEmbedder() EmbedProvider {
+	if s == nil {
+		return NoopEmbedder{}
+	}
+	if p := s.embedder.Load(); p != nil {
+		return *p
+	}
+	return NoopEmbedder{}
+}
+
+// SetEmbedder publishes a new embedding provider at runtime, swapping the
+// recall/write vector path over without a daemon restart. Nil-safe: a nil
+// provider installs the no-op embedder (FTS5-only floor). Wired from the
+// daemon boot path and from the dashboard embeddings-config endpoint.
+func (s *Service) SetEmbedder(e EmbedProvider) {
+	if s == nil {
+		return
+	}
+	if e == nil {
+		e = NoopEmbedder{}
+	}
+	s.embedder.Store(&e)
+}
+
+// EmbedderActive reports whether a real (non-noop) embedding provider is
+// currently wired — i.e. whether the vector recall path is live.
+func (s *Service) EmbedderActive() bool {
+	return s.getEmbedder().HasModel()
 }
 
 // SetReranker installs a cross-encoder rerank provider post-construction.
@@ -189,7 +234,6 @@ func NewService(s store.MemoryStore, embedder EmbedProvider, digest Digester) *S
 	}
 	svc := &Service{
 		store:         s,
-		embedder:      embedder,
 		reranker:      NoopReranker{},
 		digest:        digest,
 		rrfWFTS:       1.0,
@@ -199,6 +243,7 @@ func NewService(s store.MemoryStore, embedder EmbedProvider, digest Digester) *S
 		recallEnabled: os.Getenv("MCPLEXER_RECALL_TRACKING") == "1",
 		stopCh:        make(chan struct{}),
 	}
+	svc.SetEmbedder(embedder)
 	if svc.recallEnabled {
 		go svc.recallFlushLoop(svc.stopCh)
 	} else {
@@ -284,8 +329,13 @@ type Event struct {
 	EntityID    string `json:"entity_id,omitempty"`
 	Source      string `json:"source,omitempty"`
 	// Candidates carries the surfaced near-duplicate/conflict memory ids on a
-	// possible_contradiction event. Empty for every other kind.
+	// possible_contradiction event. Empty for every other kind. Kept []string
+	// for wire/back-compat (signal consumers that only need ids).
 	Candidates []string `json:"candidates,omitempty"`
+	// ConflictCandidates is the enriched form of Candidates (id+name+preview+
+	// kind+reason). Same membership as Candidates; richer payload for the
+	// dashboard conflict queue + the agent-facing save response.
+	ConflictCandidates []ContradictionCandidate `json:"conflict_candidates,omitempty"`
 }
 
 // EventKindPossibleContradiction is emitted after a note write whose cheap
@@ -302,13 +352,26 @@ type Event struct {
 // stability — treat it as "possible_duplicate".
 const EventKindPossibleContradiction = "possible_contradiction"
 
+// ContradictionCandidate is one existing memory the post-write neighbour
+// scan flagged as a possible duplicate or conflict, ENRICHED so the agent
+// (and the dashboard conflict queue) can adjudicate without N follow-up
+// memory__get calls. Kind is "duplicate" (near-identical wording) or
+// "related" (topically/semantically close — check for a conflict).
+type ContradictionCandidate struct {
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Preview string `json:"preview"`
+	Kind    string `json:"kind"`
+	Reason  string `json:"reason"`
+}
+
 // WriteResult is the extended return shape of WriteWithResult: the new
-// memory's id plus any near-duplicate / potential-conflict candidate ids the
+// memory's id plus any near-duplicate / potential-conflict candidates the
 // post-write neighbour scan surfaced (notes only; facts auto-supersede via
 // the unique index). Candidates is advisory — nothing is auto-invalidated.
 type WriteResult struct {
 	ID         string
-	Candidates []string
+	Candidates []ContradictionCandidate
 }
 
 // contradictionScanCap bounds the neighbour scan to a few candidates so the
@@ -321,11 +384,17 @@ const contradictionScanCap = 3
 // "a") that FTS5's OR-join would otherwise let match incidentally.
 const contradictionMinTokenLen = 4
 
-// contradictionMinSharedTokens is the minimum count of DISTINCT significant
-// tokens a candidate must share with the new note to be surfaced. Two is
-// enough to distinguish a genuine topical overlap from a one-word
-// coincidence while staying permissive enough to catch real near-duplicates.
-const contradictionMinSharedTokens = 2
+// contradictionMinJaccard is the minimum Jaccard overlap of significant
+// tokens a LEXICAL-only candidate must clear to be surfaced. Far stricter
+// than the old "2 shared tokens" rule, which surfaced unrelated notes that
+// merely shared two common words (e.g. flagging harness-import notes as
+// "related" to a brand-new note). Semantic (vector) neighbours BYPASS this
+// gate — low lexical overlap is exactly where embeddings earn their keep.
+const contradictionMinJaccard = 0.5
+
+// contradictionDupJaccard is the overlap at/above which a candidate is
+// classified a "duplicate" (near-identical wording) rather than "related".
+const contradictionDupJaccard = 0.6
 
 // WriteOptions is the arg payload for Write. Mirrors MemoryEntry but
 // hides bookkeeping fields the caller never sets.
@@ -447,7 +516,49 @@ func (s *Service) WriteWithResult(ctx context.Context, opts WriteOptions) (Write
 	// advisory event when candidates land. Facts auto-supersede via the
 	// unique index, so they skip this.
 	candidates := s.surfaceContradictions(ctx, e, opts.Entities)
+	s.recordConflicts(ctx, e, candidates)
 	return WriteResult{ID: e.ID, Candidates: candidates}, nil
+}
+
+// recordConflicts persists surfaced candidates into the conflict queue so the
+// dashboard can offer review + resolution. Best-effort: a store error never
+// fails the write (the advisory event + save response already carried them).
+func (s *Service) recordConflicts(ctx context.Context, e *store.MemoryEntry, cands []ContradictionCandidate) {
+	if len(cands) == 0 || s.store == nil {
+		return
+	}
+	rows := make([]store.MemoryConflict, 0, len(cands))
+	for _, c := range cands {
+		rows = append(rows, store.MemoryConflict{
+			MemoryID:         e.ID,
+			MemoryName:       e.Name,
+			CandidateID:      c.ID,
+			CandidateName:    c.Name,
+			CandidatePreview: c.Preview,
+			Kind:             c.Kind,
+			Reason:           c.Reason,
+			WorkspaceID:      ptrOr(e.WorkspaceID, ""),
+		})
+	}
+	_ = s.store.RecordMemoryConflicts(ctx, rows)
+}
+
+// ListOpenConflicts returns the unresolved conflict queue (operator-facing).
+func (s *Service) ListOpenConflicts(ctx context.Context, limit int) ([]store.MemoryConflict, error) {
+	if s == nil || s.store == nil {
+		return nil, errors.New("memory: service not initialised")
+	}
+	return s.store.ListOpenMemoryConflicts(ctx, limit)
+}
+
+// ResolveConflict marks a conflict resolved. When resolution=="superseded"
+// the caller is expected to have invalidated the older memory separately
+// (memory__invalidate); this only closes the queue row.
+func (s *Service) ResolveConflict(ctx context.Context, id, resolution string) error {
+	if s == nil || s.store == nil {
+		return errors.New("memory: service not initialised")
+	}
+	return s.store.ResolveMemoryConflict(ctx, id, resolution)
 }
 
 // surfaceContradictions runs a cheap bounded neighbour scan after a NOTE
@@ -468,7 +579,7 @@ func (s *Service) WriteWithResult(ctx context.Context, opts WriteOptions) (Write
 // candidates", never failing the write.
 func (s *Service) surfaceContradictions(
 	ctx context.Context, e *store.MemoryEntry, entities []store.EntityRef,
-) []string {
+) []ContradictionCandidate {
 	if e == nil || e.Kind == store.MemoryKindFact {
 		return nil
 	}
@@ -492,33 +603,45 @@ func (s *Service) surfaceContradictions(
 	// tokens), and candidates are capped at the scan limit.
 	newTokens := significantTokens(e.Content)
 	seen := map[string]struct{}{e.ID: {}}
-	var out []string
-	addHit := func(h store.MemoryHit) {
+	var out []ContradictionCandidate
+	// consider gates + classifies one neighbour. semantic=true means the
+	// candidate came from the vector arm (trusted at low lexical overlap);
+	// a lexical-only candidate must clear the Jaccard bar so common-word
+	// coincidences don't read as conflicts.
+	consider := func(h store.MemoryHit, semantic bool) {
 		if len(out) >= contradictionScanCap {
 			return
 		}
 		if _, dup := seen[h.Entry.ID]; dup {
 			return
 		}
-		if sharedTokenCount(newTokens, significantTokens(h.Entry.Content)) < contradictionMinSharedTokens {
+		jac := jaccardTokens(newTokens, significantTokens(h.Entry.Content))
+		if !semantic && jac < contradictionMinJaccard {
 			return
 		}
 		seen[h.Entry.ID] = struct{}{}
-		out = append(out, h.Entry.ID)
+		kind, reason := classifyContradiction(jac, semantic)
+		out = append(out, ContradictionCandidate{
+			ID:      h.Entry.ID,
+			Name:    h.Entry.Name,
+			Preview: previewContent(h.Entry.Content),
+			Kind:    kind,
+			Reason:  reason,
+		})
 	}
 	if ftsHits, err := s.store.SearchMemories(ctx, f, e.Content); err == nil {
 		for _, h := range ftsHits {
-			addHit(h)
+			consider(h, false)
 		}
 	}
 	// Vector arm only when an embedder is configured AND we still have room.
-	if len(out) < contradictionScanCap && s.embedder.HasModel() {
-		if vec, model, err := s.embedder.Embed(ctx, []string{e.Content}); err == nil && len(vec) > 0 {
+	if emb := s.getEmbedder(); len(out) < contradictionScanCap && emb.HasModel() {
+		if vec, model, err := emb.Embed(ctx, []string{e.Content}); err == nil && len(vec) > 0 {
 			if vecHits, verr := s.store.VectorSearchMemories(
 				ctx, f, model, vec[0], contradictionScanCap+1,
 			); verr == nil {
 				for _, h := range vecHits {
-					addHit(h)
+					consider(h, true)
 				}
 			}
 		}
@@ -526,14 +649,59 @@ func (s *Service) surfaceContradictions(
 	if len(out) == 0 {
 		return nil
 	}
+	ids := make([]string, len(out))
+	for i, c := range out {
+		ids[i] = c.ID
+	}
 	s.notify(ctx, Event{
-		Kind:        EventKindPossibleContradiction,
-		MemoryID:    e.ID,
-		MemoryName:  e.Name,
-		WorkspaceID: ptrOr(e.WorkspaceID, ""),
-		Candidates:  out,
+		Kind:               EventKindPossibleContradiction,
+		MemoryID:           e.ID,
+		MemoryName:         e.Name,
+		WorkspaceID:        ptrOr(e.WorkspaceID, ""),
+		Candidates:         ids,
+		ConflictCandidates: out,
 	})
 	return out
+}
+
+// classifyContradiction labels a candidate by overlap + arm: high lexical
+// overlap → "duplicate"; otherwise "related", with the reason distinguishing
+// a semantic (vector) neighbour from a lexical-term overlap.
+func classifyContradiction(jaccard float64, semantic bool) (kind, reason string) {
+	switch {
+	case jaccard >= contradictionDupJaccard:
+		return "duplicate", "near-identical wording to an existing note — likely a duplicate"
+	case semantic:
+		return "related", "semantically similar to an existing note — check whether it conflicts"
+	default:
+		return "related", "shares several key terms with an existing note"
+	}
+}
+
+// jaccardTokens is |A∩B| / |A∪B| over two significant-token sets (0 when
+// either is empty). A robust, embedder-independent overlap signal.
+func jaccardTokens(a, b map[string]struct{}) float64 {
+	if len(a) == 0 || len(b) == 0 {
+		return 0
+	}
+	inter := sharedTokenCount(a, b)
+	union := len(a) + len(b) - inter
+	if union == 0 {
+		return 0
+	}
+	return float64(inter) / float64(union)
+}
+
+// previewContent renders a one-line, bounded preview of a memory body for
+// the enriched candidate payload.
+func previewContent(s string) string {
+	s = strings.TrimSpace(strings.ReplaceAll(strings.ReplaceAll(s, "\n", " "), "\t", " "))
+	const maxRunes = 120
+	r := []rune(s)
+	if len(r) <= maxRunes {
+		return s
+	}
+	return strings.TrimSpace(string(r[:maxRunes])) + "…"
 }
 
 // significantTokens lowercases content and returns the SET of distinct
@@ -646,18 +814,6 @@ func (s *Service) RelatedEntities(
 	return s.store.RelatedEntities(ctx, x, scope, limit)
 }
 
-// EntityGraph constructs the entity-to-entity graph in scope (AR3 —
-// the graph view). Pass nodeCap=0 to use the default; minWeight=0
-// retains every co-link edge.
-func (s *Service) EntityGraph(
-	ctx context.Context, scope store.SkillScope, nodeCap, minWeight int,
-) (store.EntityGraph, error) {
-	if s == nil || s.store == nil {
-		return store.EntityGraph{}, errors.New("memory: not initialised")
-	}
-	return s.store.BuildEntityGraph(ctx, scope, nodeCap, minWeight)
-}
-
 // SpreadingActivation implements AR2: given a query entity, find the
 // memories about it, find vec-neighbours of those memories, and return
 // the entities those neighbours are about — ranked by accumulated
@@ -681,7 +837,7 @@ func (s *Service) SpreadingActivation(
 	if s == nil || s.store == nil {
 		return nil, errors.New("memory: not initialised")
 	}
-	if !s.embedder.HasModel() {
+	if !s.getEmbedder().HasModel() {
 		return nil, nil
 	}
 	if limit <= 0 {
@@ -891,10 +1047,11 @@ func (s *Service) Recall(ctx context.Context, f store.MemoryFilter, query string
 		s.maybeLogRecall(ctx, res, f, query)
 		return res
 	}
-	if !s.embedder.HasModel() {
+	emb := s.getEmbedder()
+	if !emb.HasModel() {
 		return ftsFallback(ftsHits), nil
 	}
-	vec, model, err := s.embedder.Embed(ctx, []string{query})
+	vec, model, err := emb.Embed(ctx, []string{query})
 	if err != nil || len(vec) == 0 {
 		return ftsFallback(ftsHits), nil
 	}
@@ -987,7 +1144,7 @@ func (s *Service) recallStatsFor(
 // mmrReorder. Degrades to identity when no embedder is configured or no
 // stored vectors are available.
 func (s *Service) mmrPool(ctx context.Context, pool []store.MemoryHit) []store.MemoryHit {
-	if len(pool) <= 1 || !s.embedder.HasModel() {
+	if len(pool) <= 1 || !s.getEmbedder().HasModel() {
 		return pool
 	}
 	vecs := make([][]float32, len(pool))
@@ -1291,7 +1448,7 @@ func (s *Service) SuggestionsFor(
 
 	// 3) semantic axis — vec-neighbours of this memory. Only fires when
 	// an embedder is configured AND the memory has an embedding row.
-	if s.embedder.HasModel() {
+	if s.getEmbedder().HasModel() {
 		entry, err := s.store.GetMemory(ctx, memoryID)
 		if err == nil && entry.EmbedModel != "" {
 			// Use the stored embedding rather than re-embedding the content —
@@ -1514,7 +1671,8 @@ func (s *Service) ReEmbedAfterUpdate(ctx context.Context, e *store.MemoryEntry) 
 // inside the embedder) — embedding is a "nice to have" we never block
 // the write on.
 func (s *Service) maybeEmbedAsync(ctx context.Context, e *store.MemoryEntry) {
-	if !s.embedder.HasModel() {
+	emb := s.getEmbedder()
+	if !emb.HasModel() {
 		return
 	}
 	// Detach from the request context: ctx may be cancelled when the
@@ -1522,7 +1680,7 @@ func (s *Service) maybeEmbedAsync(ctx context.Context, e *store.MemoryEntry) {
 	// cancellation deadline of any parent that has one.
 	go func(id, content string) {
 		bg := context.Background()
-		vecs, model, err := s.embedder.Embed(bg, []string{content})
+		vecs, model, err := emb.Embed(bg, []string{content})
 		if err != nil || len(vecs) == 0 {
 			return
 		}

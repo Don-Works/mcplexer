@@ -34,7 +34,6 @@ const BackupsPage = lazy(() => import('@/pages/BackupsPage').then(m => ({ defaul
 const BrainStatusPage = lazy(() => import('@/pages/BrainStatusPage').then(m => ({ default: m.BrainStatusPage })))
 const BrainBrowserPage = lazy(() => import('@/pages/brain/BrainBrowserPage').then(m => ({ default: m.BrainBrowserPage })))
 const SkillRegistryPage = lazy(() => import('@/pages/SkillRegistryPage').then(m => ({ default: m.SkillRegistryPage })))
-const SkillCompositionGraph = lazy(() => import('@/pages/skills/SkillCompositionGraph').then(m => ({ default: m.SkillCompositionGraph })))
 const SignalsPage = lazy(() => import('@/pages/SignalsPage').then(m => ({ default: m.SignalsPage })))
 const GuardsOverviewPage = lazy(() => import('@/pages/guards/GuardsOverviewPage').then(m => ({ default: m.GuardsOverviewPage })))
 const ShellGuardPage = lazy(() => import('@/pages/guards/ShellGuardPage').then(m => ({ default: m.ShellGuardPage })))
@@ -54,10 +53,10 @@ const MemoryLandingPage = lazy(() => import('@/pages/memory/MemoryLandingPage').
 const MemoryListPage = lazy(() => import('@/pages/memory/MemoryListPage').then(m => ({ default: m.MemoryListPage })))
 const MemoryOffersPage = lazy(() => import('@/pages/memory/MemoryOffersPage').then(m => ({ default: m.MemoryOffersPage })))
 const MemoryConsolidationPage = lazy(() => import('@/pages/memory/MemoryConsolidationPage').then(m => ({ default: m.MemoryConsolidationPage })))
+const MemoryEmbeddingsPage = lazy(() => import('@/pages/memory/MemoryEmbeddingsPage').then(m => ({ default: m.MemoryEmbeddingsPage })))
+const MemoryConflictsPage = lazy(() => import('@/pages/memory/MemoryConflictsPage').then(m => ({ default: m.MemoryConflictsPage })))
 const MemoryActivityPage = lazy(() => import('@/pages/memory/MemoryActivityPage').then(m => ({ default: m.MemoryActivityPage })))
-const MemoryVisualisationPage = lazy(() => import('@/pages/memory/MemoryVisualisationPage').then(m => ({ default: m.MemoryVisualisationPage })))
 const MemoryAboutPage = lazy(() => import('@/pages/memory/MemoryAboutPage').then(m => ({ default: m.MemoryAboutPage })))
-const MemoryEntityGraphPage = lazy(() => import('@/pages/memory/MemoryEntityGraphPage').then(m => ({ default: m.MemoryEntityGraphPage })))
 const TasksListPage = lazy(() => import('@/pages/tasks/TasksListPage').then(m => ({ default: m.TasksListPage })))
 const TaskDetailPage = lazy(() => import('@/pages/tasks/TaskDetailPage').then(m => ({ default: m.TaskDetailPage })))
 const TaskOffersPage = lazy(() => import('@/pages/tasks/TaskOffersPage').then(m => ({ default: m.TaskOffersPage })))
@@ -128,7 +127,6 @@ function App() {
             <Route path="/approvals" element={<ApprovalsPage />} />
             <Route path="/mesh" element={<MeshPage />} />
             <Route path="/skills" element={<SkillRegistryPage />} />
-            <Route path="/skills/graph" element={<SkillCompositionGraph />} />
             <Route path="/signals" element={<SignalsPage />} />
 
           {/* Tasks — per-workspace operational primitive. /tasks is the
@@ -152,10 +150,10 @@ function App() {
             <Route path="/memory/all" element={<MemoryListPage />} />
             <Route path="/memory/activity" element={<MemoryActivityPage />} />
             <Route path="/memory/about/:entityKind/:entityId" element={<MemoryAboutPage />} />
-            <Route path="/memory/entities/graph" element={<MemoryEntityGraphPage />} />
             <Route path="/memory/shared" element={<MemoryOffersPage />} />
             <Route path="/memory/consolidation" element={<MemoryConsolidationPage />} />
-            <Route path="/memory/graph" element={<MemoryVisualisationPage />} />
+            <Route path="/memory/embeddings" element={<MemoryEmbeddingsPage />} />
+            <Route path="/memory/conflicts" element={<MemoryConflictsPage />} />
 
           {/* Guards (M1-D) — five enforcement-layer subpages plus an
               overview card grid. /guards is the landing; each detail

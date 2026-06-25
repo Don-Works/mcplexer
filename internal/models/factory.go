@@ -214,6 +214,55 @@ func piCLIAllowed() bool {
 	return os.Getenv(piCLIAllowEnvVar) == "1"
 }
 
+// CLIProviderAllowed reports whether a subprocess CLI provider's env opt-in
+// is set. Non-CLI providers are never env-gated, so they return true.
+// Exported so surfaces like the consolidator status can explain WHY a
+// scheduled CLI worker can't run without duplicating the env-var rules.
+func CLIProviderAllowed(provider string) bool {
+	switch provider {
+	case ProviderClaudeCLI:
+		return claudeCLIAllowed()
+	case "opencode_cli":
+		return opencodeCLIAllowed()
+	case "grok_cli":
+		return grokCLIAllowed()
+	case "mimo_cli":
+		return mimoCLIAllowed()
+	case "gemini_cli":
+		return geminiCLIAllowed()
+	case "codex_cli":
+		return codexCLIAllowed()
+	case "pi_cli":
+		return piCLIAllowed()
+	default:
+		return true
+	}
+}
+
+// CLIProviderEnvVar returns the env var that gates a CLI provider, or "" for
+// providers that aren't env-gated. Used to render actionable "set X=1"
+// hints when a scheduled CLI worker is installed but can't run.
+func CLIProviderEnvVar(provider string) string {
+	switch provider {
+	case ProviderClaudeCLI:
+		return claudeCLIAllowEnvVar
+	case "opencode_cli":
+		return opencodeCLIAllowEnvVar
+	case "grok_cli":
+		return grokCLIAllowEnvVar
+	case "mimo_cli":
+		return mimoCLIAllowEnvVar
+	case "gemini_cli":
+		return geminiCLIAllowEnvVar
+	case "codex_cli":
+		return codexCLIAllowEnvVar
+	case "pi_cli":
+		return piCLIAllowEnvVar
+	default:
+		return ""
+	}
+}
+
 // NewAdapter constructs the right adapter for cfg.Provider.
 func NewAdapter(cfg Config) (ModelAdapter, error) {
 	if cfg.ModelID == "" {

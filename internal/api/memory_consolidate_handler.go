@@ -24,9 +24,11 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 
+	"github.com/don-works/mcplexer/internal/models"
 	"github.com/don-works/mcplexer/internal/store"
 	workersadmin "github.com/don-works/mcplexer/internal/workers/admin"
 )
@@ -72,6 +74,14 @@ type consolidateStatusResponse struct {
 	LastRunID       string `json:"last_run_id,omitempty"`
 	RecentRuns      int    `json:"recent_runs"`
 	NeedsSecretHint string `json:"needs_secret_hint,omitempty"`
+	// ModelProvider is the worker's configured provider (e.g. claude_cli).
+	ModelProvider string `json:"model_provider,omitempty"`
+	// CanRun reports whether the installed consolidator can actually execute
+	// right now. False when its CLI provider's env opt-in is unset — the
+	// silent-failure trap that made "consolidation never runs" invisible.
+	CanRun bool `json:"can_run"`
+	// RunBlockedReason explains a false CanRun in actionable terms.
+	RunBlockedReason string `json:"run_blocked_reason,omitempty"`
 }
 
 // handleStatus serves GET /api/v1/memory/consolidate/status?workspace_id=...
@@ -102,6 +112,18 @@ func (h *consolidateHandler) handleStatus(w http.ResponseWriter, r *http.Request
 	resp.WorkerID = out.Worker.ID
 	resp.ScheduleSpec = out.Worker.ScheduleSpec
 	resp.RecentRuns = len(out.RecentRuns)
+	resp.ModelProvider = out.Worker.ModelProvider
+	// Runnability: a CLI-provider consolidator that's installed but whose env
+	// opt-in is unset can never execute — surface that instead of letting it
+	// fail silently every scheduled run.
+	if models.IsCLIProvider(out.Worker.ModelProvider) && !models.CLIProviderAllowed(out.Worker.ModelProvider) {
+		resp.CanRun = false
+		resp.RunBlockedReason = fmt.Sprintf(
+			"provider %q requires %s=1 in the daemon environment",
+			out.Worker.ModelProvider, models.CLIProviderEnvVar(out.Worker.ModelProvider))
+	} else {
+		resp.CanRun = true
+	}
 	if n := len(out.RecentRuns); n > 0 {
 		resp.LastRunStatus = out.RecentRuns[0].Status
 		resp.LastRunAt = out.RecentRuns[0].StartedAt.UTC().Format("2006-01-02T15:04:05Z")
@@ -268,23 +290,30 @@ func (h *consolidateHandler) pickDefaultSecretScope(ctx context.Context) (string
 	if err != nil {
 		return "", err
 	}
-	// Prefer api_key type; fall back to any populated scope as a
-	// last resort. Most-recently-updated wins among matches.
-	var best *store.AuthScope
+	// Prefer api_key type; fall back to any populated scope as a last resort
+	// (the default claude_cli provider ignores the bound scope at runtime, so
+	// any scope satisfies the NOT NULL placeholder). Most-recently-updated
+	// wins within each tier.
+	var bestAPIKey, bestAny *store.AuthScope
 	for i := range scopes {
 		s := &scopes[i]
-		if !strings.EqualFold(s.Type, "api_key") {
-			continue
+		if bestAny == nil || s.UpdatedAt.After(bestAny.UpdatedAt) {
+			bestAny = s
 		}
-		if best == nil || s.UpdatedAt.After(best.UpdatedAt) {
-			best = s
+		if strings.EqualFold(s.Type, "api_key") {
+			if bestAPIKey == nil || s.UpdatedAt.After(bestAPIKey.UpdatedAt) {
+				bestAPIKey = s
+			}
 		}
 	}
-	if best == nil {
-		return "", errors.New(
-			"no api_key auth scope found — configure a model API key in Settings → Secrets first")
+	if bestAPIKey != nil {
+		return bestAPIKey.ID, nil
 	}
-	return best.ID, nil
+	if bestAny != nil {
+		return bestAny.ID, nil
+	}
+	return "", errors.New(
+		"no auth scope found — configure a model provider or API key in Settings → Secrets first")
 }
 
 // boolPtrLocal returns a pointer to v. Local because the api package

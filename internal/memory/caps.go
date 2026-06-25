@@ -4,7 +4,7 @@ package memory
 // (i.e. vector search / spreading activation can actually produce
 // results). Nil-safe.
 func (s *Service) HasEmbedder() bool {
-	return s != nil && s.embedder != nil && s.embedder.HasModel()
+	return s != nil && s.getEmbedder().HasModel()
 }
 
 // RecallTrackingEnabled reports whether AR4 recall-event logging is on

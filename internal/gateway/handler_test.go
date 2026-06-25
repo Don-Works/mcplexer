@@ -580,6 +580,21 @@ func (m *mockStore) VectorSearchMemories(context.Context, store.MemoryFilter, st
 func (m *mockStore) UpsertMemoryEmbedding(context.Context, string, string, int, []float32) error {
 	return nil
 }
+func (m *mockStore) ListMemoriesNeedingEmbedding(context.Context, int) ([]store.MemoryEmbedTarget, error) {
+	return nil, nil
+}
+func (m *mockStore) CountMemoriesNeedingEmbedding(context.Context) (int, int, error) {
+	return 0, 0, nil
+}
+func (m *mockStore) RecordMemoryConflicts(context.Context, []store.MemoryConflict) error {
+	return nil
+}
+func (m *mockStore) ListOpenMemoryConflicts(context.Context, int) ([]store.MemoryConflict, error) {
+	return nil, nil
+}
+func (m *mockStore) ResolveMemoryConflict(context.Context, string, string) error {
+	return nil
+}
 func (m *mockStore) GetMemoryEmbedding(context.Context, string) (string, []float32, error) {
 	return "", nil, store.ErrNotFound
 }
@@ -640,9 +655,6 @@ func (m *mockStore) ListEntities(context.Context, store.EntityFilter) ([]store.E
 }
 func (m *mockStore) RelatedEntities(context.Context, store.EntityRef, store.SkillScope, int) ([]store.EntityCoLink, error) {
 	return nil, nil
-}
-func (m *mockStore) BuildEntityGraph(context.Context, store.SkillScope, int, int) (store.EntityGraph, error) {
-	return store.EntityGraph{}, nil
 }
 func (m *mockStore) LogMemoryRecallEvents(context.Context, []store.MemoryRecallEvent) error {
 	return nil

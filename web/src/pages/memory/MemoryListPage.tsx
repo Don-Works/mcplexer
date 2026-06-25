@@ -6,7 +6,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { ArrowLeft, Brain, Network } from 'lucide-react'
+import { ArrowLeft, Brain } from 'lucide-react'
 import { toast } from 'sonner'
 import { Card, CardContent } from '@/components/ui/card'
 import { useMemoryList, useMemoryMutations } from '@/hooks/use-memory'
@@ -272,13 +272,6 @@ export function MemoryListPage() {
           All memories
         </h1>
         <div className="flex items-center gap-3">
-          <Link
-            to="/memory/graph"
-            className="inline-flex items-center gap-1 border border-border px-2 py-1 font-mono text-[11px] text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground"
-          >
-            <Network className="h-3 w-3" />
-            Graph view
-          </Link>
           <span className="font-mono text-[11px] tabular-nums text-muted-foreground">
             {source.length} shown
           </span>

@@ -937,25 +937,6 @@ type EntityCoLink struct {
 	LastSeenAt  time.Time `json:"last_seen_at"`
 }
 
-// EntityEdge is one weighted co-link edge in the entity-to-entity graph
-// (AR3). Source/Target are formatted as "kind:id". Weight is the count
-// of memories that link BOTH endpoints. Edges are undirected — the
-// builder emits each pair only once with Source < Target lexically so
-// the caller doesn't have to dedupe.
-type EntityEdge struct {
-	Source string `json:"source"`
-	Target string `json:"target"`
-	Weight int    `json:"weight"`
-}
-
-// EntityGraph is the response payload for the entity-graph view (AR3).
-// Truncated reports whether the node cap kicked in.
-type EntityGraph struct {
-	Nodes     []EntitySummary `json:"nodes"`
-	Edges     []EntityEdge    `json:"edges"`
-	NodeCap   int             `json:"node_cap"`
-	Truncated bool            `json:"truncated"`
-}
 
 // ChatTurnSignal is one row of chat_turn_signals (migration 080). Each
 // row is the concierge's read of the user's reaction to a previous turn:
@@ -1064,6 +1045,32 @@ type MemorySuggestion struct {
 	Score    float64 `json:"score"`
 	Source   string  `json:"source"` // "co_recall" | "related_entity" | "semantic"
 	Reason   string  `json:"reason"` // human-readable hint, e.g. "co-linked via task:T"
+}
+
+// MemoryEmbedTarget is a minimal (id, content) pair for the embeddings
+// backfill: the rows that still need a vector computed and stored.
+type MemoryEmbedTarget struct {
+	ID      string
+	Content string
+}
+
+// MemoryConflict is one persisted possible-duplicate/conflict pair awaiting
+// review (migration 116). Denormalised (names + preview captured at write
+// time) so the dashboard conflict queue renders without joins and degrades
+// gracefully if a side is later deleted. ResolvedAt nil = still open.
+type MemoryConflict struct {
+	ID               string     `json:"id"`
+	MemoryID         string     `json:"memory_id"`
+	MemoryName       string     `json:"memory_name"`
+	CandidateID      string     `json:"candidate_id"`
+	CandidateName    string     `json:"candidate_name"`
+	CandidatePreview string     `json:"candidate_preview"`
+	Kind             string     `json:"kind"`   // "duplicate" | "related"
+	Reason           string     `json:"reason"`
+	WorkspaceID      string     `json:"workspace_id,omitempty"`
+	CreatedAt        time.Time  `json:"created_at"`
+	ResolvedAt       *time.Time `json:"resolved_at,omitempty"`
+	Resolution       string     `json:"resolution,omitempty"` // "superseded" | "kept_both" | "dismissed"
 }
 
 // MemoryHit is a search result with the relevance score the matcher used.

@@ -490,6 +490,33 @@ type MemoryStore interface {
 	// memories row so callers can detect stale-vector situations.
 	UpsertMemoryEmbedding(ctx context.Context, id, embedModel string, embedVersion int, vector []float32) error
 
+	// ListMemoriesNeedingEmbedding returns up to limit active memories that
+	// have no stored vector yet (embed_model empty) and non-empty content,
+	// oldest first. Powers the embeddings backfill that runs when a vector
+	// provider is first wired so the existing corpus becomes searchable.
+	ListMemoriesNeedingEmbedding(ctx context.Context, limit int) ([]MemoryEmbedTarget, error)
+
+	// CountMemoriesNeedingEmbedding reports how many active memories still
+	// lack a vector (pending) out of the total active memory count — the
+	// backfill progress denominator surfaced in the embeddings dashboard.
+	CountMemoriesNeedingEmbedding(ctx context.Context) (pending, total int, err error)
+
+	// RecordMemoryConflicts persists possible-duplicate/conflict pairs that a
+	// note write surfaced (migration 116). Idempotent on the open
+	// (memory_id, candidate_id) pair so a re-save doesn't pile up duplicates.
+	// Conflicts with empty IDs get one generated. Best-effort for callers.
+	RecordMemoryConflicts(ctx context.Context, conflicts []MemoryConflict) error
+
+	// ListOpenMemoryConflicts returns unresolved conflicts, newest first,
+	// capped at limit. Operator-facing (the dashboard review queue), so it is
+	// NOT scope-narrowed — all open conflicts across workspaces are returned.
+	ListOpenMemoryConflicts(ctx context.Context, limit int) ([]MemoryConflict, error)
+
+	// ResolveMemoryConflict marks one open conflict resolved with the given
+	// resolution ("superseded" | "kept_both" | "dismissed"). No-op if already
+	// resolved or unknown.
+	ResolveMemoryConflict(ctx context.Context, id, resolution string) error
+
 	// GetMemoryEmbedding returns the stored vector for one memory ID
 	// together with the embed_model it was written under (read from the
 	// memories row). Used by consolidation / re-ranking paths that need
@@ -582,13 +609,6 @@ type MemoryStore interface {
 	// Ranked by SharedCount DESC then LastSeenAt DESC. Powers
 	// "tell me what else this task is related to".
 	RelatedEntities(ctx context.Context, x EntityRef, scope SkillScope, limit int) ([]EntityCoLink, error)
-
-	// BuildEntityGraph returns the entity-to-entity graph in scope (AR3):
-	// nodes are distinct entities (capped at nodeCap by MemoryCount DESC),
-	// edges are co-link pairs with Weight = memory count linking BOTH
-	// endpoints. Edges are undirected — emitted once with Source < Target
-	// lexically. minWeight drops edges below that count (0 = all).
-	BuildEntityGraph(ctx context.Context, scope SkillScope, nodeCap, minWeight int) (EntityGraph, error)
 
 	// LogMemoryRecallEvents persists a batch of recall events (AR4).
 	// Best-effort: errors are returned but callers typically use a

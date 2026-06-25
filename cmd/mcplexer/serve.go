@@ -979,29 +979,12 @@ func buildServerDeps(ctx context.Context, cfg *Config, db *sqlite.DB, settingsSv
 	// vector recall lights up. CLAUDE.md write-through digest goes to
 	// ~/.mcplexer/memory-exports/<scope>.md — adding the @import to
 	// CLAUDE.md is on the user.
-	// Embedder selection precedence:
-	//  1. Local OpenAI-compatible endpoint (LM Studio / llama.cpp / Ollama)
-	//     when MCPLEXER_EMBED_BASE_URL is set. The local model MUST emit
-	//     1536-dim vectors (memories_vec is FLOAT[1536]) — a mismatch
-	//     surfaces as a clear error at recall time, not silent corruption.
-	//  2. OpenAI when MCPLEXER_OPENAI_API_KEY is set.
-	//  3. Noop (FTS5-only floor).
-	memEmbedder := memory.EmbedProvider(memory.NoopEmbedder{})
-	if base := os.Getenv("MCPLEXER_EMBED_BASE_URL"); base != "" {
-		if e, err := memory.NewLocalEmbedder(base,
-			os.Getenv("MCPLEXER_EMBED_MODEL"), os.Getenv("MCPLEXER_EMBED_API_KEY")); err == nil {
-			memEmbedder = e
-			slog.Info("memory: using local embeddings endpoint", "base_url", base)
-		} else {
-			slog.Warn("memory: local embedder construction failed", "error", err)
-		}
-	} else if key := os.Getenv("MCPLEXER_OPENAI_API_KEY"); key != "" {
-		if e, err := memory.NewOpenAIEmbedder(key, "", ""); err == nil {
-			memEmbedder = e
-		} else {
-			slog.Warn("memory: openai embedder construction failed", "error", err)
-		}
-	}
+	// Embedder selection: env override → persisted settings → auto-detect a
+	// local OpenAI-compatible endpoint (default). The chosen model MUST emit
+	// 1536-dim vectors (memories_vec is FLOAT[1536]) — auto-detect verifies
+	// this before wiring; an env/settings mismatch surfaces as a clear error
+	// at recall time, not silent corruption. See resolveMemoryEmbedder.
+	memEmbedder := resolveMemoryEmbedder(ctx, settingsSvc.Load(ctx))
 	if d.skillRegistry != nil {
 		d.skillRegistry.SetEmbedder(memEmbedder)
 	}
@@ -1030,6 +1013,14 @@ func buildServerDeps(ctx context.Context, cfg *Config, db *sqlite.DB, settingsSv
 		} else {
 			slog.Warn("memory: reranker construction failed", "error", err)
 		}
+	}
+	// First-class semantic recall for the EXISTING corpus: when a vector
+	// provider is wired (env / settings / auto-detect), embed any memories
+	// that have no vector yet so old notes become searchable by meaning
+	// without the user re-saving them. Runs once in the background; no-ops
+	// when there's no embedder or nothing pending. Resumable across restarts.
+	if d.memorySvc.StartBackfillAsync() {
+		slog.Info("memory: embeddings backfill started for existing corpus")
 	}
 	// Bridge memory.Service.Notify → notify.Bus so every memory CUD op,
 	// pin/unpin, link/unlink, and cross-peer offer transition fans out

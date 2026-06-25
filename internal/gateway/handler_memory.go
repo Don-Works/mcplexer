@@ -195,7 +195,7 @@ func (h *handler) handleMemorySave(
 		Name     string         `json:"name"`
 		Content  string         `json:"content"`
 		Kind     string         `json:"kind"`
-		Tags     []string       `json:"tags"`
+		Tags     flexStrings    `json:"tags"`
 		Scope    string         `json:"scope"`
 		Pinned   bool           `json:"pinned"`
 		Meta     map[string]any `json:"metadata"`
@@ -254,31 +254,43 @@ func (h *handler) handleMemorySave(
 	return marshalMemorySaveResult(args.Name, res, scopeLbl, entityLbl), nil
 }
 
-// marshalMemorySaveResult renders the save-tool response, appending an
-// advisory line + a structured possible_duplicates list when the post-write
-// neighbour scan surfaced existing near-duplicate / potentially-related
-// memories. The scan on the no-embedder default path is LEXICAL (FTS token
-// overlap), not semantic — so the copy says "possibly-related", never asserts
-// a true contradiction. Review them for duplicates/conflicts before relying on
-// the new note. See memory.Service.surfaceContradictions.
+// marshalMemorySaveResult renders the save-tool response. When the post-write
+// neighbour scan surfaced near-duplicate / potentially-conflicting memories it
+// appends an ENRICHED, ACTIONABLE block: each candidate's name + kind
+// (duplicate|related) + reason + preview, plus the resolution affordance
+// (memory__invalidate to supersede, or keep both). The structured block keeps
+// possible_duplicates (ids, back-compat) and adds conflicts (the rich form)
+// so the dashboard + agent don't need N follow-up memory__get calls.
 func marshalMemorySaveResult(
 	name string, res memory.WriteResult, scopeLbl, entityLbl string,
 ) json.RawMessage {
-	text := fmt.Sprintf(
-		"Saved memory %s (%s) in scope=%s.%s",
-		name, res.ID, scopeLbl, entityLbl)
+	var b strings.Builder
+	fmt.Fprintf(&b, "Saved memory %s (%s) in scope=%s.%s", name, res.ID, scopeLbl, entityLbl)
 	if n := len(res.Candidates); n > 0 {
-		text += fmt.Sprintf(
-			" %d possibly-related memor%s already exist%s — review for duplicates/conflicts: %s",
-			n, plural(n, "y", "ies"), plural(n, "s", ""), strings.Join(res.Candidates, ", "))
+		fmt.Fprintf(&b,
+			" ⚠ %d possibly-related memor%s already exist%s — review for duplicates/conflicts:",
+			n, plural(n, "y", "ies"), plural(n, "s", ""))
+		for _, c := range res.Candidates {
+			fmt.Fprintf(&b, "\n  • [%s] %q — %s", c.Kind, c.Name, c.Reason)
+			if c.Preview != "" {
+				fmt.Fprintf(&b, " — “%s”", c.Preview)
+			}
+		}
+		b.WriteString("\n  Resolve: memory__invalidate(id, superseded_by_id=" + res.ID +
+			") to supersede the old one, or leave both if they're complementary.")
 	}
 	result := CallToolResult{
-		Content: []ToolContent{{Type: "text", Text: text}},
+		Content: []ToolContent{{Type: "text", Text: b.String()}},
 	}
 	if len(res.Candidates) > 0 {
+		ids := make([]string, len(res.Candidates))
+		for i, c := range res.Candidates {
+			ids[i] = c.ID
+		}
 		result.StructuredContent = map[string]any{
 			"id":                  res.ID,
-			"possible_duplicates": res.Candidates,
+			"possible_duplicates": ids,
+			"conflicts":           res.Candidates,
 		}
 	}
 	data, _ := json.Marshal(result)
@@ -300,7 +312,7 @@ func (h *handler) handleMemoryRecall(
 		Query          string      `json:"query"`
 		Limit          int         `json:"limit"`
 		Kind           string      `json:"kind"`
-		Tags           []string    `json:"tags"`
+		Tags           flexStrings `json:"tags"`
 		IncludeInvalid bool        `json:"include_invalid"`
 		ValidAt        string      `json:"valid_at"`
 		Entities       []entityArg `json:"entities"`
@@ -390,10 +402,10 @@ func (h *handler) handleMemoryRecallAbout(
 		Kind    string   `json:"kind"`
 		ID      string   `json:"id"`
 		Role    string   `json:"role"`
-		Query   string   `json:"query"`
-		Limit   int      `json:"limit"`
-		MemKind string   `json:"memory_kind"`
-		Tags    []string `json:"tags"`
+		Query   string      `json:"query"`
+		Limit   int         `json:"limit"`
+		MemKind string      `json:"memory_kind"`
+		Tags    flexStrings `json:"tags"`
 	}
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return nil, &RPCError{Code: CodeInvalidParams, Message: err.Error()}
@@ -909,13 +921,13 @@ func (h *handler) handleMemoryList(
 	ctx context.Context, raw json.RawMessage,
 ) (json.RawMessage, *RPCError) {
 	var args struct {
-		Kind           string   `json:"kind"`
-		Tags           []string `json:"tags"`
-		Limit          int      `json:"limit"`
-		Offset         int      `json:"offset"`
-		IncludeInvalid bool     `json:"include_invalid"`
-		ValidAt        string   `json:"valid_at"`
-		Scope          string   `json:"scope"` // "" | "any" | "workspace_only" | "global_only"
+		Kind           string      `json:"kind"`
+		Tags           flexStrings `json:"tags"`
+		Limit          int         `json:"limit"`
+		Offset         int         `json:"offset"`
+		IncludeInvalid bool        `json:"include_invalid"`
+		ValidAt        string      `json:"valid_at"`
+		Scope          string      `json:"scope"` // "" | "any" | "workspace_only" | "global_only"
 	}
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return nil, &RPCError{Code: CodeInvalidParams, Message: err.Error()}

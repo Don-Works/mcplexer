@@ -303,21 +303,6 @@ export interface EntityCoLink {
   last_seen_at: string
 }
 
-// EntityEdge is one weighted co-link edge in the entity graph (AR3).
-// Source/Target are formatted "kind:id".
-export interface EntityEdge {
-  source: string
-  target: string
-  weight: number
-}
-
-export interface EntityGraph {
-  nodes: EntitySummary[]
-  edges: EntityEdge[]
-  node_cap: number
-  truncated: boolean
-}
-
 // relatedEntities — AR1. Entities that co-link with the named entity in
 // at least one memory, ranked by shared_count DESC. Powers the "Related"
 // section on MemoryAboutPage.
@@ -344,20 +329,6 @@ export function spreadingActivation(
   return request<EntityCoLink[]>(
     `/memory/entities/${encodeURIComponent(kind)}/${encodeURIComponent(id)}/spreading${qs}`,
   )
-}
-
-// entityGraph — AR3. Returns the entity-to-entity graph in scope.
-export function entityGraph(p: {
-  node_cap?: number
-  min_weight?: number
-  workspace_id?: string
-} = {}): Promise<EntityGraph> {
-  const qs = buildQuery({
-    node_cap: p.node_cap,
-    min_weight: p.min_weight,
-    workspace_id: p.workspace_id,
-  })
-  return request<EntityGraph>(`/memory/entities/graph${qs}`)
 }
 
 // CoRecalledMemory — AR4. One memory that frequently co-surfaces with
@@ -486,45 +457,6 @@ export function listRecentMemoryActivity(
   return request<MemoryActivityResponse>(`/dashboard/activity/memories${qs}`)
 }
 
-// ---------- graph view ----------
-
-export interface MemoryGraphNode {
-  id: string
-  title: string
-  kind: MemoryKind
-  tags?: string[]
-  created_at: string
-  size: number
-  pinned?: boolean
-}
-
-export interface MemoryGraphEdge {
-  source: string
-  target: string
-  weight: number
-  reason: 'co_tag' | 'wikilink' | string
-}
-
-export interface MemoryGraph {
-  nodes: MemoryGraphNode[]
-  edges: MemoryGraphEdge[]
-  truncated: boolean
-  node_cap: number
-}
-
-export interface MemoryGraphParams {
-  workspace_id?: string
-  include_invalid?: boolean
-}
-
-export function getMemoryGraph(p: MemoryGraphParams = {}): Promise<MemoryGraph> {
-  const qs = buildQuery({
-    workspace_id: p.workspace_id,
-    include_invalid: p.include_invalid ? 'true' : undefined,
-  })
-  return request<MemoryGraph>(`/memory/graph${qs}`)
-}
-
 // ---------- consolidator (sleep-time worker) ----------
 
 export interface ConsolidatorStatus {
@@ -538,6 +470,9 @@ export interface ConsolidatorStatus {
   last_run_id?: string
   recent_runs: number
   needs_secret_hint?: string
+  model_provider?: string
+  can_run: boolean
+  run_blocked_reason?: string
 }
 
 export interface ConsolidatorEnableParams {
@@ -570,5 +505,83 @@ export function runConsolidatorNow(workspaceID: string): Promise<{ run_id: strin
   return request<{ run_id: string; status: string }>('/memory/consolidate/run', {
     method: 'POST',
     body: JSON.stringify({ workspace_id: workspaceID }),
+  })
+}
+
+// ---------- embeddings (semantic recall) ----------
+
+// EmbeddingsStatus reports the configured vector provider + live backfill
+// progress. embedder_active=false means recall is keyword-only (FTS5).
+export interface EmbeddingsStatus {
+  provider: string // auto | local | openai | none
+  base_url?: string
+  model?: string
+  embedder_active: boolean
+  running: boolean
+  pending: number
+  embedded: number
+  total: number
+}
+
+export interface EmbeddingsDetectResult {
+  found: boolean
+  base_url: string
+  model: string
+}
+
+export interface EmbeddingsConfigureParams {
+  provider: string // auto | local | openai | none
+  base_url?: string
+  model?: string
+  openai_key?: string
+}
+
+export function getEmbeddingsStatus(): Promise<EmbeddingsStatus> {
+  return request<EmbeddingsStatus>('/memory/embeddings/status')
+}
+
+export function detectEmbeddings(): Promise<EmbeddingsDetectResult> {
+  return request<EmbeddingsDetectResult>('/memory/embeddings/detect', { method: 'POST' })
+}
+
+export function configureEmbeddings(p: EmbeddingsConfigureParams): Promise<EmbeddingsStatus> {
+  return request<EmbeddingsStatus>('/memory/embeddings/configure', {
+    method: 'POST',
+    body: JSON.stringify(p),
+  })
+}
+
+export function backfillEmbeddings(): Promise<EmbeddingsStatus> {
+  return request<EmbeddingsStatus>('/memory/embeddings/backfill', { method: 'POST' })
+}
+
+// ---------- conflict queue (duplicates / contradictions) ----------
+
+// MemoryConflict is one persisted possible-duplicate/conflict pair awaiting
+// review: the new note (memory_*) vs an existing one (candidate_*).
+export interface MemoryConflict {
+  id: string
+  memory_id: string
+  memory_name: string
+  candidate_id: string
+  candidate_name: string
+  candidate_preview: string
+  kind: string // "duplicate" | "related"
+  reason: string
+  workspace_id?: string
+  created_at: string
+}
+
+export type ConflictResolution = 'superseded' | 'kept_both' | 'dismissed'
+
+export function getMemoryConflicts(limit?: number): Promise<{ conflicts: MemoryConflict[] }> {
+  const qs = buildQuery({ limit })
+  return request<{ conflicts: MemoryConflict[] }>(`/memory/conflicts${qs}`)
+}
+
+export function resolveMemoryConflict(id: string, resolution: ConflictResolution): Promise<unknown> {
+  return request<unknown>(`/memory/conflicts/${encodeURIComponent(id)}/resolve`, {
+    method: 'POST',
+    body: JSON.stringify({ resolution }),
   })
 }
