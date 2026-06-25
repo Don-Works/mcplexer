@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { NavigateFunction } from 'react-router-dom'
-import { Activity, AlertTriangle, Archive, Bell, Bot, Brain as BrainIcon, DollarSign, FileText, Gauge, GitBranch, Globe, Key, KeyRound, Layers, LayoutDashboard, Link2, ListTodo, Lock, Package, Plus, QrCode, Radio, Server, Settings, ShieldCheck, Sliders, Sparkles, Wrench, Zap } from 'lucide-react'
+import { Activity, AlertTriangle, Archive, Bell, Bot, Brain as BrainIcon, DollarSign, FileText, Gauge, GitBranch, Globe, Key, KeyRound, Layers, LayoutDashboard, Link2, ListTodo, Lock, Package, Plus, QrCode, Radio, Search, Server, Settings, ShieldCheck, Sliders, Sparkles, Wrench, Zap } from 'lucide-react'
 import { createElement } from 'react'
 import { getDashboard, listAuthScopes, listDownstreams, listRoutes, listWorkspaces } from '@/api/client'
 import { listNotifications, type StoredNotification } from '@/api/notifications'
@@ -23,8 +23,11 @@ export interface CommandEntry {
   // Optional health dot rendered just before the hint (servers/services).
   statusDot?: CommandStatus
   // Navigation target or custom action. run() takes precedence.
+  // setQuery primes the palette input (used by entries that switch the
+  // palette into a typeahead mode, e.g. audit search seeds a leading `/`)
+  // instead of navigating away.
   to?: string
-  run?: (ctx: { navigate: NavigateFunction }) => void
+  run?: (ctx: { navigate: NavigateFunction; setQuery: (q: string) => void }) => void
 }
 
 export interface CommandGroup {
@@ -88,6 +91,9 @@ const CONFIG_TABS: CommandEntry[] = [
 ]
 
 const ACTIONS: CommandEntry[] = [
+  // Switches the palette into the `/` audit-search mode by priming the input
+  // with a leading slash; the body becomes the AuditSearchMode listbox.
+  { id: 'action-search-audit', label: 'Search audit logs', keywords: 'audit log search semantic trail history find tool call error', icon: createElement(Search, { className: iconClass }), hint: '/', run: ({ setQuery }) => setQuery('/') },
   { id: 'action-quick-setup', label: 'Add an integration', to: '/setup', keywords: 'add new server service tool install', icon: createElement(Plus, { className: iconClass }), hint: 'flow' },
   { id: 'action-wire-ide', label: 'Set up an AI harness', to: '/harness-setup', keywords: 'claude cursor codex opencode grok gemini mimo mimocode pi ide', icon: createElement(Zap, { className: iconClass }), hint: 'flow' },
   { id: 'action-custom-mcp',  label: 'Build a custom MCP server',           to: '/create-mcp', keywords: 'openapi wizard custom',            icon: createElement(Package, { className: iconClass }),  hint: 'flow' },

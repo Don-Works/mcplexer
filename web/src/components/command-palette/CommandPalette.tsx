@@ -6,6 +6,7 @@ import type { CommandEntry, CommandGroup } from './commands'
 import { brainCmdEntries, useCommandEntries } from './commands'
 import { IndexTypeahead } from '@/pages/brain/components/IndexTypeahead'
 import { detectMode, type TypeaheadOption } from '@/pages/brain/components/typeaheadRank'
+import { useAuditSearchMode } from './AuditSearchMode'
 
 interface Props {
   open: boolean
@@ -69,7 +70,12 @@ export function CommandPalette({ open, onOpenChange }: Props) {
   //   [[     = ref    (record-ref typeahead — shared IndexTypeahead)
   //   #      = tag    (tag typeahead — shared IndexTypeahead)
   //   @      = workspace (workspace typeahead — shared IndexTypeahead)
-  const parsedMode = useMemo(() => detectMode(query), [query])
+  //   /      = audit  (audit-log semantic search — owns its own body + keys)
+  // Audit mode is detected locally (not in the shared detectMode grammar)
+  // because it is cmd+K-only — the in-field brain pickers never need it.
+  const auditMode = query.startsWith('/')
+  const auditQuery = auditMode ? query.slice(1) : ''
+  const parsedMode = useMemo(() => (auditMode ? null : detectMode(query)), [auditMode, query])
   const taMode =
     parsedMode && (parsedMode.mode === 'ref' || parsedMode.mode === 'tag' || parsedMode.mode === 'workspace')
       ? parsedMode.mode
@@ -79,13 +85,24 @@ export function CommandPalette({ open, onOpenChange }: Props) {
   // otherwise it is the normal page/server catalog (or empty while a typeahead
   // mode owns the body).
   const flat = useMemo(() => {
+    if (auditMode) return []
     if (parsedMode?.mode === 'cmd') {
       const verbs: CommandGroup[] = [{ id: 'brain', label: 'Brain', entries: brainCmdEntries() }]
       return flattenGroups(verbs, parsedMode.text)
     }
     if (taMode) return []
     return flattenGroups(groupsWithRecent, query)
-  }, [parsedMode, taMode, groupsWithRecent, query])
+  }, [auditMode, parsedMode, taMode, groupsWithRecent, query])
+
+  // Audit-search mode owns its own body, debounce, and arrow/Enter keys. The
+  // hook is always called (rules of hooks); it no-ops while auditMode is off.
+  const audit = useAuditSearchMode({
+    query: auditQuery,
+    navigate,
+    onClose: () => onOpenChange(false),
+    listboxId,
+    onActiveDescendant: setActiveDesc,
+  })
 
   useEffect(() => {
     if (open) {
@@ -101,12 +118,25 @@ export function CommandPalette({ open, onOpenChange }: Props) {
 
   const run = useCallback(
     (entry: CommandEntry) => {
-      onOpenChange(false)
       saveRecent(entry.id)
       if (entry.run) {
-        entry.run({ navigate })
+        // run() entries that prime the input (setQuery) switch the palette
+        // into a typeahead mode and must keep it open; resetActive so the
+        // new mode starts at the top. Navigating/side-effecting run()s close.
+        let primed = false
+        entry.run({
+          navigate,
+          setQuery: (q: string) => {
+            primed = true
+            setQuery(q)
+            setActiveIndex(0)
+            requestAnimationFrame(() => inputRef.current?.focus())
+          },
+        })
+        if (!primed) onOpenChange(false)
         return
       }
+      onOpenChange(false)
       if (entry.to) navigate(entry.to)
     },
     [navigate, onOpenChange],
@@ -140,6 +170,11 @@ export function CommandPalette({ open, onOpenChange }: Props) {
   )
 
   function onKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    // Audit mode owns navigation/Enter inside its own body — forward to it.
+    if (auditMode) {
+      audit.onKeyDown(e)
+      return
+    }
     // While a typeahead mode owns the body, the IndexTypeahead handles
     // arrow/Enter/Escape via its own window listener — don't double-handle.
     if (taMode) {
@@ -193,16 +228,16 @@ export function CommandPalette({ open, onOpenChange }: Props) {
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={onKeyDown}
-            placeholder="jump anywhere   ·   > cmd   [[ ref   # tag   @ ws"
+            placeholder="jump anywhere   ·   > cmd   / audit   [[ ref   # tag   @ ws"
             autoFocus
-            // In a typeahead mode the input IS the combobox over the inline
-            // IndexTypeahead listbox; mirror the token-input wiring (§7) so a
-            // screen reader announces the highlighted option as you arrow.
-            role={taMode ? 'combobox' : undefined}
-            aria-expanded={taMode ? true : undefined}
-            aria-autocomplete={taMode ? 'list' : undefined}
-            aria-controls={taMode ? listboxId : undefined}
-            aria-activedescendant={taMode && activeDesc ? activeDesc : undefined}
+            // In a typeahead / audit mode the input IS the combobox over the
+            // inline listbox; mirror the token-input wiring (§7) so a screen
+            // reader announces the highlighted option as you arrow.
+            role={taMode || auditMode ? 'combobox' : undefined}
+            aria-expanded={taMode || auditMode ? true : undefined}
+            aria-autocomplete={taMode || auditMode ? 'list' : undefined}
+            aria-controls={taMode || auditMode ? listboxId : undefined}
+            aria-activedescendant={(taMode || auditMode) && activeDesc ? activeDesc : undefined}
             data-testid="cmdk-input"
             className={cn(
               'h-12 min-w-0 flex-1 border-0 bg-transparent p-0 font-mono text-[14px] text-foreground placeholder:text-muted-foreground/40',
@@ -220,7 +255,9 @@ export function CommandPalette({ open, onOpenChange }: Props) {
         {/* Results — a typeahead mode (ref/tag/@) hands the body to the shared
             IndexTypeahead; cmd / filter modes render the catalog rows. */}
         <div ref={listRef} className="relative max-h-[60vh] min-h-[18rem] overflow-y-auto py-1">
-          {taMode ? (
+          {auditMode ? (
+            audit.body
+          ) : taMode ? (
             <IndexTypeahead
               open
               inline
@@ -259,10 +296,12 @@ export function CommandPalette({ open, onOpenChange }: Props) {
             <ShortcutHint k="esc" label="close" />
           </div>
           <div className="tabular-nums">
-            {loading && !taMode && (
+            {loading && !taMode && !auditMode && (
               <span className="mr-2 animate-pulse text-amber-400/80">fetching…</span>
             )}
-            {taMode ? (
+            {auditMode ? (
+              <span className="uppercase tracking-wider text-primary/80">audit</span>
+            ) : taMode ? (
               <span className="uppercase tracking-wider text-primary/80">{taMode}</span>
             ) : (
               <span>
