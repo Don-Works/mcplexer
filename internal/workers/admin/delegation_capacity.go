@@ -65,6 +65,9 @@ type DelegationModelCapacity struct {
 	// guard. The UI + agents use it to present the model as "new / promising"
 	// — a good option to try, not yet a proven default.
 	Exploring bool `json:"exploring,omitempty"`
+	// Quarantined marks a model that capacity mode will not select because
+	// recent rank data shows repeated operational launch/adapter failures.
+	Quarantined bool `json:"quarantined,omitempty"`
 }
 
 func (s *Service) ListDelegationModelCapacity(
@@ -115,6 +118,24 @@ func (s *Service) ListDelegationModelCapacity(
 		}
 		key := resolved.ModelProvider + "/" + resolved.ModelID
 		rank := ranks[key]
+		if rank != nil && rank.operationalQuarantined() {
+			row.Label = resolved.Label
+			row.ModelProfileID = resolved.ModelProfileID
+			row.ModelProvider = resolved.ModelProvider
+			row.ModelID = resolved.ModelID
+			row.ModelKey = key
+			row.CapabilityTags = resolved.CapabilityTags
+			row.InputModalities = resolved.InputModalities
+			row.OutputModalities = resolved.OutputModalities
+			row.CapacityScore = capacityScoreForCandidate(resolved, rank, in.TaskKind)
+			row.ExplorationBonus = capacityExplorationBonus(rank)
+			row.Exploring = false
+			row.Quarantined = true
+			row.UnavailableReason = "quarantined after repeated operational failures"
+			populateCapacityRankFields(&row, rank, in.TaskKind)
+			rows = append(rows, row)
+			continue
+		}
 		row.Label = resolved.Label
 		row.ModelProfileID = resolved.ModelProfileID
 		row.ModelProvider = resolved.ModelProvider
@@ -131,19 +152,7 @@ func (s *Service) ListDelegationModelCapacity(
 		row.ExplorationBonus = capacityExplorationBonus(rank)
 		row.Exploring = rank == nil || rank.underSampled()
 		if rank != nil {
-			row.Runs = rank.runs
-			row.Success = rank.success
-			row.Failure = rank.failure
-			row.Running = rank.running
-			row.OperationalFailures = rank.operationalFailures
-			row.ReviewCount = rank.reviewCount
-			// Report the same score family used for capacity/ranked selection.
-			row.ReviewScore = rank.reviewScoreForTaskKind(in.TaskKind)
-			row.SuccessRate = rank.successRate()
-			row.OperationalSuccessRate = rank.operationalSuccessRate()
-			row.AccountingKnown = rank.costKnown()
-			row.CostUSD = rank.costUSD
-			row.AvgDurationMS = rank.averageDuration()
+			populateCapacityRankFields(&row, rank, in.TaskKind)
 		}
 		rows = append(rows, row)
 	}
@@ -170,4 +179,23 @@ func (s *Service) ListDelegationModelCapacity(
 		rows[i].Rank = i + 1
 	}
 	return rows, nil
+}
+
+func populateCapacityRankFields(row *DelegationModelCapacity, rank *delegationCandidateRank, taskKind string) {
+	if row == nil || rank == nil {
+		return
+	}
+	row.Runs = rank.runs
+	row.Success = rank.success
+	row.Failure = rank.failure
+	row.Running = rank.running
+	row.OperationalFailures = rank.operationalFailures
+	row.ReviewCount = rank.reviewCount
+	// Report the same score family used for capacity/ranked selection.
+	row.ReviewScore = rank.reviewScoreForTaskKind(taskKind)
+	row.SuccessRate = rank.successRate()
+	row.OperationalSuccessRate = rank.operationalSuccessRate()
+	row.AccountingKnown = rank.costKnown()
+	row.CostUSD = rank.costUSD
+	row.AvgDurationMS = rank.averageDuration()
 }

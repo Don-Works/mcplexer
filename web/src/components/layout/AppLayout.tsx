@@ -15,6 +15,7 @@ import {
   QrCode,
   Radio,
   Route as RouteIcon,
+  Search as SearchIcon,
   Settings,
   ShieldCheck,
   Sliders,
@@ -81,9 +82,9 @@ const setupNav: NavItem[] = [
 // Workspaces: the primary access-control concept. Clicking into a workspace
 // shows servers, routes, memory scope, and tasks scoped to it.
 const workspaceNav: NavItem[] = [
-  { label: 'Workspaces', href: '/workspaces', icon: <Layers className="h-4 w-4" />, hint: 'Control what AI can use in each workspace folder' },
-  { label: 'Routing rules', href: '/workspaces/routes', icon: <RouteIcon className="h-4 w-4" />, hint: 'Create, order, and reload workspace route rules' },
-  { label: 'Settings', href: '/workspaces/manage', icon: <FolderOpen className="h-4 w-4" />, hint: 'Create workspaces and edit root paths and default policy' },
+  { label: 'Command center', href: '/workspaces', icon: <Layers className="h-4 w-4" />, hint: 'Start from a workspace: access, routes, actions, agents, and knowledge' },
+  { label: 'Server access', href: '/workspaces/routes', icon: <RouteIcon className="h-4 w-4" />, hint: 'Choose which servers, credentials, approvals, and matching rules each workspace can use' },
+  { label: 'Workspace setup', href: '/workspaces/manage', icon: <FolderOpen className="h-4 w-4" />, hint: 'Create workspace records and edit root paths, tags, and default policy' },
 ]
 
 const monitorNav: NavItem[] = [
@@ -108,6 +109,7 @@ const workersNavBase: NavItem = {
 }
 
 const automationNavBase: NavItem[] = [
+  { label: 'Tasks', href: '/tasks', icon: <ListTodo className="h-4 w-4" />, hint: 'Operational work items per workspace; agents create them, you triage' },
   workersNavBase,
   { label: 'Delegations', href: '/delegations', icon: <GitBranch className="h-4 w-4" />, hint: 'Parent and worker context trees with token savings and review scores' },
 ]
@@ -121,7 +123,6 @@ const brainNav: NavItem[] = [
 
 const knowledgeNavBase: NavItem[] = [
   { label: 'Memory', href: '/memory', icon: <Brain className="h-4 w-4" />, hint: 'Cross-harness facts and notes your agents have learned; share with peers' },
-  { label: 'Tasks', href: '/tasks', icon: <ListTodo className="h-4 w-4" />, hint: 'Operational work items per workspace; agents create them, you triage' },
   { label: 'Skills', href: '/skills', icon: <Sparkles className="h-4 w-4" />, hint: 'Shared library of reusable agent instructions' },
 ]
 
@@ -368,33 +369,71 @@ function StatusBar() {
   )
 }
 
-function PaletteHint() {
-  // Display the platform's modifier name so cmd vs ctrl is correct.
-  // Falls back to "ctrl" outside a browser context (SSR / tests).
-  const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform)
+// isMacPlatform — cmd vs ctrl. Falls back to ctrl outside a browser (SSR/tests).
+function isMacPlatform(): boolean {
+  return typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform)
+}
+
+// openCommandPalette dispatches the same modifier+K shortcut the global hook
+// listens for, so every affordance that opens the palette shares one source of
+// truth for the open state (the useCommandPalette hook at the App root).
+function openCommandPalette() {
+  const isMac = isMacPlatform()
+  window.dispatchEvent(
+    new KeyboardEvent('keydown', { key: 'k', metaKey: isMac, ctrlKey: !isMac, bubbles: true }),
+  )
+}
+
+// TopBarSearch — the primary palette affordance, promoted out of the sidebar
+// into the global header. A wide, VSCode-command-bar-feel box on >=md; an icon
+// button on small screens (where header real estate is scarce). Both open the
+// command palette via the shared dispatch. It is not a live input: focusing,
+// clicking, or typing into it opens the full palette, which owns the query.
+function TopBarSearch() {
+  const isMac = isMacPlatform()
   const mod = isMac ? '⌘' : 'ctrl'
-  return (
+
+  // <md: a single icon button. Keeps the mobile branding + menu room.
+  const mobile = (
+    <button
+      type="button"
+      data-testid="cmdk-hint-mobile"
+      onClick={openCommandPalette}
+      aria-label={`Search everything (${mod}K)`}
+      className="flex h-8 w-8 items-center justify-center rounded-none border border-border bg-card text-muted-foreground transition-colors hover:border-primary/60 hover:text-foreground md:hidden"
+    >
+      <SearchIcon className="h-4 w-4" />
+    </button>
+  )
+
+  // >=md: the prominent wide box. Rendered as a button so it is a single
+  // tab-stop that opens the palette on click/focus/Enter — no duplicate input.
+  const desktop = (
     <button
       type="button"
       data-testid="cmdk-hint"
-      onClick={() => {
-        // Dispatch the same shortcut event so the global hook opens the
-        // palette — keeps a single source of truth for the open state.
-        window.dispatchEvent(
-          new KeyboardEvent('keydown', { key: 'k', metaKey: isMac, ctrlKey: !isMac, bubbles: true }),
-        )
-      }}
-      className="group flex w-full items-center justify-between border border-border bg-card/40 px-2.5 py-1.5 font-mono text-[11px] text-muted-foreground transition-colors hover:border-border/80 hover:bg-card hover:text-foreground"
-      aria-label={`Open command palette (${mod}+K)`}
+      onClick={openCommandPalette}
+      onFocus={openCommandPalette}
+      aria-label={`Search everything (${mod}K)`}
+      className="group hidden h-9 w-full max-w-2xl flex-1 items-center gap-2.5 rounded-none border border-border bg-card px-3 font-mono text-[13px] text-muted-foreground transition-colors hover:border-border/80 hover:text-foreground focus:outline-none focus-visible:border-primary focus-visible:ring-1 focus-visible:ring-primary md:flex"
     >
-      <span className="inline-flex items-center gap-1.5">
-        <span className="text-foreground/40">›</span>
-        <span>jump anywhere</span>
+      <span className="text-foreground/40 transition-colors group-focus-visible:text-primary group-hover:text-foreground/70" aria-hidden>
+        ›
       </span>
-      <kbd className="border border-border bg-background/40 px-1 py-px text-[10px] text-foreground/70 transition-colors group-hover:text-foreground">
+      <span className="flex-1 truncate text-left text-muted-foreground/70 group-hover:text-foreground/80">
+        Search everything
+      </span>
+      <kbd className="shrink-0 border border-border bg-background/40 px-1.5 py-0.5 font-mono text-[10px] text-foreground/70 transition-colors group-hover:text-foreground">
         {mod}K
       </kbd>
     </button>
+  )
+
+  return (
+    <>
+      {mobile}
+      {desktop}
+    </>
   )
 }
 
@@ -439,6 +478,9 @@ function FullSidebarNav({ onNavigate }: { onNavigate?: () => void }) {
   })
 
   const automationNav: NavItem[] = automationNavBase.map((item) => {
+    if (item.href === '/tasks') {
+      return { ...item, infoBadge: taskOffersPending }
+    }
     if (item.href === '/workers') {
       return { ...item, liveBadge: workerLive, alertBadge: workerApprovals }
     }
@@ -455,36 +497,14 @@ function FullSidebarNav({ onNavigate }: { onNavigate?: () => void }) {
     if (item.href === '/memory') {
       return { ...item, infoBadge: memoryCounts.pendingOffers }
     }
-    if (item.href === '/tasks') {
-      return { ...item, infoBadge: taskOffersPending }
-    }
     return item
   })
 
   return (
     <nav className="flex-1 min-h-0 overflow-y-auto space-y-0.5 py-3 pr-2">
-      <div className="px-3 pb-2 space-y-1.5">
-        <PaletteHint />
-      </div>
-
-      <div className="pt-3">
-        <SectionLabel>Setup</SectionLabel>
-        {setupNav.map((item) => (
-          <NavLink key={item.href} item={item} onNavigate={onNavigate} />
-        ))}
-        <ConfigureWithAI className="mx-4 mt-2" />
-      </div>
-
-      <div className="pt-3">
+      <div className="pt-1">
         <SectionLabel>Workspace</SectionLabel>
         {workspaceNav.map((item) => (
-          <NavLink key={item.href} item={item} onNavigate={onNavigate} />
-        ))}
-      </div>
-
-      <div className="pt-3">
-        <SectionLabel>Monitor</SectionLabel>
-        {monitorNav.map((item) => (
           <NavLink key={item.href} item={item} onNavigate={onNavigate} />
         ))}
       </div>
@@ -497,8 +517,15 @@ function FullSidebarNav({ onNavigate }: { onNavigate?: () => void }) {
       </div>
 
       <div className="pt-3">
-        <SectionLabel>Automation</SectionLabel>
+        <SectionLabel>Work</SectionLabel>
         {automationNav.map((item) => (
+          <NavLink key={item.href} item={item} onNavigate={onNavigate} />
+        ))}
+      </div>
+
+      <div className="pt-3">
+        <SectionLabel>Monitor</SectionLabel>
+        {monitorNav.map((item) => (
           <NavLink key={item.href} item={item} onNavigate={onNavigate} />
         ))}
       </div>
@@ -515,6 +542,14 @@ function FullSidebarNav({ onNavigate }: { onNavigate?: () => void }) {
         {networkNav.map((item) => (
           <NavLink key={item.href} item={item} onNavigate={onNavigate} />
         ))}
+      </div>
+
+      <div className="pt-3">
+        <SectionLabel>Setup</SectionLabel>
+        {setupNav.map((item) => (
+          <NavLink key={item.href} item={item} onNavigate={onNavigate} />
+        ))}
+        <ConfigureWithAI className="mx-4 mt-2" />
       </div>
 
       <div className="pt-3">
@@ -582,9 +617,8 @@ function ServerSidebarNav({
 
   return (
     <nav className="flex-1 min-h-0 overflow-y-auto space-y-0.5 py-3 pr-2">
-      <div className="px-3 pb-2 space-y-2">
-        <PaletteHint />
-        <div className="px-1 font-mono text-[10px] uppercase tracking-wider text-muted-foreground/70">
+      <div className="px-4 pb-2 pt-1">
+        <div className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground/70">
           {serverProfileLabel(system)}
         </div>
       </div>
@@ -636,7 +670,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
               Desktop hides the mobile button via md:hidden but keeps the
               header bar so the toggle is on the same line regardless of
               viewport. */}
-          <header className="flex h-12 shrink-0 items-center gap-2.5 border-b border-border bg-background/95 px-4 backdrop-blur supports-[backdrop-filter]:bg-background/70">
+          <header className="flex h-14 shrink-0 items-center gap-2.5 border-b border-border bg-background/95 px-4 backdrop-blur supports-[backdrop-filter]:bg-background/70">
             <button
               onClick={() => setMobileOpen(true)}
               aria-label="Open navigation menu"
@@ -649,8 +683,11 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
               <McplexerLogo className="h-4 w-4 text-primary" />
               <span className="text-sm font-semibold tracking-tight">MCPlexer</span>
             </div>
-            {/* Spacer pushes the dangerous-mode toggle to the right edge */}
-            <div className="flex-1" />
+            {/* On <md the search collapses to an icon (rendered inside
+                TopBarSearch); the spacer keeps it + the toggle on the right.
+                On >=md the box itself is flex-1 and fills the center. */}
+            <div className="flex-1 md:hidden" />
+            <TopBarSearch />
             <DangerousModeToggle />
           </header>
 

@@ -100,6 +100,33 @@ func TestAntiThrashStopsExploringBrokenModel(t *testing.T) {
 	}
 }
 
+// TestOperationalQuarantineTripsForMostlyBadRecoveredTransport covers the
+// post-incident case: a provider that occasionally succeeds but mostly dies at
+// adapter/launch time must not stay selectable forever just because success > 0.
+func TestOperationalQuarantineTripsForMostlyBadRecoveredTransport(t *testing.T) {
+	if admin.OperationalQuarantinedForTest(4, 1, 3, 3) {
+		t.Fatal("below the hard cutoff should not quarantine yet")
+	}
+	if !admin.OperationalQuarantinedForTest(10, 2, 8, 6) {
+		t.Fatal("mostly-bad transport with repeated operational failures must quarantine")
+	}
+	if admin.OperationalQuarantinedForTest(20, 16, 4, 5) {
+		t.Fatal("five operational failures on an otherwise healthy model should not quarantine")
+	}
+
+	quarantined := admin.CapacityScoreWithReliabilityForTest(
+		"mimo_cli", "mimo-auto", "", "",
+		10, 2, 8, 0, 6, 0, 2, 88, "coding",
+	)
+	fresh := admin.CapacityScoreWithReliabilityForTest(
+		"anthropic", "claude-fresh", "", "",
+		0, 0, 0, 0, 0, 0, 0, 0, "coding",
+	)
+	if quarantined >= fresh {
+		t.Fatalf("quarantined transport %.2f must rank below fresh viable candidate %.2f", quarantined, fresh)
+	}
+}
+
 // TestBrokenModelRanksBelowEverythingViable proves the guard's end effect on
 // the capacity score: a repeatedly-launch-failing model with no successes
 // sinks below a fresh untried candidate AND below a proven incumbent, instead

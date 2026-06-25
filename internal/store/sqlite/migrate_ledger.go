@@ -32,6 +32,30 @@ func (i LedgerIssue) String() string {
 		i.Severity, i.Code, i.Message, i.Version)
 }
 
+// LedgerRehashOptions controls RehashMigrationLedger.
+type LedgerRehashOptions struct {
+	DryRun bool
+}
+
+// LedgerRehashRow describes a ledger row whose recorded file metadata does not
+// match the migration file currently embedded in this build.
+type LedgerRehashRow struct {
+	Version          int
+	RecordedFilename string
+	CurrentFilename  string
+	RecordedChecksum string
+	CurrentChecksum  string
+	Updated          bool
+}
+
+// LedgerRehashReport is returned by RehashMigrationLedger. Rows lists the
+// records that needed repair; VerifyIssues is the read-only ledger verification
+// result after the operation, or the current verification result for dry-runs.
+type LedgerRehashReport struct {
+	Rows         []LedgerRehashRow
+	VerifyIssues []LedgerIssue
+}
+
 // ensureLedgerTable creates the applied_migrations table if it
 // doesn't already exist. Idempotent. Mirrors ensureSchemaTable for
 // the legacy schema_version table — both must be present before the
@@ -128,6 +152,117 @@ func backfillLedger(ctx context.Context, db *sql.DB) error {
 		}
 	}
 	return nil
+}
+
+// RehashMigrationLedger updates stale applied_migrations filename/checksum
+// fields to match the migration files embedded in the current binary. It is
+// intentionally narrow: it only repairs rows whose version still exists on disk,
+// and it never inserts missing rows or deletes orphan rows. Structural migration
+// problems remain visible through verifyLedger().
+func RehashMigrationLedger(
+	ctx context.Context,
+	db *sql.DB,
+	opts LedgerRehashOptions,
+) (LedgerRehashReport, error) {
+	var report LedgerRehashReport
+	if db == nil {
+		return report, fmt.Errorf("nil database")
+	}
+
+	files, err := listMigrations()
+	if err != nil {
+		return report, fmt.Errorf("list migrations: %w", err)
+	}
+	if err := detectCollisions(files); err != nil {
+		return report, err
+	}
+	byVersion := make(map[int]migrationFile, len(files))
+	for _, f := range files {
+		byVersion[f.version] = f
+	}
+
+	rows, err := db.QueryContext(ctx,
+		`SELECT version, filename, checksum FROM applied_migrations ORDER BY version ASC`)
+	if err != nil {
+		return report, fmt.Errorf("read applied_migrations: %w", err)
+	}
+	defer rows.Close() //nolint:errcheck
+
+	for rows.Next() {
+		var version int
+		var filename, checksum string
+		if err := rows.Scan(&version, &filename, &checksum); err != nil {
+			return report, fmt.Errorf("scan ledger row: %w", err)
+		}
+		file, ok := byVersion[version]
+		if !ok {
+			continue
+		}
+		currentChecksum, err := computeMigrationChecksum(file.filename)
+		if err != nil {
+			return report, fmt.Errorf("checksum for %s: %w", file.filename, err)
+		}
+		if filename == file.filename && strings.EqualFold(checksum, currentChecksum) {
+			continue
+		}
+		report.Rows = append(report.Rows, LedgerRehashRow{
+			Version:          version,
+			RecordedFilename: filename,
+			CurrentFilename:  file.filename,
+			RecordedChecksum: checksum,
+			CurrentChecksum:  currentChecksum,
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return report, fmt.Errorf("iterate ledger: %w", err)
+	}
+
+	if !opts.DryRun && len(report.Rows) > 0 {
+		tx, err := db.BeginTx(ctx, nil)
+		if err != nil {
+			return report, fmt.Errorf("begin ledger rehash: %w", err)
+		}
+		defer tx.Rollback() //nolint:errcheck
+
+		for i := range report.Rows {
+			row := &report.Rows[i]
+			res, err := tx.ExecContext(ctx, `
+				UPDATE applied_migrations
+				   SET filename = ?, checksum = ?
+				 WHERE version = ?
+				   AND checksum = ?`,
+				row.CurrentFilename,
+				row.CurrentChecksum,
+				row.Version,
+				row.RecordedChecksum,
+			)
+			if err != nil {
+				return report, fmt.Errorf("rehash ledger v=%d: %w", row.Version, err)
+			}
+			affected, err := res.RowsAffected()
+			if err != nil {
+				return report, fmt.Errorf("rehash ledger v=%d rows affected: %w", row.Version, err)
+			}
+			if affected != 1 {
+				return report, fmt.Errorf(
+					"rehash ledger v=%d: expected to update 1 row, updated %d",
+					row.Version,
+					affected,
+				)
+			}
+			row.Updated = true
+		}
+		if err := tx.Commit(); err != nil {
+			return report, fmt.Errorf("commit ledger rehash: %w", err)
+		}
+	}
+
+	issues, err := verifyLedger(ctx, db)
+	if err != nil {
+		return report, fmt.Errorf("verify ledger: %w", err)
+	}
+	report.VerifyIssues = issues
+	return report, nil
 }
 
 // detectCollisions returns an error if any two entries share a

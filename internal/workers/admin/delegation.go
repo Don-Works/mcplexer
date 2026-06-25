@@ -578,10 +578,10 @@ func (s *Service) normalizeDelegationInput(ctx context.Context, in *DelegationIn
 }
 
 func (s *Service) ensureDelegationOpenCodeRuntime(ctx context.Context, in *DelegationInput) error {
-	if s.openCodeRuntime == nil {
-		return nil
+	managedEndpoint := ""
+	if s.openCodeRuntime != nil {
+		managedEndpoint = strings.TrimRight(strings.TrimSpace(s.openCodeRuntime.Endpoint()), "/")
 	}
-	managedEndpoint := strings.TrimRight(strings.TrimSpace(s.openCodeRuntime.Endpoint()), "/")
 	needsManaged := false
 	for i := range in.resolvedModelCandidates {
 		c := &in.resolvedModelCandidates[i]
@@ -589,7 +589,13 @@ func (s *Service) ensureDelegationOpenCodeRuntime(ctx context.Context, in *Deleg
 			continue
 		}
 		currentEndpoint := strings.TrimRight(strings.TrimSpace(c.ModelEndpointURL), "/")
-		if currentEndpoint == "" || currentEndpoint == managedEndpoint {
+		if currentEndpoint != "" && !isHTTPURLString(currentEndpoint) && delegationHasOpenCodeFanout(in) {
+			return fmt.Errorf("opencode_cli fan-out requires an HTTP attach endpoint (for example http://127.0.0.1:4096); raw CLI endpoint %q would race OpenCode local state", currentEndpoint)
+		}
+		if currentEndpoint == "" && s.openCodeRuntime == nil && delegationHasOpenCodeFanout(in) {
+			return errors.New("opencode_cli fan-out requires a managed OpenCode runtime or explicit HTTP attach endpoint")
+		}
+		if s.openCodeRuntime != nil && (currentEndpoint == "" || currentEndpoint == managedEndpoint) {
 			needsManaged = true
 		}
 	}
@@ -631,6 +637,30 @@ func (s *Service) ensureDelegationOpenCodeRuntime(ctx context.Context, in *Deleg
 		}
 	}
 	return nil
+}
+
+func delegationHasOpenCodeFanout(in *DelegationInput) bool {
+	if in == nil {
+		return false
+	}
+	if maxInt(1, in.Parallelism) > 1 {
+		return true
+	}
+	if in.ModelSelectionMode == delegationModelSelectionSideBySide {
+		opencodeCandidates := 0
+		for _, c := range in.resolvedModelCandidates {
+			if c.ModelProvider == providerOpenCodeCLI {
+				opencodeCandidates++
+			}
+		}
+		return opencodeCandidates > 1
+	}
+	return false
+}
+
+func isHTTPURLString(s string) bool {
+	s = strings.ToLower(strings.TrimSpace(s))
+	return strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "https://")
 }
 
 func buildDelegationWorkerInput(

@@ -473,6 +473,7 @@ export interface DelegationModelCapacity {
   // option to try, not yet a proven default.
   exploration_bonus?: number
   exploring?: boolean
+  quarantined?: boolean
 }
 
 export interface ListDelegationCapacityParams {
