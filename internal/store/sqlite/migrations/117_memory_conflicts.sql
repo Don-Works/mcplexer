@@ -1,4 +1,10 @@
--- 116 — Memory conflict queue.
+-- 117 — Memory conflict queue.
+--
+-- (Renumbered 116->117 during the workspace-cmd-center/audit consolidation:
+-- the audit branch's 116_audit_search had already been applied to the shared
+-- daemon DB as version 116, so this migration moved to 117. Made idempotent
+-- with IF NOT EXISTS because the table can already exist on a DB that applied
+-- the original 116 before the renumber.)
 --
 -- When a NOTE is saved, the post-write neighbour scan
 -- (memory.Service.surfaceContradictions) may flag existing memories as
@@ -11,7 +17,7 @@
 -- Denormalised (names + preview captured at write time) so the queue renders
 -- without joins and degrades gracefully if a side is later deleted.
 
-CREATE TABLE memory_conflicts (
+CREATE TABLE IF NOT EXISTS memory_conflicts (
     id                TEXT PRIMARY KEY,          -- ULID
     memory_id         TEXT NOT NULL,             -- the NEW note that triggered the scan
     memory_name       TEXT NOT NULL DEFAULT '',
@@ -27,11 +33,11 @@ CREATE TABLE memory_conflicts (
 );
 
 -- Open-queue read path: newest open conflicts first.
-CREATE INDEX idx_memory_conflicts_open
+CREATE INDEX IF NOT EXISTS idx_memory_conflicts_open
     ON memory_conflicts(resolved_at, created_at DESC);
 
 -- One open row per (new note, candidate) pair so a re-save doesn't duplicate
 -- an already-pending conflict.
-CREATE UNIQUE INDEX uniq_memory_conflict_open_pair
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_memory_conflict_open_pair
     ON memory_conflicts(memory_id, candidate_id)
     WHERE resolved_at IS NULL;
