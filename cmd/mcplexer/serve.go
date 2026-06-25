@@ -562,6 +562,11 @@ func buildServerDeps(ctx context.Context, cfg *Config, db *sqlite.DB, settingsSv
 	// MVP default — power users get a config knob later.
 	go pruneNotificationsLoop(ctx, db)
 
+	// Audit saved-search evaluator: every minute, count matches for each
+	// enabled saved search over its window and fire a Signal-tray
+	// notification when the threshold is crossed (debounced per search).
+	go auditSavedSearchLoop(ctx, db, d.notifyBus)
+
 	d.installMgr, err = install.New()
 	if err != nil {
 		slog.Warn("mcp install manager unavailable", "error", err)

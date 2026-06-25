@@ -103,6 +103,26 @@ func (d *DB) QueryAuditRecords(
 	if limit <= 0 {
 		limit = 50
 	}
+	dataWhere := qualifyAmbiguousColumns(where)
+	dataArgs := append([]any{}, args...)
+
+	// Keyset cursor (time_* sorts only) overrides offset; append the
+	// comparison to the qualified WHERE. latency_* sorts keep offset
+	// paging because the opaque cursor token doesn't carry the latency key.
+	useOffset := true
+	if f.CursorTs != nil {
+		if clause, kargs := auditKeysetClause(f.Sort, *f.CursorTs, f.CursorID); clause != "" {
+			if dataWhere == "" {
+				// No base WHERE — turn the leading " AND" into " WHERE".
+				dataWhere = " WHERE 1=1" + clause
+			} else {
+				dataWhere += clause
+			}
+			dataArgs = append(dataArgs, kargs...)
+			useOffset = false
+		}
+	}
+
 	dataQ := `SELECT
 		r.id, r.timestamp, r.session_id, r.client_type, r.model, r.workspace_id,
 		r.workspace_name, r.subpath, r.tool_name, r.params_redacted, r.route_rule_id,
@@ -116,9 +136,13 @@ func (d *DB) QueryAuditRecords(
 		FROM audit_records r
 		LEFT JOIN route_rules rr ON r.route_rule_id = rr.id
 		LEFT JOIN downstream_servers ds ON r.downstream_server_id = ds.id ` +
-		qualifyAmbiguousColumns(where) +
-		` ORDER BY r.timestamp DESC LIMIT ? OFFSET ?`
-	dataArgs := append(args, limit, f.Offset)
+		dataWhere +
+		` ORDER BY ` + auditSortOrderBy(f.Sort) + ` LIMIT ?`
+	dataArgs = append(dataArgs, limit)
+	if useOffset {
+		dataQ += ` OFFSET ?`
+		dataArgs = append(dataArgs, f.Offset)
+	}
 
 	rows, err := d.q.QueryContext(ctx, dataQ, dataArgs...)
 	if err != nil {
@@ -520,12 +544,22 @@ func (d *DB) PruneAuditRecords(
 // "id =" is rewritten last so "workspace_id" → "r.workspace_id"
 // doesn't get re-rewritten to "r.workspace_r.id".
 func qualifyAmbiguousColumns(where string) string {
+	// downstream_server_id lives on BOTH audit_records and route_rules
+	// (rr), so a bare reference is ambiguous in the JOINed data query.
+	// Rewrite first — before workspace_id, since neither token is a
+	// substring of the other and order is otherwise irrelevant here.
+	where = strings.ReplaceAll(where, "downstream_server_id", "r.downstream_server_id")
 	where = strings.ReplaceAll(where, "workspace_id", "r.workspace_id")
-	// `id = ?` is the only place a bare `id` lands today (buildAuditWhere
-	// uses bare names). The trailing space disambiguates from
-	// `route_rule_id`, `session_id`, etc. Both sides of `=` get a
-	// padding so we don't munge those.
+	// `id = ?` and `id IN (...)` are the two places a bare `id` lands
+	// (buildAuditWhere uses bare names; the free-text filter emits the FTS
+	// `id IN (SELECT id FROM audit_records_fts ...)` subquery). Without
+	// qualification `id` is ambiguous across the audit_records /
+	// route_rules / downstream_servers joins. The inner `SELECT id FROM
+	// audit_records_fts` is untouched — it has no leading " id = " / " id IN "
+	// padding, so only the outer reference is rewritten. The trailing space
+	// disambiguates from `route_rule_id`, `session_id`, etc.
 	where = strings.ReplaceAll(where, " id = ", " r.id = ")
+	where = strings.ReplaceAll(where, " id IN ", " r.id IN ")
 	return where
 }
 
@@ -564,10 +598,100 @@ func buildAuditWhere(f store.AuditFilter) (string, []any) {
 		conds = append(conds, "timestamp <= ?")
 		args = append(args, formatTime(*f.Before))
 	}
+	// Richer exact-match filters (audit overhaul). Every column here lives
+	// only on audit_records (no collision with the route_rules /
+	// downstream_servers joins), so bare names are safe through
+	// qualifyAmbiguousColumns.
+	if f.ActorKind != nil {
+		conds = append(conds, "actor_kind = ?")
+		args = append(args, *f.ActorKind)
+	}
+	if f.ActorID != nil {
+		conds = append(conds, "actor_id = ?")
+		args = append(args, *f.ActorID)
+	}
+	if f.DownstreamServerID != nil {
+		conds = append(conds, "downstream_server_id = ?")
+		args = append(args, *f.DownstreamServerID)
+	}
+	if f.RouteRuleID != nil {
+		conds = append(conds, "route_rule_id = ?")
+		args = append(args, *f.RouteRuleID)
+	}
+	if f.ClientType != nil {
+		conds = append(conds, "client_type = ?")
+		args = append(args, *f.ClientType)
+	}
+	if f.ErrorCode != nil {
+		conds = append(conds, "error_code = ?")
+		args = append(args, *f.ErrorCode)
+	}
+	if f.Tier != nil {
+		conds = append(conds, "tier = ?")
+		args = append(args, *f.Tier)
+	}
+	if f.CacheHit != nil {
+		v := 0
+		if *f.CacheHit {
+			v = 1
+		}
+		conds = append(conds, "cache_hit = ?")
+		args = append(args, v)
+	}
+	if f.MinLatencyMs != nil {
+		conds = append(conds, "latency_ms >= ?")
+		args = append(args, *f.MinLatencyMs)
+	}
+	// Free-text: AND-restrict to the FTS index. The subquery's bare `id`
+	// and `workspace_id` references stay inside the audit_records_fts
+	// vtable, so qualifyAmbiguousColumns (which rewrites " id = " and
+	// "workspace_id") must NOT touch them — guarded by auditFTSSentinel
+	// below.
+	if expr := sanitizeFTS5Query(f.Q); expr != "" {
+		conds = append(conds, "id IN (SELECT id FROM audit_records_fts WHERE audit_records_fts MATCH ?)")
+		args = append(args, expr)
+	}
 	if len(conds) == 0 {
 		return "", nil
 	}
 	return " WHERE " + strings.Join(conds, " AND "), args
+}
+
+// auditSortOrderBy maps the validated Sort allowlist to an ORDER BY clause
+// (column-qualified for the JOINed data query). Unknown / empty sort falls
+// back to time_desc. time_* sorts break ties on id so keyset pagination is
+// stable; latency_* sorts add timestamp,id tiebreakers for determinism.
+func auditSortOrderBy(sort string) string {
+	switch sort {
+	case "time_asc":
+		return "r.timestamp ASC, r.id ASC"
+	case "latency_desc":
+		return "r.latency_ms DESC, r.timestamp DESC, r.id DESC"
+	case "latency_asc":
+		return "r.latency_ms ASC, r.timestamp ASC, r.id ASC"
+	default: // time_desc
+		return "r.timestamp DESC, r.id DESC"
+	}
+}
+
+// auditKeysetClause builds the (timestamp,id) keyset comparison for the
+// time_* sorts. latency_* sorts fall back to offset paging (their primary
+// key isn't carried in the opaque cursor token), so this returns ("", nil)
+// for them. cursorTs/cursorID come from the decoded cursor token.
+func auditKeysetClause(sort string, cursorTs time.Time, cursorID string) (string, []any) {
+	switch sort {
+	case "time_asc":
+		// page forward: rows strictly after the cursor.
+		return " AND (r.timestamp > ? OR (r.timestamp = ? AND r.id > ?))",
+			[]any{formatTime(cursorTs), formatTime(cursorTs), cursorID}
+	case "time_desc", "":
+		return " AND (r.timestamp < ? OR (r.timestamp = ? AND r.id < ?))",
+			[]any{formatTime(cursorTs), formatTime(cursorTs), cursorID}
+	default:
+		// latency_* — opaque cursor can't express the latency key; caller
+		// keeps offset paging.
+		return "", nil
+	}
 }
 
 func scanAuditRow(row rowScanner) (*store.AuditRecord, error) {

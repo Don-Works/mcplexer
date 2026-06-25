@@ -1,10 +1,14 @@
-import { Link } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
 import { Activity } from 'lucide-react'
 
-import type { AuditRecord } from '@/api/types'
+import type { AuditFilter, AuditRecord } from '@/api/types'
 import type { MemoryStats } from '@/api/memory'
 import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
+import { AuditTable } from '@/components/audit/AuditTable'
+import type { AuditColumns } from '@/components/audit/AuditRow'
+import { AuditAlertsRail } from '@/components/audit/AuditAlertsRail'
+import { useAuditAlerts } from '@/hooks/use-audit-alerts'
 import type { CommandTone } from './WorkspaceActionFeed'
 
 export function MetricStrip({
@@ -72,7 +76,50 @@ export function ScopeMap({
   )
 }
 
-export function RecentAudit({ rows }: { rows: AuditRecord[] }) {
+// Compact column set for the workspace-scoped tile: the workspace is implicit,
+// so drop it along with session / client / cache / group / latency. The row
+// click deep-links to /audit?id= (the exact-match drawer fallback), matching
+// the bespoke <Link> the tile used before.
+const SCOPED_COLUMNS: AuditColumns = {
+  timestamp: true,
+  tool: true,
+  status: true,
+  reason: true,
+  workspace: false,
+  session: false,
+  client: false,
+  cache: false,
+  group: false,
+  latency: false,
+}
+
+// Serialize an alert's ready-made AuditFilter into /audit query params so the
+// page opens pre-scoped. Only the params AuditPage reads back are emitted.
+function auditHrefFor(filter: AuditFilter): string {
+  const params = new URLSearchParams()
+  const set = (k: string, v: string | number | undefined) => {
+    if (v !== undefined && v !== '') params.set(k, String(v))
+  }
+  set('workspace_id', filter.workspace_id)
+  set('tool_name', filter.tool_name)
+  set('status', filter.status)
+  set('execution_id', filter.execution_id)
+  set('session_id', filter.session_id)
+  set('actor_kind', filter.actor_kind)
+  set('client_type', filter.client_type)
+  set('downstream_server_id', filter.downstream_server_id)
+  set('route_rule_id', filter.route_rule_id)
+  set('min_latency_ms', filter.min_latency_ms)
+  set('q', filter.q)
+  const qs = params.toString()
+  return qs ? `/audit?${qs}` : '/audit'
+}
+
+export function RecentAudit({ rows, workspaceId }: { rows: AuditRecord[]; workspaceId: string }) {
+  const navigate = useNavigate()
+  const { alerts, loading: alertsLoading } = useAuditAlerts({ workspace_id: workspaceId })
+  const showAlerts = alerts.length > 0 || alertsLoading
+
   return (
     <div className="border border-border/50">
       <div className="flex items-center justify-between gap-3 border-b border-border/50 px-3 py-2">
@@ -81,28 +128,24 @@ export function RecentAudit({ rows }: { rows: AuditRecord[] }) {
         </h3>
         <Activity className="h-3.5 w-3.5 text-muted-foreground" />
       </div>
+      {showAlerts && (
+        <div className="border-b border-border/50 p-3">
+          <AuditAlertsRail
+            alerts={alerts}
+            loading={alertsLoading}
+            onApplyFilter={(filter) => navigate(auditHrefFor(filter))}
+          />
+        </div>
+      )}
       {rows.length === 0 ? (
         <p className="px-3 py-4 text-sm text-muted-foreground">No recent calls in this workspace.</p>
       ) : (
-        <div className="divide-y divide-border/40">
-          {rows.slice(0, 5).map((row) => (
-            <Link
-              key={row.id}
-              to={`/audit?id=${encodeURIComponent(row.id)}`}
-              className="grid grid-cols-[1fr_auto] gap-3 px-3 py-2 text-sm transition-colors hover:bg-muted/30"
-            >
-              <span className="min-w-0">
-                <span className="block truncate font-mono text-xs text-foreground">{row.tool_name}</span>
-                <span className="block truncate text-[11px] text-muted-foreground">
-                  {row.downstream_server_name || row.client_type || 'gateway'}
-                </span>
-              </span>
-              <Badge variant="outline" tone={auditTone(row.status)}>
-                {row.status}
-              </Badge>
-            </Link>
-          ))}
-        </div>
+        <AuditTable
+          records={rows.slice(0, 5)}
+          columns={SCOPED_COLUMNS}
+          dense
+          onSelect={(record) => navigate(`/audit?id=${encodeURIComponent(record.id)}`)}
+        />
       )}
     </div>
   )
@@ -113,10 +156,4 @@ export function memoryDetail(stats: MemoryStats | null): string {
   const fresh = stats.recency_buckets?.fresh ?? 0
   if (fresh > 0) return `${fresh} fresh`
   return `${stats.pages_equivalent} pages`
-}
-
-function auditTone(status: AuditRecord['status']): CommandTone {
-  if (status === 'error' || status === 'blocked') return 'critical'
-  if (status === 'success' || status === 'ok') return 'success'
-  return 'muted'
 }

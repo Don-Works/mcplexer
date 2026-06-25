@@ -263,6 +263,14 @@ export interface AuditRecord {
   skill_id?: string
 }
 
+// Sort orders accepted by the audit list endpoint. Default is time_desc
+// (newest first). latency_* surface the slow/fast tails for triage.
+export type AuditSort =
+  | 'time_desc'
+  | 'time_asc'
+  | 'latency_desc'
+  | 'latency_asc'
+
 export interface AuditFilter {
   id?: string // exact match — used by drawer deep-link fallback
   workspace_id?: string
@@ -274,7 +282,108 @@ export interface AuditFilter {
   before?: string
   limit?: number
   offset?: number
+  // --- Mission Control facets (Audit overhaul). All optional; the backend
+  // treats an absent param as "no constraint". actor_kind/actor_id mirror the
+  // AuditRecord attribution fields; downstream_server_id / route_rule_id are
+  // the structural joins; client_type is the connecting harness; tier is the
+  // route log_level tier. cache_hit filters cached-vs-live; min_latency_ms
+  // surfaces the slow tail; q is free-text fed to the search ranker; sort
+  // controls order; cursor drives keyset pagination (preferred over offset).
+  actor_kind?: string
+  actor_id?: string
+  downstream_server_id?: string
+  route_rule_id?: string
+  client_type?: string
+  error_code?: string
+  tier?: string
+  cache_hit?: boolean
+  min_latency_ms?: number
+  q?: string
+  sort?: AuditSort
+  cursor?: string
 }
+
+// AuditPage — the audit list response. Extends the generic paginated shape
+// with a keyset cursor: when present, pass it back as filter.cursor to fetch
+// the next window without offset math (stable under live inserts).
+export interface AuditPage extends PaginatedResponse<AuditRecord> {
+  next_cursor?: string
+}
+
+// Which ranker answered an audit search. vector = embedding similarity,
+// tfidf = lexical relevance, fts = SQLite FTS5 match. The UI badges the mode
+// so the operator knows how fuzzy the results are.
+export type AuditSearchMode = 'vector' | 'tfidf' | 'fts'
+
+export interface AuditSearchResponse {
+  data: AuditRecord[]
+  total: number
+  mode: AuditSearchMode
+  query: string
+}
+
+// AuditCapabilities — what the gateway's audit subsystem can do on this
+// install. The UI degrades gracefully: search modes flip features on, alerts
+// / saved_searches gate whole rails. Defaults (while loading) assume fts+tfidf
+// present, vector+alerts absent so nothing renders that can't be served.
+export interface AuditCapabilities {
+  search: {
+    fts: boolean
+    tfidf: boolean
+    vector: boolean
+  }
+  alerts: boolean
+  saved_searches: boolean
+}
+
+// AuditAlert — a surfaced anomaly (latency/error-rate spike) or security
+// signal (denied-call burst, secret-decrypt spike). count is the observation
+// count in the window; metric/baseline describe the threshold that fired.
+// filter is a ready-to-apply AuditFilter that scopes the page to the offending
+// rows ("inspect").
+export interface AuditAlert {
+  id: string
+  kind: 'anomaly' | 'security'
+  severity: 'info' | 'warning' | 'critical'
+  title: string
+  detail: string
+  tool_name?: string
+  workspace_id?: string
+  count: number
+  metric?: number
+  baseline?: number
+  first_seen: string
+  last_seen: string
+  filter: AuditFilter
+}
+
+export interface AuditAlertsResponse {
+  alerts: AuditAlert[]
+  generated_at: string
+}
+
+// SavedSearch — a persisted query + facet set the operator can recall, plus
+// the optional alerting threshold (fire when >= threshold_count matches land
+// inside window_sec). last_fired_at is null until first triggered.
+export interface SavedSearch {
+  id: string
+  name: string
+  q: string
+  filter: AuditFilter
+  threshold_count: number
+  window_sec: number
+  workspace_id: string
+  enabled: boolean
+  last_fired_at: string | null
+  created_at: string
+}
+
+// Create/update payloads — id/created_at/last_fired_at are server-owned.
+export type SavedSearchCreate = Omit<
+  SavedSearch,
+  'id' | 'created_at' | 'last_fired_at'
+>
+export type SavedSearchPatch = Partial<SavedSearchCreate>
 
 export interface AuditStats {
   total_requests: number

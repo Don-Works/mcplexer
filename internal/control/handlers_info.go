@@ -41,11 +41,20 @@ func handleQueryAudit(
 	ctx context.Context, s store.Store, args json.RawMessage,
 ) (json.RawMessage, error) {
 	var p struct {
-		ToolName    *string `json:"tool_name"`
-		Status      *string `json:"status"`
-		WorkspaceID *string `json:"workspace_id"`
-		Limit       int     `json:"limit"`
-		Offset      int     `json:"offset"`
+		ToolName           *string `json:"tool_name"`
+		Status             *string `json:"status"`
+		WorkspaceID        *string `json:"workspace_id"`
+		ActorKind          *string `json:"actor_kind"`
+		ActorID            *string `json:"actor_id"`
+		DownstreamServerID *string `json:"downstream_server_id"`
+		RouteRuleID        *string `json:"route_rule_id"`
+		ClientType         *string `json:"client_type"`
+		ErrorCode          *string `json:"error_code"`
+		Tier               *string `json:"tier"`
+		Q                  string  `json:"q"`
+		Sort               string  `json:"sort"`
+		Limit              int     `json:"limit"`
+		Offset             int     `json:"offset"`
 	}
 	if len(args) > 0 {
 		if err := json.Unmarshal(args, &p); err != nil {
@@ -57,11 +66,20 @@ func handleQueryAudit(
 	}
 
 	filter := store.AuditFilter{
-		ToolName:    p.ToolName,
-		Status:      p.Status,
-		WorkspaceID: p.WorkspaceID,
-		Limit:       p.Limit,
-		Offset:      p.Offset,
+		ToolName:           p.ToolName,
+		Status:             p.Status,
+		WorkspaceID:        p.WorkspaceID,
+		ActorKind:          p.ActorKind,
+		ActorID:            p.ActorID,
+		DownstreamServerID: p.DownstreamServerID,
+		RouteRuleID:        p.RouteRuleID,
+		ClientType:         p.ClientType,
+		ErrorCode:          p.ErrorCode,
+		Tier:               p.Tier,
+		Q:                  p.Q,
+		Sort:               p.Sort,
+		Limit:              p.Limit,
+		Offset:             p.Offset,
 	}
 	records, total, err := s.QueryAuditRecords(ctx, filter)
 	if err != nil {
