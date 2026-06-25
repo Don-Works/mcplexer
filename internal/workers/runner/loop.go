@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/don-works/mcplexer/internal/models"
@@ -26,6 +27,7 @@ type loopState struct {
 	tools        []models.ToolSchema
 	adapter      models.ModelAdapter
 	caps         Caps
+	capsMu       sync.RWMutex
 	startedAt    time.Time
 	runID        string
 
@@ -98,6 +100,25 @@ type loopState struct {
 	billingModel       string
 	subscriptionBucket string
 	realCostUSD        float64
+}
+
+func (s *loopState) capsSnapshot() Caps {
+	s.capsMu.RLock()
+	defer s.capsMu.RUnlock()
+	return s.caps
+}
+
+func (s *loopState) lifetimeOutputCapSnapshot() int {
+	s.capsMu.RLock()
+	defer s.capsMu.RUnlock()
+	return s.maxLifetimeOutputTokens
+}
+
+func (s *loopState) updateCaps(caps Caps, maxLifetimeOutputTokens int) {
+	s.capsMu.Lock()
+	s.caps = caps
+	s.maxLifetimeOutputTokens = maxLifetimeOutputTokens
+	s.capsMu.Unlock()
 }
 
 // pendingApprovalInfo holds the tool call that needs operator approval.
@@ -187,22 +208,42 @@ func (r *Runner) runLoop(ctx context.Context, s *loopState) loopOutcome {
 			return o
 		}
 		s.iteration++
+		caps := s.capsSnapshot()
 
 		// Bound each adapter call to the remaining wall-clock budget.
 		// Without this, a subprocess-backed adapter can block inside one
 		// Send call forever and never return to the loop-level cap check.
-		remaining := s.caps.MaxWallClock - r.clock.Now().Sub(s.startedAt)
+		remaining := caps.MaxWallClock - r.clock.Now().Sub(s.startedAt)
 		perCall := remaining + 5*time.Second
 		if perCall < 30*time.Second {
 			perCall = 30 * time.Second
 		}
 		sendCtx, cancelSend := context.WithTimeout(ctx, perCall)
+		var streamedTextMu sync.Mutex
+		streamedText := false
+		markStreamedText := func() {
+			streamedTextMu.Lock()
+			streamedText = true
+			streamedTextMu.Unlock()
+		}
+		hasStreamedText := func() bool {
+			streamedTextMu.Lock()
+			defer streamedTextMu.Unlock()
+			return streamedText
+		}
 		resp, err := s.adapter.Send(sendCtx, models.SendRequest{
 			System:        s.systemPrompt,
 			Messages:      s.messages,
 			Tools:         s.tools,
-			MaxTokens:     s.caps.MaxOutputTokens,
+			MaxTokens:     caps.MaxOutputTokens,
 			WorkspacePath: s.workspacePath,
+			Stream: func(ev models.SendStreamEvent) {
+				if ev.Kind != models.SendStreamTextDelta || ev.Text == "" {
+					return
+				}
+				markStreamedText()
+				r.publishTextDelta(s, ev.Text)
+			},
 		})
 		cancelSend()
 		if err != nil {
@@ -232,7 +273,7 @@ func (r *Runner) runLoop(ctx context.Context, s *loopState) loopOutcome {
 			}
 			return loopOutcome{status: StatusFailure, errorText: "adapter send: " + err.Error()}
 		}
-		r.accountUsage(ctx, s, resp)
+		r.accountUsage(ctx, s, resp, !hasStreamedText())
 
 		if len(resp.ToolCalls) == 0 {
 			// TrimSpace at the source so whitespace-only model output is
@@ -266,6 +307,7 @@ func (r *Runner) runLoop(ctx context.Context, s *loopState) loopOutcome {
 //
 // Callers must only invoke this when ctx.Err() != nil.
 func (r *Runner) ctxCancelOutcome(ctx context.Context, s *loopState) loopOutcome {
+	caps := s.capsSnapshot()
 	cause := context.Cause(ctx)
 	switch {
 	case errors.Is(cause, errOperatorCancel):
@@ -276,7 +318,7 @@ func (r *Runner) ctxCancelOutcome(ctx context.Context, s *loopState) loopOutcome
 	case errors.Is(cause, errWallClockExceeded):
 		return loopOutcome{
 			status:    StatusCapExceeded,
-			errorText: fmt.Sprintf("wall-clock (%s) exceeded", s.caps.MaxWallClock),
+			errorText: fmt.Sprintf("wall-clock (%s) exceeded", caps.MaxWallClock),
 		}
 	default:
 		msg := "context cancelled"
@@ -291,32 +333,33 @@ func (r *Runner) ctxCancelOutcome(ctx context.Context, s *loopState) loopOutcome
 // (zero, false). All caps return status=cap_exceeded — the operator
 // distinguishes via the error message.
 func (r *Runner) checkCaps(s *loopState) (loopOutcome, bool) {
-	if s.iteration >= s.caps.MaxIterations {
+	caps := s.capsSnapshot()
+	if s.iteration >= caps.MaxIterations {
 		return loopOutcome{
 			status:    StatusCapExceeded,
-			errorText: fmt.Sprintf("max iterations (%d) exceeded", s.caps.MaxIterations),
+			errorText: fmt.Sprintf("max iterations (%d) exceeded", caps.MaxIterations),
 		}, true
 	}
-	if s.toolCallCount >= s.caps.MaxToolCalls {
+	if s.toolCallCount >= caps.MaxToolCalls {
 		return loopOutcome{
 			status:    StatusCapExceeded,
-			errorText: fmt.Sprintf("max tool calls (%d) exceeded", s.caps.MaxToolCalls),
+			errorText: fmt.Sprintf("max tool calls (%d) exceeded", caps.MaxToolCalls),
 		}, true
 	}
 	elapsed := r.clock.Now().Sub(s.startedAt)
-	if elapsed >= s.caps.MaxWallClock {
+	if elapsed >= caps.MaxWallClock {
 		return loopOutcome{
 			status:    StatusCapExceeded,
-			errorText: fmt.Sprintf("wall-clock (%s) exceeded", s.caps.MaxWallClock),
+			errorText: fmt.Sprintf("wall-clock (%s) exceeded", caps.MaxWallClock),
 		}, true
 	}
 	// Positive cap -> abort once cumulative input tokens hit it. applyDefaults
 	// ensures the runner always has a positive aggregate input ceiling unless
 	// a test constructs loopState manually.
-	if s.caps.MaxInputTokens > 0 && s.inputTokens >= s.caps.MaxInputTokens {
+	if caps.MaxInputTokens > 0 && s.inputTokens >= caps.MaxInputTokens {
 		return loopOutcome{
 			status:    StatusCapExceeded,
-			errorText: fmt.Sprintf("input tokens (%d) exceeded cap (%d)", s.inputTokens, s.caps.MaxInputTokens),
+			errorText: fmt.Sprintf("input tokens (%d) exceeded cap (%d)", s.inputTokens, caps.MaxInputTokens),
 		}, true
 	}
 	// maxLifetimeOutputTokens is the loop-aggregate cap separate from
@@ -324,28 +367,29 @@ func (r *Runner) checkCaps(s *loopState) (loopOutcome, bool) {
 	// the adapter). The lifetime cap is populated only when the Worker
 	// explicitly sets MaxOutputTokens — runner defaults leave it at 0
 	// (no aggregate cap), so existing M0 behaviour is preserved.
-	if s.maxLifetimeOutputTokens > 0 && s.outputTokens >= s.maxLifetimeOutputTokens {
+	if maxLifetimeOutputTokens := s.lifetimeOutputCapSnapshot(); maxLifetimeOutputTokens > 0 && s.outputTokens >= maxLifetimeOutputTokens {
 		return loopOutcome{
 			status:    StatusCapExceeded,
-			errorText: fmt.Sprintf("output tokens (%d) exceeded cap (%d)", s.outputTokens, s.maxLifetimeOutputTokens),
+			errorText: fmt.Sprintf("output tokens (%d) exceeded cap (%d)", s.outputTokens, maxLifetimeOutputTokens),
 		}, true
 	}
 	return loopOutcome{}, false
 }
 
 func (r *Runner) checkNextInputBudget(s *loopState) (loopOutcome, bool) {
-	if s.caps.MaxInputTokens <= 0 {
+	caps := s.capsSnapshot()
+	if caps.MaxInputTokens <= 0 {
 		return loopOutcome{}, false
 	}
 	nextInput := estimateNextInputTokens(s)
-	if s.inputTokens+nextInput < s.caps.MaxInputTokens {
+	if s.inputTokens+nextInput < caps.MaxInputTokens {
 		return loopOutcome{}, false
 	}
 	return loopOutcome{
 		status: StatusCapExceeded,
 		errorText: fmt.Sprintf(
 			"estimated input tokens (%d current + %d next) would reach cap (%d)",
-			s.inputTokens, nextInput, s.caps.MaxInputTokens,
+			s.inputTokens, nextInput, caps.MaxInputTokens,
 		),
 	}, true
 }
@@ -416,6 +460,7 @@ func (r *Runner) dispatchToolCalls(
 ) ([]models.Message, *loopOutcome) {
 	out := make([]models.Message, 0, len(calls))
 	for _, call := range calls {
+		caps := s.capsSnapshot()
 		// Re-check the per-run tool-call cap BEFORE dispatching the next
 		// call. checkCaps only fires at the top of runLoop (once per model
 		// turn); a single turn can return N > MaxToolCalls tool calls and,
@@ -423,10 +468,10 @@ func (r *Runner) dispatchToolCalls(
 		// effects) before the outer cap check fires again. In autonomous +
 		// write-class mode that is an unbounded-side-effects bypass, so the
 		// cap MUST be enforced inside the inner loop too.
-		if s.toolCallCount >= s.caps.MaxToolCalls {
+		if s.toolCallCount >= caps.MaxToolCalls {
 			return nil, &loopOutcome{
 				status:    StatusCapExceeded,
-				errorText: fmt.Sprintf("max tool calls (%d) exceeded", s.caps.MaxToolCalls),
+				errorText: fmt.Sprintf("max tool calls (%d) exceeded", caps.MaxToolCalls),
 			}
 		}
 		s.appendMeshID(r.emitToolCall(ctx, s.worker.ID, s.runID, call.Name))
@@ -545,7 +590,7 @@ func (r *Runner) preDispatchGate(
 // therefore see the exact $ that Claude reported, which matters because
 // the pricing model behind OAuth-authed claude calls (subscription
 // quota / Agent SDK pool) is not derivable from per-token rates.
-func (r *Runner) accountUsage(ctx context.Context, s *loopState, resp *models.SendResponse) {
+func (r *Runner) accountUsage(ctx context.Context, s *loopState, resp *models.SendResponse, publishText bool) {
 	costDelta := resp.CostUSD
 	if costDelta == 0 {
 		costDelta = models.EstimateCostUSD(
@@ -572,14 +617,8 @@ func (r *Runner) accountUsage(ctx context.Context, s *loopState, resp *models.Se
 	// Publish the assistant prose for this turn so live UI tabs can
 	// stream the transcript in real time. Empty text (tool-only turns)
 	// is dropped to keep the event volume tight.
-	if resp.Text != "" {
-		r.runBus.Publish(&RunEvent{
-			Kind:      RunEventKindTextDelta,
-			WorkerID:  s.worker.ID,
-			RunID:     s.runID,
-			Iteration: s.iteration,
-			Text:      resp.Text,
-		})
+	if publishText && resp.Text != "" {
+		r.publishTextDelta(s, resp.Text)
 	}
 	// And the cumulative usage tick — counters here are the running
 	// totals after this turn, matching what the persisted row will show
@@ -593,6 +632,16 @@ func (r *Runner) accountUsage(ctx context.Context, s *loopState, resp *models.Se
 		OutputTokens: s.outputTokens,
 		CostUSD:      s.costUSD,
 		ToolCalls:    s.toolCallCount,
+	})
+}
+
+func (r *Runner) publishTextDelta(s *loopState, text string) {
+	r.runBus.Publish(&RunEvent{
+		Kind:      RunEventKindTextDelta,
+		WorkerID:  s.worker.ID,
+		RunID:     s.runID,
+		Iteration: s.iteration,
+		Text:      text,
 	})
 }
 

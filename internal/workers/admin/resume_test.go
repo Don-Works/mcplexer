@@ -23,6 +23,8 @@ func (c *chanRunner) RunWithOpts(_ context.Context, _ string, opts runner.RunOpt
 
 func (c *chanRunner) Cancel(_, _ string) bool { return false }
 
+func (c *chanRunner) RefreshRunCaps(_ string, _ *store.Worker) bool { return false }
+
 func seedDelegationRun(
 	t *testing.T, db *sqlite.DB, wsID, scopeID, name, triggerKind string, enabled bool,
 ) string {

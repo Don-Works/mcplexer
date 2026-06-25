@@ -25,6 +25,7 @@ import (
 // *runner.Runner satisfies this naturally.
 type Runner interface {
 	RunWithOpts(ctx context.Context, workerID string, opts runner.RunOpts) (string, error)
+	RefreshRunCaps(runID string, worker *store.Worker) bool
 	// Cancel requests a hard stop for a live run: it interrupts the
 	// runner goroutine and kills any in-flight model subprocess group,
 	// then lets the runner finalize the row as the single writer of the

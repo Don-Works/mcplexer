@@ -442,6 +442,37 @@ export interface ReviewDelegationInput {
   model_scores?: DelegationModelReview[]
 }
 
+export interface ExtendDelegationBudgetInput {
+  workspace_id?: string
+  max_tool_calls?: number
+  additional_tool_calls?: number
+  max_wall_clock_seconds?: number
+  additional_wall_clock_seconds?: number
+  max_input_tokens?: number
+  additional_input_tokens?: number
+  max_output_tokens?: number
+  additional_output_tokens?: number
+  reason?: string
+}
+
+export interface BudgetFieldChange {
+  old: number
+  new: number
+}
+
+export interface RunBudgetUpdate {
+  run_id: string
+  worker_id: string
+  live_updated: boolean
+  changes: Record<string, BudgetFieldChange>
+}
+
+export interface ExtendDelegationBudgetOutput {
+  delegation_id?: string
+  updated: number
+  updates: RunBudgetUpdate[]
+}
+
 export interface DelegationModelCapacity {
   rank: number
   label?: string
@@ -580,6 +611,16 @@ export function reviewDelegation(
   data: ReviewDelegationInput,
 ): Promise<DelegationContext> {
   return request(`/delegations/${encodeURIComponent(id)}/review`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  })
+}
+
+export function extendDelegationBudget(
+  id: string,
+  data: ExtendDelegationBudgetInput,
+): Promise<ExtendDelegationBudgetOutput> {
+  return request(`/delegations/${encodeURIComponent(id)}/budget`, {
     method: 'POST',
     body: JSON.stringify(data),
   })

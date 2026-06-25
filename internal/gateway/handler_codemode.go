@@ -267,6 +267,7 @@ func (h *handler) handleCodeExecute(
 	caller := &handlerToolCaller{handler: h}
 	sandbox := codemode.NewSandbox(caller, timeout)
 	sandbox.SetMaxOutputBytes(h.codeModeMaxOutputBytes(ctx))
+	sandbox.SetMaxHeapGrowthMB(h.codeModeMaxHeapGrowthMB(ctx))
 
 	// Enable the ephemeral per-session `session` object when we have a stable
 	// MCP session id: rehydrate the prior snapshot so user code can reuse
@@ -600,6 +601,19 @@ func (h *handler) codeModeMaxOutputBytes(ctx context.Context) int {
 	return codemode.NormalizeMaxOutputBytes(limit)
 }
 
+func (h *handler) codeModeMaxHeapGrowthMB(ctx context.Context) int {
+	limit := codemode.DefaultMaxHeapGrowthMB
+	if h.settingsSvc != nil {
+		if n := h.settingsSvc.Load(ctx).CodeModeMaxHeapGrowthMB; n > 0 {
+			limit = n
+		}
+	}
+	if limit > codemode.HardMaxHeapGrowthMB {
+		return codemode.HardMaxHeapGrowthMB
+	}
+	return limit
+}
+
 // codeModeSessionStateMaxBytes caps the total serialized size of the ephemeral
 // per-session `session` object snapshotted between execute_code calls.
 func (h *handler) codeModeSessionStateMaxBytes(ctx context.Context) int {
@@ -745,6 +759,9 @@ func (h *handler) buildCodeExecuteTool(ctx context.Context) (Tool, bool) {
 			"workspace-scoped values that survive restarts and other sessions, use the kv namespace — " +
 			"kv.set({key, value}) then kv.get({key}).\n" +
 			"- print()/console.log output is capped server-side and marked when truncated.\n\n" +
+			"Safety limits: execution has a wall-clock timeout, output cap, and a heap-growth watchdog " +
+			"so one script cannot exhaust daemon memory. Use paging/filtering instead of materializing " +
+			"large raw result sets.\n\n" +
 			"Calling patterns:\n" +
 			"- Sequential (default): calls return values directly, so you can " +
 			"daisy-chain — pass the result of one call straight into the next.\n" +
@@ -781,6 +798,9 @@ func (h *handler) buildCodeExecuteTool(ctx context.Context) (Tool, bool) {
 			"workspace-scoped values that survive restarts and other sessions, use the kv namespace — " +
 			"kv.set({key, value}) then kv.get({key}).\n" +
 			"- print()/console.log output is capped server-side and marked when truncated.\n\n" +
+			"Safety limits: execution has a wall-clock timeout, output cap, and a heap-growth watchdog " +
+			"so one script cannot exhaust daemon memory. Use paging/filtering instead of materializing " +
+			"large raw result sets.\n\n" +
 			"Calling patterns:\n" +
 			"- Sequential (default): calls return values directly, so you can " +
 			"daisy-chain — pass the result of one call straight into the next.\n" +

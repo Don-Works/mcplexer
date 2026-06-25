@@ -56,6 +56,10 @@ func (r *Runner) applyCLIToolCallCap(
 	if worker.MaxToolCalls <= 0 || !models.IsCLIProvider(worker.ModelProvider) {
 		return
 	}
+	maxToolCalls := state.capsSnapshot().MaxToolCalls
+	if maxToolCalls <= 0 {
+		maxToolCalls = worker.MaxToolCalls
+	}
 	wsID := run.WorkspaceID
 	if wsID == "" {
 		wsID = worker.WorkspaceID
@@ -73,10 +77,10 @@ func (r *Runner) applyCLIToolCallCap(
 		return
 	}
 	state.toolCallCount = n
-	if n > worker.MaxToolCalls {
+	if n > maxToolCalls {
 		*outcome = loopOutcome{
 			status:    StatusCapExceeded,
-			errorText: fmt.Sprintf("max tool calls (%d) exceeded (cli audit count %d)", worker.MaxToolCalls, n),
+			errorText: fmt.Sprintf("max tool calls (%d) exceeded (cli audit count %d)", maxToolCalls, n),
 		}
 	}
 }

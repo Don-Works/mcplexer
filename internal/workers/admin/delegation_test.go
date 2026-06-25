@@ -382,6 +382,7 @@ func TestServiceDelegationLifecycleAggregatesSavingsAndReview(t *testing.T) {
 		BaselineTokensEstimate: 160000,
 		BaselineCostUSD:        12.00,
 		Parallelism:            2,
+		ReviewRequired:         boolPtr(true),
 		MaxWallClockSeconds:    30,
 	})
 	if err != nil {
@@ -484,6 +485,49 @@ func TestServiceDelegationLifecycleAggregatesSavingsAndReview(t *testing.T) {
 	}
 	if len(reviewed.ModelStats) != 1 || reviewed.ModelStats[0].ReviewCount != 1 || reviewed.ModelStats[0].ReviewScore != 87 {
 		t.Fatalf("reviewed model stats = %+v, want score 87", reviewed.ModelStats)
+	}
+}
+
+func TestServiceDelegationDefaultReviewOptional(t *testing.T) {
+	svc, db, wsID, scopeID := newTestService(t)
+	ctx := context.Background()
+
+	out, err := svc.Delegate(ctx, admin.DelegationInput{
+		WorkspaceID:         wsID,
+		Objective:           "Run a routine delegated implementation.",
+		ModelProvider:       "anthropic",
+		ModelID:             "claude-haiku-4-5",
+		SecretScopeID:       scopeID,
+		MaxWallClockSeconds: 30,
+	})
+	if err != nil {
+		t.Fatalf("Delegate: %v", err)
+	}
+	if out.ReviewRequired {
+		t.Fatalf("review_required = true, want default false")
+	}
+	run := waitForDelegationRun(t, db, out.Dispatches[0].WorkerID)
+	if err := db.UpdateWorkerRunStatus(ctx, run.ID, store.WorkerRunFinalize{
+		Status:             "success",
+		FinishedAt:         time.Now().UTC(),
+		InputTokens:        100,
+		OutputTokens:       50,
+		MeshMessageIDsJSON: "[]",
+		AuditRecordIDsJSON: "[]",
+	}); err != nil {
+		t.Fatalf("finish run: %v", err)
+	}
+
+	rows, err := svc.ListDelegations(ctx, admin.DelegationListInput{WorkspaceID: wsID})
+	if err != nil {
+		t.Fatalf("ListDelegations: %v", err)
+	}
+	got := findDelegation(t, rows, out.DelegationID)
+	if got.ReviewRequired {
+		t.Fatalf("listed review_required = true, want false")
+	}
+	if got.Status != "success" {
+		t.Fatalf("status = %q, want success without parent review", got.Status)
 	}
 }
 

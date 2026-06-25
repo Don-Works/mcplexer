@@ -56,7 +56,8 @@ var taskReadTools = map[string]bool{
 // tool. Drift-proof — a new write tool is denied by default.
 func (f CapabilityFeatures) deniesTool(toolName string) (bool, string) {
 	if !derefBool(f.MayCreateSubdelegation, true) {
-		if toolName == "mcpx__delegate_worker" || toolName == "mcpx__invoke_model" {
+		if toolName == "mcpx__delegate_worker" || toolName == "mcpx__invoke_model" ||
+			toolName == "mcpx__extend_delegation_budget" {
 			return true, "tool denied by capability feature flag (may_create_subdelegation=false)"
 		}
 	}
@@ -94,7 +95,7 @@ func (f CapabilityFeatures) FeatureDenyGlobs() (tools []string, namespaces []str
 			"memory__link", "memory__offer")
 	}
 	if !derefBool(f.MayCreateSubdelegation, true) {
-		tools = append(tools, "mcpx__delegate_worker", "mcpx__invoke_model")
+		tools = append(tools, "mcpx__delegate_worker", "mcpx__invoke_model", "mcpx__extend_delegation_budget")
 	}
 	if !derefBool(f.MayOfferTasks, true) {
 		tools = append(tools, "task__offer", "task__assign_remote")

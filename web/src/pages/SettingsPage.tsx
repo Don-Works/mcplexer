@@ -86,6 +86,7 @@ export function SettingsPage() {
         ...data.settings,
         slim_surface: data.settings.slim_surface ?? true,
         code_mode_max_output_bytes: data.settings.code_mode_max_output_bytes ?? 24 * 1024,
+        code_mode_max_heap_growth_mb: data.settings.code_mode_max_heap_growth_mb ?? 2048,
         mesh_receive_max_results: data.settings.mesh_receive_max_results ?? 20,
         mesh_receive_preview_bytes: data.settings.mesh_receive_preview_bytes ?? 512,
         mesh_send_max_content_bytes: data.settings.mesh_send_max_content_bytes ?? 64 * 1024,
@@ -475,6 +476,23 @@ export function SettingsPage() {
                       patch({ code_mode_max_output_bytes: parseInt(e.target.value, 10) || 24 * 1024 })
                     }
                     className="w-40"
+                  />
+                </div>
+                <div className="space-y-2 border-t pt-4">
+                  <Label>Heap growth cap (MB)</Label>
+                  <p className="text-xs text-muted-foreground">
+                    Maximum process heap growth allowed during one code execution (16-2048).
+                  </p>
+                  <Input
+                    type="number"
+                    min={16}
+                    max={2048}
+                    step={16}
+                    value={settings.code_mode_max_heap_growth_mb}
+                    onChange={(e) =>
+                      patch({ code_mode_max_heap_growth_mb: parseInt(e.target.value, 10) || 2048 })
+                    }
+                    className="w-32"
                   />
                 </div>
               </CardContent>

@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { nextRunCountdown, formatCountdown } from '@/pages/workers/worker-utils'
+import {
+  formatCountdown,
+  isLiveDelegationWorker,
+  liveDelegationCount,
+  nextRunCountdown,
+} from '@/pages/workers/worker-utils'
+import type { WorkerSummary } from '@/api/workers'
 
 const NOW = new Date('2024-01-01T12:00:00Z')
 
@@ -90,3 +96,35 @@ describe('formatCountdown', () => {
     expect(formatCountdown(-1000)).toBe('now')
   })
 })
+
+describe('live delegation helpers', () => {
+  it('does not treat a delegation worker with no run status as live', () => {
+    expect(isLiveDelegationWorker(worker({ id: 'w-queued', delegation_id: 'd-queued' }))).toBe(false)
+  })
+
+  it('counts distinct live delegations, not live worker rows', () => {
+    const rows = [
+      worker({ id: 'w-1', delegation_id: 'd-1', last_run_status: 'running' }),
+      worker({ id: 'w-2', delegation_id: 'd-1', last_run_status: 'awaiting_approval' }),
+      worker({ id: 'w-3', delegation_id: 'd-2', last_run_status: 'success' }),
+      worker({ id: 'w-4', delegation_id: 'd-3' }),
+      worker({ id: 'w-durable', ephemeral: false, last_run_status: 'running' }),
+    ]
+
+    expect(liveDelegationCount(rows)).toBe(1)
+  })
+})
+
+function worker(overrides: Partial<WorkerSummary>): WorkerSummary {
+  return {
+    id: overrides.id ?? 'worker-1',
+    name: overrides.name ?? 'worker',
+    model_provider: overrides.model_provider ?? 'openai',
+    model_id: overrides.model_id ?? 'model',
+    schedule_spec: overrides.schedule_spec ?? '',
+    enabled: overrides.enabled ?? true,
+    created_at: overrides.created_at ?? NOW.toISOString(),
+    workspace_id: overrides.workspace_id ?? 'ws-1',
+    ...overrides,
+  }
+}

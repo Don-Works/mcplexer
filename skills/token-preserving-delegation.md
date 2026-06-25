@@ -64,7 +64,7 @@ Most bad rows in the first live delegation waves were operational, not model-qua
    - Use `parallelism: 1` for one implementation pass.
    - Use higher parallelism for independent slices only; include a split plan in `handoff`.
    - Set `worker_mode: "review"` for read-only critique/audit runs and `worker_mode: "execute"` for implementation runs.
-   - Leave `review_required: true` unless the operator explicitly wants fire-and-forget telemetry; required reviews keep the delegation in `needs_review` until scored.
+   - Leave `review_required` omitted/false for routine delegations; set `review_required: true` only when the parent review must gate completion or when model-ranking telemetry is explicitly worth the review cost. Required reviews keep the delegation in `needs_review` until scored.
    - Set caps (`max_tool_calls`, `max_wall_clock_seconds`, token caps, monthly cost cap) so failures are bounded — but size them to the work (see "Work the Delegates Hard"); the default wall clock is 3600 seconds for coding workflows, while the default 80 tool calls still only fits small bounded tasks.
    - Memory is available by default for execute workers (via the two-tool surface): the worker preamble directs persistence to the `memory` namespace; use `mcpx__search_tools` (or harness alias) for "memory" then `execute_code` with `memory.save({...})` / `memory.recall({...})` / `memory.list` (see docs/memory.md and CLAUDE.md for exact call forms and harness naming). Attach a skill (e.g. this one or a memory-usage example skill) for body pickup if the worker needs extra patterns or project facts. Review workers get read-only memory tools. No secret leakage — memory ops are server-side under the delegation's workspace scope.
 
@@ -73,16 +73,16 @@ Most bad rows in the first live delegation waves were operational, not model-qua
    - Prefer reading concise worker handoffs over re-reading everything they inspected.
    - Check `model_stats` and the Delegations UI model rank to see which cheap models are actually performing.
 
-7. Score the result as the parent.
+7. Review the result as the parent when useful.
    - Inspect diffs, tests, and worker final reports.
    - Verify the worker's reported branch/commit/worktree before trusting the handoff. A worker can report success while leaving only dirty files, pointing at a stale SHA, or editing the parent worktree directly.
    - Penalize broken isolation, missing commits, stale-base branches, and reports that do not match git state. Salvage useful code when safe, but score the delegation as partial/rejected so model ranking learns the operational failure.
-   - Call `mcpx__review_delegation` with a `score` from 0 to 100 and notes.
+   - Call `mcpx__review_delegation` with a `score` from 0 to 100 and notes when review was required or when the judgement should feed model ranking, safety, merge readiness, or user-visible quality.
    - Use outcomes: `accepted` for >=80, `partial` for 50-79, `rejected` for <50 unless there is a reason to override.
-   - Score every delegation during exploration, including failures. A database/config failure should get a low score with notes so the model rank shows operational reliability, not just happy-path quality.
+   - Score exploration delegations when the comparison matters, including failures. A database/config failure can get a low score with notes so the model rank shows operational reliability, not just happy-path quality.
    - Launch failures are NOT model failures. When the worker never ran (e.g. `opencode_cli` dies before the first turn, adapter `signal: killed`), score it rejected with an explicit "launch failure / operational" note and do NOT treat the number as evidence about the model's coding quality — two such runs in the 12h audit put score-20 rows against an innocent model. Until the gateway separates operational outcomes from model_stats (task 01KTTVV1G4), the note is what keeps capacity ranking honest.
-   - Review in the SAME session that spawned the delegation, immediately after reading the result. Unreviewed `needs_review` rows rot (a ledger audit found 35/113 delegations never reviewed despite `review_required: true`).
-   - Before ending any session, sweep: `mcpx__list_delegations` and score everything still `needs_review` that you own. An unreviewed delegation is the delegation-layer equivalent of flipping a task `doing → done` without review.
+   - When `review_required: true`, review in the SAME session that spawned the delegation, immediately after reading the result. Optional delegations may still be scored later when the parent has useful judgement to record.
+   - Before ending any session, sweep: `mcpx__list_delegations` and handle anything still `needs_review` that you own. Optional completed delegations do not need a parent score just to close.
 
 ## Work the Delegates Hard
 

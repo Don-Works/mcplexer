@@ -46,6 +46,7 @@ import type { Settings } from '@/api/types'
 import {
   cancelWorkerRun,
   createDelegation,
+  extendDelegationBudget,
   listDelegationModelCapacity,
   listDelegations,
   reviewDelegation,
@@ -102,7 +103,7 @@ const defaultForm: FormState = {
   taskID: '',
   taskKind: '',
   workerMode: 'execute',
-  reviewRequired: true,
+  reviewRequired: false,
   modelSelectionMode: 'single',
   modelCandidateIndex: 0,
   modelCandidatesJSON: '',
@@ -1583,6 +1584,7 @@ function CompactDelegationRow({
 }) {
   const [expanded, setExpanded] = useState(defaultExpanded)
   const [reviewOpen, setReviewOpen] = useState(false)
+  const [budgetBusy, setBudgetBusy] = useState<'' | 'tools' | 'time'>('')
   const agg = delegation.aggregate
   const frontierAvoided = frontierTokensAvoided(agg)
   const workerDelta = workerTokenDelta(agg)
@@ -1611,6 +1613,34 @@ function CompactDelegationRow({
       if (value) setReviewOpen(false)
       return !value
     })
+  }
+
+  async function handleExtendBudget(kind: 'tools' | 'time') {
+    if (budgetBusy) return
+    setBudgetBusy(kind)
+    try {
+      const payload =
+        kind === 'tools'
+          ? {
+              additional_tool_calls: 50,
+              reason: 'dashboard quick extend: +50 tool calls',
+            }
+          : {
+              additional_wall_clock_seconds: 15 * 60,
+              reason: 'dashboard quick extend: +15 minutes',
+            }
+      const out = await extendDelegationBudget(delegation.id, payload)
+      toast.success(
+        kind === 'tools'
+          ? `Added tool budget to ${out.updated} running context${out.updated === 1 ? '' : 's'}`
+          : `Added time budget to ${out.updated} running context${out.updated === 1 ? '' : 's'}`,
+      )
+      onReviewed()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Budget extension failed')
+    } finally {
+      setBudgetBusy('')
+    }
   }
 
   return (
@@ -1666,6 +1696,34 @@ function CompactDelegationRow({
         </div>
 
         <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+          {isLive && (
+            <>
+              <Button
+                type="button"
+                size="xs"
+                variant="outline"
+                className="h-6 px-2"
+                disabled={Boolean(budgetBusy)}
+                onClick={() => handleExtendBudget('tools')}
+                title="Add 50 tool calls to running delegation workers"
+              >
+                {budgetBusy === 'tools' ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <Plus className="mr-1 h-3 w-3" />}
+                50 tools
+              </Button>
+              <Button
+                type="button"
+                size="xs"
+                variant="outline"
+                className="h-6 px-2"
+                disabled={Boolean(budgetBusy)}
+                onClick={() => handleExtendBudget('time')}
+                title="Add 15 minutes to running delegation workers"
+              >
+                {budgetBusy === 'time' ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <Clock className="mr-1 h-3 w-3" />}
+                15m
+              </Button>
+            </>
+          )}
           {needsReview && !reviewed && (
             <Button type="button" size="xs" variant="default" className="h-6 px-2" onClick={openReview}>
               <Star className="mr-1 h-3 w-3" />

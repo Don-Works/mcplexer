@@ -30,7 +30,7 @@ func delegationToolDefinitions() []Tool {
 					"task_kind": {"type":"string","description":"Optional task category used for model routing/review, e.g. coding, review, architecture, tool_calling, visual."},
 					"workspace_id": {"type":"string","description":"Optional workspace override. Omit to use the current session workspace. Cross-workspace writes are rejected unless already in scope."},
 					"worker_mode": {"type":"string","enum":["execute","review"],"description":"execute lets the worker make scoped changes; review asks it to inspect/report only unless the handoff explicitly permits edits. Default execute."},
-					"review_required": {"type":"boolean","description":"When true, the delegation remains needs_review until mcpx__review_delegation records a parent score. Default true."},
+					"review_required": {"type":"boolean","description":"When true, the delegation remains needs_review until mcpx__review_delegation records a parent score. Default false; set true only when parent review must gate completion or feed model-ranking telemetry."},
 					"model_profile_id": {"type":"string","description":"Reusable model profile id. If set, fills provider, endpoint, secret scope, and default model when omitted."},
 					"model_provider": {"type":"string","description":"anthropic | openai | openai_compat | claude_cli | opencode_cli | grok_cli | mimo_cli | gemini_cli | codex_cli | pi_cli. For native Xiaomi MiMo via the host CLI, use mimo_cli. For the Pi coding harness (pi.dev) via the host 'pi' CLI, use pi_cli."},
 					"model_id": {"type":"string","description":"Provider-specific model id, e.g. grok-build, xiaomi/mimo-v2.5, minimax/MiniMax-M3, or zai-coding-plan/glm-5.1. For pi_cli, the model id Pi resolves from ~/.pi/agent/models.json."},
@@ -123,6 +123,37 @@ func delegationToolDefinitions() []Tool {
 				DestructiveHint: boolPtr(false),
 				IdempotentHint:  boolPtr(true),
 				OpenWorldHint:   boolPtr(false),
+			}),
+		},
+		{
+			Name:        "mcpx__extend_delegation_budget",
+			Description: "Increase runtime caps for currently running workers in one delegation. Use when a delegated worker is making useful progress but needs more tool calls, wall-clock seconds, or token budget. This is increase-only: set higher absolute max_* values or additive additional_* increments. It updates the delegation worker rows and refreshes live in-memory runner caps when the run is still active; terminal runs are not resumed.",
+			InputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"delegation_id": {"type":"string","description":"Delegation id returned by mcpx__delegate_worker / mcpx__invoke_model."},
+					"workspace_id": {"type":"string","description":"Optional workspace override; omit for current workspace."},
+					"max_tool_calls": {"type":"integer","description":"Higher absolute tool-call cap."},
+					"additional_tool_calls": {"type":"integer","description":"Tool calls to add to the current explicit cap."},
+					"max_wall_clock_seconds": {"type":"integer","description":"Higher absolute wall-clock cap in seconds from run start."},
+					"additional_wall_clock_seconds": {"type":"integer","description":"Seconds to add to the current explicit wall-clock cap."},
+					"max_input_tokens": {"type":"integer","description":"Higher absolute aggregate input-token cap."},
+					"additional_input_tokens": {"type":"integer","description":"Input tokens to add to the current explicit cap."},
+					"max_output_tokens": {"type":"integer","description":"Higher absolute lifetime output-token cap."},
+					"additional_output_tokens": {"type":"integer","description":"Output tokens to add to the current explicit lifetime cap."},
+					"reason": {"type":"string","description":"Optional short operator note for why the budget was increased."}
+				},
+				"required": ["delegation_id"]
+			}`),
+			Extras: withExamples(ToolAnnotations{
+				Title:           "Extend Delegation Budget",
+				ReadOnlyHint:    boolPtr(false),
+				DestructiveHint: boolPtr(false),
+				IdempotentHint:  boolPtr(false),
+				OpenWorldHint:   boolPtr(false),
+			}, []string{
+				`{"delegation_id":"del-abc123","additional_tool_calls":80,"additional_wall_clock_seconds":900,"reason":"worker is on the right path and needs more runway"}`,
+				`{"delegation_id":"del-abc123","max_tool_calls":250,"max_wall_clock_seconds":3600}`,
 			}),
 		},
 		{

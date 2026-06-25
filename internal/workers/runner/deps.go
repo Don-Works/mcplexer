@@ -284,6 +284,7 @@ type Runner struct {
 type activeRun struct {
 	cancel context.CancelCauseFunc
 	reason string
+	state  *loopState
 }
 
 // Deps bundles every collaborator the Runner needs. Pass real impls in

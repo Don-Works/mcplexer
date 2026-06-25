@@ -642,6 +642,7 @@ export interface Settings {
   log_level: string
   code_mode_timeout_sec: number
   code_mode_max_output_bytes: number
+  code_mode_max_heap_growth_mb: number
   mesh_enabled: boolean
   mesh_receive_max_results: number
   mesh_receive_preview_bytes: number

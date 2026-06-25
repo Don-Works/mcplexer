@@ -116,13 +116,14 @@ func (h *handler) handleContextCostStats(ctx context.Context) (json.RawMessage, 
 	return marshalJSONResult(map[string]any{
 		"counters": h.ContextCostStats(),
 		"settings": map[string]any{
-			"slim_tools":                  settings.SlimTools,
-			"slim_surface":                settings.SlimSurface,
-			"compact_responses":           settings.CompactResponses,
-			"code_mode_max_output_bytes":  settings.CodeModeMaxOutputBytes,
-			"mesh_receive_max_results":    settings.MeshReceiveMaxResults,
-			"mesh_receive_preview_bytes":  settings.MeshReceivePreviewBytes,
-			"mesh_send_max_content_bytes": settings.MeshSendMaxContentBytes,
+			"slim_tools":                   settings.SlimTools,
+			"slim_surface":                 settings.SlimSurface,
+			"compact_responses":            settings.CompactResponses,
+			"code_mode_max_output_bytes":   settings.CodeModeMaxOutputBytes,
+			"code_mode_max_heap_growth_mb": settings.CodeModeMaxHeapGrowthMB,
+			"mesh_receive_max_results":     settings.MeshReceiveMaxResults,
+			"mesh_receive_preview_bytes":   settings.MeshReceivePreviewBytes,
+			"mesh_send_max_content_bytes":  settings.MeshSendMaxContentBytes,
 		},
 	})
 }

@@ -25,6 +25,9 @@ func TestDefaultSettings_ContextCaps(t *testing.T) {
 	if s.CodeModeMaxOutputBytes != 24*1024 {
 		t.Fatalf("CodeModeMaxOutputBytes = %d, want %d", s.CodeModeMaxOutputBytes, 24*1024)
 	}
+	if s.CodeModeMaxHeapGrowthMB != 2048 {
+		t.Fatalf("CodeModeMaxHeapGrowthMB = %d, want 2048", s.CodeModeMaxHeapGrowthMB)
+	}
 	if s.MeshReceiveMaxResults != 20 {
 		t.Fatalf("MeshReceiveMaxResults = %d, want 20", s.MeshReceiveMaxResults)
 	}
@@ -45,6 +48,9 @@ func TestLoadSettings_MissingContextCapsUseDefaults(t *testing.T) {
 	got := svc.Load(context.Background())
 	if got.CodeModeMaxOutputBytes != 24*1024 {
 		t.Fatalf("CodeModeMaxOutputBytes = %d, want default", got.CodeModeMaxOutputBytes)
+	}
+	if got.CodeModeMaxHeapGrowthMB != 2048 {
+		t.Fatalf("CodeModeMaxHeapGrowthMB = %d, want default", got.CodeModeMaxHeapGrowthMB)
 	}
 	if got.MeshReceiveMaxResults != 20 {
 		t.Fatalf("MeshReceiveMaxResults = %d, want default", got.MeshReceiveMaxResults)
@@ -102,6 +108,17 @@ func TestSaveSettings_RejectsInvalidDisplayName(t *testing.T) {
 	err := svc.Save(context.Background(), bad)
 	if err == nil {
 		t.Fatal("Save should reject invalid display_name")
+	}
+}
+
+func TestSaveSettings_RejectsInvalidCodeModeHeapCap(t *testing.T) {
+	st := &mockSettingsStore{}
+	svc := NewSettingsService(st)
+	bad := DefaultSettings()
+	bad.CodeModeMaxHeapGrowthMB = 4096
+	err := svc.Save(context.Background(), bad)
+	if err == nil {
+		t.Fatal("Save should reject invalid code_mode_max_heap_growth_mb")
 	}
 }
 
@@ -216,6 +233,7 @@ func TestDefaultSettings_ToolHints_NoDeploymentLeak(t *testing.T) {
 
 func TestApplyEnvOverrides_ContextCaps(t *testing.T) {
 	t.Setenv("MCPLEXER_CODE_MODE_MAX_OUTPUT_BYTES", "4096")
+	t.Setenv("MCPLEXER_CODE_MODE_MAX_HEAP_GROWTH_MB", "768")
 	t.Setenv("MCPLEXER_MESH_RECEIVE_MAX_RESULTS", "7")
 	t.Setenv("MCPLEXER_MESH_RECEIVE_PREVIEW_BYTES", "128")
 	t.Setenv("MCPLEXER_MESH_SEND_MAX_CONTENT_BYTES", "8192")
@@ -223,6 +241,9 @@ func TestApplyEnvOverrides_ContextCaps(t *testing.T) {
 	got := applyEnvOverrides(DefaultSettings())
 	if got.CodeModeMaxOutputBytes != 4096 {
 		t.Fatalf("CodeModeMaxOutputBytes = %d, want 4096", got.CodeModeMaxOutputBytes)
+	}
+	if got.CodeModeMaxHeapGrowthMB != 768 {
+		t.Fatalf("CodeModeMaxHeapGrowthMB = %d, want 768", got.CodeModeMaxHeapGrowthMB)
 	}
 	if got.MeshReceiveMaxResults != 7 {
 		t.Fatalf("MeshReceiveMaxResults = %d, want 7", got.MeshReceiveMaxResults)

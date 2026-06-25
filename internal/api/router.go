@@ -581,6 +581,7 @@ func NewRouter(deps RouterDeps) http.Handler {
 		mux.HandleFunc("GET /api/v1/delegations", wh.listDelegations)
 		mux.HandleFunc("POST /api/v1/delegations", wh.createDelegation)
 		mux.HandleFunc("POST /api/v1/delegations/{id}/review", wh.reviewDelegation)
+		mux.HandleFunc("POST /api/v1/delegations/{id}/budget", wh.extendDelegationBudget)
 		mux.HandleFunc("GET /api/v1/workers", wh.list)
 		mux.HandleFunc("POST /api/v1/workers", wh.create)
 		// M2 — workspace-wide cost dashboard payload. Registered BEFORE

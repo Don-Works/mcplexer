@@ -291,6 +291,25 @@ func TestSandbox_MemoryLimit(t *testing.T) {
 	}
 }
 
+func TestSandbox_SetMaxHeapGrowthMBClamps(t *testing.T) {
+	sandbox := NewSandbox(newMockCaller(), 5*time.Second)
+
+	sandbox.SetMaxHeapGrowthMB(0)
+	if sandbox.maxHeapGrowthMB != DefaultMaxHeapGrowthMB {
+		t.Fatalf("zero heap cap = %d, want default %d", sandbox.maxHeapGrowthMB, DefaultMaxHeapGrowthMB)
+	}
+
+	sandbox.SetMaxHeapGrowthMB(64)
+	if sandbox.maxHeapGrowthMB != 64 {
+		t.Fatalf("heap cap = %d, want 64", sandbox.maxHeapGrowthMB)
+	}
+
+	sandbox.SetMaxHeapGrowthMB(HardMaxHeapGrowthMB + 1)
+	if sandbox.maxHeapGrowthMB != HardMaxHeapGrowthMB {
+		t.Fatalf("heap cap = %d, want hard max %d", sandbox.maxHeapGrowthMB, HardMaxHeapGrowthMB)
+	}
+}
+
 func TestSandbox_RecursionLimit(t *testing.T) {
 	caller := newMockCaller()
 	sandbox := NewSandbox(caller, 5*time.Second)

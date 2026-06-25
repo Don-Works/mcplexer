@@ -43,19 +43,21 @@ put heavier context in a `task__create` work context and pass the task ID.
 ## Delegation Lifecycle
 
 1. **Decompose.** Break the work into bounded slices the parent can hand off.
-2. **Delegate.** `mcpx__delegate_worker` with `review_required: true`. Prefer
-   mcplexer Workers on cheap code-cutter profiles over native Claude/Codex
-   subagents when cross-client pickup, audit, budgets, or provider routing
-   matter. For OpenCode-backed workers (MiniMax, GLM, OpenRouter), prefer a
-   local OpenCode server endpoint so parallel workers attach through one server.
+2. **Delegate.** `mcpx__delegate_worker`; set `review_required: true` only when
+   the parent review should gate completion. Prefer mcplexer Workers on cheap
+   code-cutter profiles over native Claude/Codex subagents when cross-client
+   pickup, audit, budgets, or provider routing matter. For OpenCode-backed
+   workers (MiniMax, GLM, OpenRouter), prefer a local OpenCode server endpoint
+   so parallel workers attach through one server.
 3. **Poll.** `mcpx__list_delegations` — watch status, tokens, cost, tool calls.
-4. **Review.** Inspect diffs, tests, worker report. Verify the worker's reported
-   branch/commit/worktree matches actual git state. Call `mcpx__review_delegation`
-   with a score (0–100). Score >=80 → accepted, 50–79 → partial, <50 → rejected.
-5. **Close.** Score every delegation in the same session that spawned it. Sweep
-   `mcpx__list_delegations` for `needs_review` rows before session end —
-   unreviewed delegations are the delegation-layer equivalent of skipping review
-   on a task. Resolve `delegation_reply` mesh messages after review.
+4. **Inspect.** Read the worker report and verify any reported branch, commit,
+   worktree, tests, or diffs before trusting the result.
+5. **Review when useful.** Call `mcpx__review_delegation` with a score (0–100)
+   when review was required or when the judgement should feed model ranking,
+   safety, merge readiness, or user-visible quality. Score >=80 → accepted,
+   50–79 → partial, <50 → rejected. Before session end, sweep
+   `mcpx__list_delegations` for rows still marked `needs_review` that you own.
+   Resolve `delegation_reply` mesh messages after handling the result.
 
 ## Worker Isolation
 

@@ -39,12 +39,13 @@ type Settings struct {
 	// via mcpx__search_tools, but doesn't pollute the agent's top-level
 	// tool inventory. Saves ~22k tokens of MCP-tool context per session.
 	// Set false (or MCPLEXER_SLIM_SURFACE=false) to advertise everything.
-	SlimSurface            bool   `json:"slim_surface"`
-	CompactResponses       bool   `json:"compact_responses"`
-	ToolsCacheTTLSec       int    `json:"tools_cache_ttl_sec"`
-	LogLevel               string `json:"log_level"`
-	CodeModeTimeoutSec     int    `json:"code_mode_timeout_sec"`
-	CodeModeMaxOutputBytes int    `json:"code_mode_max_output_bytes"`
+	SlimSurface             bool   `json:"slim_surface"`
+	CompactResponses        bool   `json:"compact_responses"`
+	ToolsCacheTTLSec        int    `json:"tools_cache_ttl_sec"`
+	LogLevel                string `json:"log_level"`
+	CodeModeTimeoutSec      int    `json:"code_mode_timeout_sec"`
+	CodeModeMaxOutputBytes  int    `json:"code_mode_max_output_bytes"`
+	CodeModeMaxHeapGrowthMB int    `json:"code_mode_max_heap_growth_mb"`
 	// CodeModeSessionStateMaxBytes caps the total serialized size of the
 	// ephemeral per-session `session` object that mcpx__execute_code snapshots
 	// and rehydrates between calls. Over-cap snapshots are not persisted (the
@@ -172,6 +173,7 @@ func DefaultSettings() Settings {
 		LogLevel:                     "info",
 		CodeModeTimeoutSec:           30,
 		CodeModeMaxOutputBytes:       24 * 1024,
+		CodeModeMaxHeapGrowthMB:      2048,
 		CodeModeSessionStateMaxBytes: 4 * 1024 * 1024,
 		MeshReceiveMaxResults:        20,
 		MeshReceivePreviewBytes:      512,
@@ -297,6 +299,9 @@ func (s *SettingsService) Load(ctx context.Context) Settings {
 	if settings.DelegationDisabledProviders == nil {
 		settings.DelegationDisabledProviders = map[string]bool{}
 	}
+	if settings.CodeModeMaxHeapGrowthMB <= 0 {
+		settings.CodeModeMaxHeapGrowthMB = DefaultSettings().CodeModeMaxHeapGrowthMB
+	}
 	// Legacy rows pre-display_name → fill from hostname so paired peers
 	// get something friendlier than "peer-Ymq…" without the user lifting
 	// a finger.
@@ -346,6 +351,9 @@ func validateSettings(s Settings) error {
 	}
 	if s.CodeModeMaxOutputBytes < 1024 || s.CodeModeMaxOutputBytes > 256*1024 {
 		return fmt.Errorf("code_mode_max_output_bytes must be between 1024 and 262144")
+	}
+	if s.CodeModeMaxHeapGrowthMB < 16 || s.CodeModeMaxHeapGrowthMB > 2048 {
+		return fmt.Errorf("code_mode_max_heap_growth_mb must be between 16 and 2048")
 	}
 	if s.CodeModeSessionStateMaxBytes < 1024 || s.CodeModeSessionStateMaxBytes > 64*1024*1024 {
 		return fmt.Errorf("code_mode_session_state_max_bytes must be between 1024 and 67108864")
@@ -432,6 +440,11 @@ func applyEnvOverrides(s Settings) Settings {
 	if v := os.Getenv("MCPLEXER_CODE_MODE_MAX_OUTPUT_BYTES"); v != "" {
 		if n, err := parsePositiveInt(v); err == nil {
 			s.CodeModeMaxOutputBytes = n
+		}
+	}
+	if v := os.Getenv("MCPLEXER_CODE_MODE_MAX_HEAP_GROWTH_MB"); v != "" {
+		if n, err := parsePositiveInt(v); err == nil {
+			s.CodeModeMaxHeapGrowthMB = n
 		}
 	}
 	if v := os.Getenv("MCPLEXER_CODE_MODE_SESSION_STATE_MAX_BYTES"); v != "" {

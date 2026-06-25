@@ -130,6 +130,7 @@ func (r *Runner) RunWithOpts(ctx context.Context, workerID string, opts RunOpts)
 	if err != nil {
 		return "", err
 	}
+	r.bindActiveRunState(runID, state)
 	// Seed correlation_id = run.ID for the remainder of this dispatch.
 	// Every downstream call (adapter Send, dispatcher, mesh emit,
 	// secrets read, output channels) inherits the same ID via ctx so
@@ -156,14 +157,14 @@ func (r *Runner) RunWithOpts(ctx context.Context, workerID string, opts RunOpts)
 	})
 	// Wall-clock budget is enforced two ways: a between-iteration check
 	// (`checkCaps`) using the injected r.clock so tests stay
-	// deterministic, AND a real-time deadline on ctx so a subprocess
-	// hung inside one adapter.Send call actually gets killed mid-iteration.
-	// errWallClockExceeded is attached via WithDeadlineCause so we can
-	// distinguish our cap firing from a parent ctx deadline.
-	ctx, cancelWallClock := context.WithDeadlineCause(
-		ctx, time.Now().Add(state.caps.MaxWallClock), errWallClockExceeded,
-	)
-	defer cancelWallClock()
+	// deterministic, AND a real-time watcher so a subprocess hung inside
+	// one adapter.Send call actually gets killed mid-iteration. The
+	// watcher re-reads the run's mutable caps so operators can extend a
+	// live delegation without restarting it.
+	ctx, cancelWallClock := context.WithCancelCause(ctx)
+	stopWallClock := r.startWallClockWatcher(ctx, state, cancelWallClock)
+	defer stopWallClock()
+	defer cancelWallClock(nil)
 	state.appendMeshID(r.emitStartedFromState(ctx, worker.ID, run.ID, worker.Name, state))
 	r.emitAuditRunStarted(ctx, worker.ID, run.ID, worker.Name)
 	var outcome loopOutcome
@@ -921,6 +922,17 @@ func (r *Runner) registerActiveRun(runID string, cancel context.CancelCauseFunc)
 	r.activeMu.Unlock()
 }
 
+func (r *Runner) bindActiveRunState(runID string, state *loopState) {
+	if r == nil || runID == "" || state == nil {
+		return
+	}
+	r.activeMu.Lock()
+	if ar, ok := r.activeRuns[runID]; ok && ar != nil {
+		ar.state = state
+	}
+	r.activeMu.Unlock()
+}
+
 // unregisterActiveRun removes the entry for a finished run. Safe for
 // unknown IDs and a nil receiver.
 func (r *Runner) unregisterActiveRun(runID string) {
@@ -963,6 +975,68 @@ func (r *Runner) Cancel(runID, reason string) bool {
 	// Leave the entry until the run's defer unregisters; a second Cancel
 	// is a no-op on the already-cancelled ctx.
 	return true
+}
+
+// RefreshRunCaps applies a freshly-persisted Worker cap configuration
+// to a live run. It only affects still-active runs; terminal/orphan rows
+// return false so callers know the persistent worker update was not
+// observed by an in-memory loop.
+func (r *Runner) RefreshRunCaps(runID string, worker *store.Worker) bool {
+	if r == nil || runID == "" || worker == nil {
+		return false
+	}
+	r.activeMu.Lock()
+	ar, ok := r.activeRuns[runID]
+	var state *loopState
+	if ok && ar != nil {
+		state = ar.state
+	}
+	r.activeMu.Unlock()
+	if state == nil {
+		return false
+	}
+	caps, lifetimeOutputCap := mergeWorkerCaps(r.caps.applyDefaults(), worker)
+	state.updateCaps(caps, lifetimeOutputCap)
+	return true
+}
+
+func (r *Runner) startWallClockWatcher(
+	ctx context.Context,
+	state *loopState,
+	cancel context.CancelCauseFunc,
+) func() {
+	stop := make(chan struct{})
+	go func() {
+		for {
+			caps := state.capsSnapshot()
+			remaining := caps.MaxWallClock - r.clock.Now().Sub(state.startedAt)
+			if remaining <= 0 {
+				cancel(errWallClockExceeded)
+				return
+			}
+			wait := remaining
+			if wait > time.Second {
+				wait = time.Second
+			}
+			timer := time.NewTimer(wait)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return
+			case <-stop:
+				timer.Stop()
+				return
+			case <-timer.C:
+			}
+		}
+	}()
+	return func() {
+		select {
+		case <-stop:
+		default:
+			close(stop)
+		}
+	}
 }
 
 // operatorCancelReason returns the human-readable cancel message stored

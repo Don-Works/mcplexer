@@ -49,6 +49,9 @@ func (h *handler) handleBuiltinCall(
 	case "mcpx__list_delegations":
 		return h.handleListDelegations(ctx, req.Arguments)
 
+	case "mcpx__extend_delegation_budget":
+		return h.handleExtendDelegationBudget(ctx, req.Arguments)
+
 	case "mcpx__invoke_model":
 		return h.handleInvokeModel(ctx, req.Arguments)
 

@@ -1,5 +1,5 @@
 import { useWorkersRealtime } from '@/pages/workers/use-workers-realtime'
-import { liveDelegationWorkers, liveDurableWorkers } from '@/pages/workers/worker-utils'
+import { liveDelegationCount, liveDurableWorkers } from '@/pages/workers/worker-utils'
 
 // useWorkerLiveCount / useActiveWorkers derive sidebar state from the shared
 // realtime Workers snapshot. The snapshot is seeded by /workers and updated
@@ -14,5 +14,5 @@ export function useActiveWorkers() {
 }
 
 export function useLiveDelegationCount(): number {
-  return liveDelegationWorkers(useWorkersRealtime().rows).length
+  return liveDelegationCount(useWorkersRealtime().rows)
 }
