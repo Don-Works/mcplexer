@@ -373,11 +373,11 @@ export function DelegationsPage() {
     [delegations, analysisPeriod],
   )
   const liveDelegations = useMemo(
-    () => (delegations ?? []).filter(delegationIsRunning),
+    () => (delegations ?? []).filter(delegationIsLive),
     [delegations],
   )
   const historicalBaseDelegations = useMemo(
-    () => filterDelegationsBySearch(periodDelegations.filter((d) => !delegationIsRunning(d)), historyQuery),
+    () => filterDelegationsBySearch(periodDelegations.filter((d) => !delegationIsLive(d)), historyQuery),
     [periodDelegations, historyQuery],
   )
   const summary = useMemo(() => summariseDelegations(periodDelegations), [periodDelegations])
@@ -1332,7 +1332,7 @@ function LiveDelegationsPanel({
     <section className="space-y-2 border border-border bg-card/30 px-3 py-2.5">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 className="flex items-center gap-1.5 text-[12px] font-semibold uppercase tracking-wider text-muted-foreground">
-          <Activity className="h-3.5 w-3.5 text-sky-300" /> Live running
+          <Activity className="h-3.5 w-3.5 text-sky-300" /> Live delegations
         </h2>
         <Badge variant="outline" className={cn('text-[10px] uppercase', rows.length > 0 && 'border-sky-500/40 text-sky-300')}>
           {rows.length} active
@@ -1340,7 +1340,7 @@ function LiveDelegationsPanel({
       </div>
       {rows.length === 0 ? (
         <div className="border border-border/60 bg-background/50 px-3 py-2 text-xs text-muted-foreground">
-          No delegated runs are currently active.
+          No delegations are currently dispatched or running.
         </div>
       ) : (
         <div className="space-y-1.5">
@@ -2422,6 +2422,10 @@ function delegationNeedsReview(d: DelegationContext) {
 
 function delegationIsRunning(d: DelegationContext) {
   return d.status === 'running' || (d.aggregate?.running || 0) > 0
+}
+
+function delegationIsLive(d: DelegationContext) {
+  return delegationIsRunning(d) || d.status === 'dispatched' || (d.aggregate?.dispatched || 0) > 0
 }
 
 function delegationSucceeded(d: DelegationContext) {

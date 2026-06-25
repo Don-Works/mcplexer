@@ -21,7 +21,7 @@ import {
   Sparkles,
   Wrench,
 } from 'lucide-react'
-import { useActiveWorkers, useWorkerLiveCount } from './use-worker-live-count'
+import { useActiveWorkers, useLiveDelegationCount, useWorkerLiveCount } from './use-worker-live-count'
 import { useWorkerApprovalCount } from './use-worker-approval-count'
 import { useMemoryCounts } from './use-memory-counts'
 import { useTaskOffersCount } from './use-task-offers-count'
@@ -81,9 +81,9 @@ const setupNav: NavItem[] = [
 // Workspaces: the primary access-control concept. Clicking into a workspace
 // shows servers, routes, memory scope, and tasks scoped to it.
 const workspaceNav: NavItem[] = [
-  { label: 'Workspace access', href: '/workspaces', icon: <Layers className="h-4 w-4" />, hint: 'Control what AI can use in each workspace folder' },
+  { label: 'Workspaces', href: '/workspaces', icon: <Layers className="h-4 w-4" />, hint: 'Control what AI can use in each workspace folder' },
   { label: 'Routing rules', href: '/workspaces/routes', icon: <RouteIcon className="h-4 w-4" />, hint: 'Create, order, and reload workspace route rules' },
-  { label: 'Workspace settings', href: '/workspaces/manage', icon: <FolderOpen className="h-4 w-4" />, hint: 'Create workspaces and edit root paths and default policy' },
+  { label: 'Settings', href: '/workspaces/manage', icon: <FolderOpen className="h-4 w-4" />, hint: 'Create workspaces and edit root paths and default policy' },
 ]
 
 const monitorNav: NavItem[] = [
@@ -291,7 +291,7 @@ function McplexerLogo({ className }: { className?: string }) {
 
 function BrandHeader() {
   return (
-    <div className="flex h-14 items-center gap-2.5 border-b border-sidebar-border px-4">
+    <div className="flex h-14 shrink-0 items-center gap-2.5 border-b border-sidebar-border px-4">
       <span className="relative inline-flex items-center justify-center">
         <McplexerLogo className="relative z-10 h-5 w-5 text-primary" />
         <span className="absolute inset-0 bg-primary/20 blur-md" aria-hidden="true" />
@@ -336,7 +336,7 @@ function StatusBar() {
   }
 
   return (
-    <div className="min-w-0 overflow-hidden border-t border-sidebar-border px-4 py-3 space-y-1">
+    <div className="min-w-0 shrink-0 overflow-hidden border-t border-sidebar-border px-4 py-3 space-y-1">
       <div className="flex min-w-0 items-center gap-2 text-[11px] text-muted-foreground">
         <span className="h-2 w-2 shrink-0 rounded-full bg-emerald-500" />
         <span className="capitalize">{daemonLabel}</span>
@@ -414,6 +414,7 @@ function FullSidebarNav({ onNavigate }: { onNavigate?: () => void }) {
   // entry — humans want to see "is anything running right now?" at a
   // glance without opening the page.
   const workerLive = useWorkerLiveCount()
+  const delegationLive = useLiveDelegationCount()
   // Pending propose-mode approvals → red dot. Same 5s poll as live count.
   const workerApprovals = useWorkerApprovalCount()
   // Pending tool-call approvals — feeds the Runtime > Approvals warn badge.
@@ -440,6 +441,9 @@ function FullSidebarNav({ onNavigate }: { onNavigate?: () => void }) {
   const automationNav: NavItem[] = automationNavBase.map((item) => {
     if (item.href === '/workers') {
       return { ...item, liveBadge: workerLive, alertBadge: workerApprovals }
+    }
+    if (item.href === '/delegations') {
+      return { ...item, liveBadge: delegationLive }
     }
     return item
   })
@@ -610,7 +614,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
     <DangerousModeProvider>
       <div className="flex h-[100dvh] min-h-[100dvh] overflow-hidden [padding-left:env(safe-area-inset-left)] [padding-right:env(safe-area-inset-right)] [padding-top:env(safe-area-inset-top)]">
         {/* Desktop sidebar */}
-        <aside className="hidden w-56 flex-col border-r border-sidebar-border bg-sidebar-background md:flex overflow-y-auto">
+        <aside className="hidden w-56 flex-col overflow-hidden border-r border-sidebar-border bg-sidebar-background md:flex">
           <BrandHeader />
           <SidebarNav />
           <StatusBar />
@@ -618,7 +622,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
 
         {/* Mobile sheet */}
         <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
-          <SheetContent side="left" className="w-72 max-w-[calc(100vw-1rem)] gap-0 bg-sidebar-background p-0 sm:w-80 md:w-56" aria-describedby={undefined}>
+          <SheetContent side="left" className="flex w-72 max-w-[calc(100vw-1rem)] flex-col overflow-hidden gap-0 bg-sidebar-background p-0 sm:w-80 md:w-56" aria-describedby={undefined}>
             <SheetTitle className="sr-only">Navigation</SheetTitle>
             <BrandHeader />
             <SidebarNav onNavigate={() => setMobileOpen(false)} />

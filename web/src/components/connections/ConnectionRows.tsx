@@ -1,6 +1,8 @@
 import {
   AlertTriangle,
   CheckCircle2,
+  ChevronDown,
+  ChevronRight,
   KeyRound,
   Plus,
   ShieldOff,
@@ -14,22 +16,50 @@ export function ConnectionSection({
   title,
   rows,
   onOpen,
+  collapsible = false,
+  open = true,
+  onOpenChange,
 }: {
   title: string
   rows: WorkspaceConnectionRow[]
   onOpen: (row: WorkspaceConnectionRow) => void
+  collapsible?: boolean
+  open?: boolean
+  onOpenChange?: (open: boolean) => void
 }) {
+  const expanded = !collapsible || open
   return (
     <section className="rounded-md border border-border/50 bg-card/20">
-      <div className="flex items-center justify-between border-b border-border/50 px-3 py-2">
-        <h3 className="text-sm font-semibold">{title}</h3>
-        <span className="text-xs text-muted-foreground">{rows.length}</span>
-      </div>
-      <div className="divide-y divide-border/50">
-        {rows.map((row) => (
-          <ConnectionRowButton key={row.server.id} row={row} onOpen={() => onOpen(row)} />
-        ))}
-      </div>
+      {collapsible ? (
+        <button
+          type="button"
+          onClick={() => onOpenChange?.(!expanded)}
+          aria-expanded={expanded}
+          className="flex w-full items-center justify-between border-b border-border/50 px-3 py-2 text-left transition-colors hover:bg-muted/20 focus:outline-none focus:ring-1 focus:ring-primary/60"
+        >
+          <span className="inline-flex items-center gap-2">
+            {expanded ? (
+              <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+            ) : (
+              <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
+            )}
+            <span className="text-sm font-semibold">{title}</span>
+          </span>
+          <span className="text-xs text-muted-foreground">{rows.length}</span>
+        </button>
+      ) : (
+        <div className="flex items-center justify-between border-b border-border/50 px-3 py-2">
+          <h3 className="text-sm font-semibold">{title}</h3>
+          <span className="text-xs text-muted-foreground">{rows.length}</span>
+        </div>
+      )}
+      {expanded && (
+        <div className="divide-y divide-border/50">
+          {rows.map((row) => (
+            <ConnectionRowButton key={row.server.id} row={row} onOpen={() => onOpen(row)} />
+          ))}
+        </div>
+      )}
     </section>
   )
 }

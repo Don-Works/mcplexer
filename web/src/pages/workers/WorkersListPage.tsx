@@ -45,6 +45,7 @@ import {
 import { listWorkspaces } from '@/api/client'
 import {
   humanizeSchedule,
+  durableWorkers,
   isTriggerOnlySchedule,
   relativeTime,
   statusBadgeClass,
@@ -52,7 +53,7 @@ import {
 } from './worker-utils'
 import { useCountdown } from './use-countdown'
 import { useWorkersRealtime } from './use-workers-realtime'
-import { EphemeralWorkersPanel, WorkersRealtimeSummary } from './WorkersRealtimePanels'
+import { WorkersRealtimeSummary } from './WorkersRealtimePanels'
 
 type Filter = 'all' | 'running' | 'failed' | 'paused' | 'never'
 type GroupMode = 'workspace' | 'flat'
@@ -116,15 +117,10 @@ export function WorkersListPage() {
     await withRow(row.id, () => runWorkerNow(row.id), `Run started for ${row.name}`)
   }
 
-  const configuredRows = useMemo(() => rows.filter((r) => !r.ephemeral), [rows])
-  const ephemeralRows = useMemo(() => sortEphemeralRows(rows.filter((r) => r.ephemeral)), [rows])
+  const configuredRows = useMemo(() => durableWorkers(rows), [rows])
   const searchedConfigured = useMemo(
     () => searchRows(configuredRows, query),
     [configuredRows, query],
-  )
-  const searchedEphemeral = useMemo(
-    () => searchRows(ephemeralRows, query),
-    [ephemeralRows, query],
   )
   const counts = useMemo(() => computeCounts(searchedConfigured), [searchedConfigured])
   const filtered = useMemo(() => filterRows(searchedConfigured, filter), [searchedConfigured, filter])
@@ -194,9 +190,7 @@ export function WorkersListPage() {
       </header>
 
       <WorkersRealtimeSummary
-        rows={rows}
         configuredRows={configuredRows}
-        ephemeralRows={ephemeralRows}
         connected={connected}
         lastEventAt={lastEventAt}
         lastRefreshAt={lastRefreshAt}
@@ -204,14 +198,14 @@ export function WorkersListPage() {
 
       {error && <ErrorBlock message={error} onRetry={refetch} />}
 
-      {rows.length > 0 && (
+      {configuredRows.length > 0 && (
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="relative min-w-64 flex-1 sm:max-w-sm">
             <Search className="pointer-events-none absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground/70" />
             <Input
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search scheduled workers and one-shot runs"
+              placeholder="Search scheduled workers"
               className="pl-8"
               data-testid="workers-search"
             />
@@ -221,10 +215,6 @@ export function WorkersListPage() {
             <GroupToggle mode={groupMode} setMode={setGroupModeExplicit} />
           )}
         </div>
-      )}
-
-      {searchedEphemeral.length > 0 && (
-        <EphemeralWorkersPanel rows={searchedEphemeral} total={ephemeralRows.length} />
       )}
 
       {loading && rows.length === 0 ? (
@@ -314,24 +304,6 @@ function searchRows(rows: WorkerSummary[], query: string): WorkerSummary[] {
       .toLowerCase()
     return haystack.includes(q)
   })
-}
-
-function sortEphemeralRows(rows: WorkerSummary[]): WorkerSummary[] {
-  return [...rows].sort((a, b) => {
-    const ar = a.last_run_status === 'running' ? 1 : 0
-    const br = b.last_run_status === 'running' ? 1 : 0
-    if (ar !== br) return br - ar
-    const at = latestWorkerTime(a)
-    const bt = latestWorkerTime(b)
-    if (at !== bt) return bt - at
-    return a.name.localeCompare(b.name)
-  })
-}
-
-function latestWorkerTime(row: WorkerSummary): number {
-  const iso = row.last_run_at || row.created_at
-  const t = iso ? new Date(iso).getTime() : 0
-  return Number.isNaN(t) ? 0 : t
 }
 
 interface GroupToggleProps {

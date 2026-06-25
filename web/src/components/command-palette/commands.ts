@@ -41,7 +41,7 @@ const PAGES: CommandEntry[] = [
   { id: 'page-dashboard', label: 'Dashboard', to: '/', keywords: 'home overview monitor', icon: createElement(LayoutDashboard, { className: iconClass }) },
   { id: 'page-harnesses', label: 'AI Harnesses', to: '/harness-setup', keywords: 'wire mcp ide claude cursor codex opencode gemini mimo pi harness bootstrap setup', icon: createElement(Wrench, { className: iconClass }) },
   { id: 'page-setup', label: 'Add integration', to: '/setup', keywords: 'quick setup add server service tool github linear postgres clickup', icon: createElement(Sparkles, { className: iconClass }) },
-  { id: 'page-workspaces', label: 'Workspace access', to: '/workspaces', keywords: 'workspace project folder routes servers policy access', icon: createElement(Layers, { className: iconClass }) },
+  { id: 'page-workspaces', label: 'Workspaces', to: '/workspaces', keywords: 'workspace project folder routes servers policy access', icon: createElement(Layers, { className: iconClass }) },
   { id: 'page-workspace-routes', label: 'Routing rules', to: '/workspaces/routes', keywords: 'route routing rules policy match workspace server access', icon: createElement(Wrench, { className: iconClass }) },
   { id: 'page-signals', label: 'Notifications', to: '/signals', keywords: 'signal notifications log feed alert', icon: createElement(Bell, { className: iconClass }) },
   { id: 'page-approvals', label: 'Approvals', to: '/approvals', keywords: 'approve deny pending wait inbox', icon: createElement(ShieldCheck, { className: iconClass }) },
@@ -81,7 +81,7 @@ const CONFIG_TABS: CommandEntry[] = [
   { id: 'config-servers', label: 'Workspace servers', to: '/workspaces', keywords: 'server downstream mcp config workspace access', icon: createElement(Server, { className: iconClass }), hint: 'workspace' },
   { id: 'config-routes', label: 'Routing rules', to: '/workspaces/routes', keywords: 'rule route routing policy match config workspace', icon: createElement(Wrench, { className: iconClass }), hint: 'workspace' },
   { id: 'config-credentials', label: 'Credentials', to: '/advanced/credentials', keywords: 'auth scope secret api config advanced', icon: createElement(Lock, { className: iconClass }), hint: 'advanced' },
-  { id: 'config-workspaces', label: 'Workspace settings', to: '/workspaces/manage', keywords: 'project root folder policy config', icon: createElement(Globe, { className: iconClass }), hint: 'workspace' },
+  { id: 'config-workspaces', label: 'Settings', to: '/workspaces/manage', keywords: 'workspace settings project root folder policy config', icon: createElement(Globe, { className: iconClass }), hint: 'workspace' },
   { id: 'config-oauth', label: 'OAuth providers', to: '/advanced/oauth-providers', keywords: 'provider token config advanced', icon: createElement(KeyRound, { className: iconClass }), hint: 'advanced' },
   { id: 'config-descriptions', label: 'Tool descriptions', to: '/advanced/descriptions', keywords: 'description override config advanced', icon: createElement(FileText, { className: iconClass }), hint: 'advanced' },
 ]
