@@ -50,6 +50,49 @@ func countLedgerRows(t *testing.T, db *sql.DB, version int) int {
 	return n
 }
 
+type ledgerTestRow struct {
+	version  int
+	filename string
+	checksum string
+}
+
+func firstLedgerTestRow(t *testing.T, db *sql.DB) ledgerTestRow {
+	t.Helper()
+	var row ledgerTestRow
+	if err := db.QueryRow(`
+		SELECT version, filename, checksum
+		  FROM applied_migrations
+		 ORDER BY version ASC
+		 LIMIT 1`,
+	).Scan(&row.version, &row.filename, &row.checksum); err != nil {
+		t.Fatalf("read first ledger row: %v", err)
+	}
+	return row
+}
+
+func ledgerChecksums(t *testing.T, db *sql.DB) map[int]string {
+	t.Helper()
+	rows, err := db.Query(`SELECT version, checksum FROM applied_migrations ORDER BY version ASC`)
+	if err != nil {
+		t.Fatalf("read ledger checksums: %v", err)
+	}
+	defer rows.Close() //nolint:errcheck
+
+	out := make(map[int]string)
+	for rows.Next() {
+		var version int
+		var checksum string
+		if err := rows.Scan(&version, &checksum); err != nil {
+			t.Fatalf("scan ledger checksum: %v", err)
+		}
+		out[version] = checksum
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate ledger checksums: %v", err)
+	}
+	return out
+}
+
 // TestLedgerHealthyDB — running migrate() on a fresh DB must leave
 // the ledger in a state where verifyLedger() reports no issues.
 func TestLedgerHealthyDB(t *testing.T) {
@@ -282,6 +325,142 @@ func TestLedgerChecksumMismatch(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("expected checksum_mismatch issue, got %+v", issues)
+	}
+}
+
+func TestRehashMigrationLedgerDryRunIsReadOnly(t *testing.T) {
+	t.Parallel()
+	db := openLedgerTestDB(t)
+	ctx := context.Background()
+	row := firstLedgerTestRow(t, db)
+
+	if _, err := db.ExecContext(ctx,
+		`UPDATE applied_migrations SET checksum = 'deadbeef' WHERE version = ?`,
+		row.version,
+	); err != nil {
+		t.Fatalf("tamper checksum: %v", err)
+	}
+
+	report, err := RehashMigrationLedger(ctx, db, LedgerRehashOptions{DryRun: true})
+	if err != nil {
+		t.Fatalf("RehashMigrationLedger dry-run: %v", err)
+	}
+	if len(report.Rows) != 1 {
+		t.Fatalf("expected 1 rehash row, got %+v", report.Rows)
+	}
+	if report.Rows[0].Updated {
+		t.Fatal("dry-run marked row as updated")
+	}
+	if report.Rows[0].RecordedChecksum != "deadbeef" {
+		t.Fatalf("recorded checksum = %q, want deadbeef", report.Rows[0].RecordedChecksum)
+	}
+
+	got := firstLedgerTestRow(t, db)
+	if got.checksum != "deadbeef" {
+		t.Fatalf("dry-run mutated checksum to %q", got.checksum)
+	}
+}
+
+func TestRehashMigrationLedgerOnlyTouchesMismatches(t *testing.T) {
+	t.Parallel()
+	db := openLedgerTestDB(t)
+	ctx := context.Background()
+	row := firstLedgerTestRow(t, db)
+
+	if _, err := db.ExecContext(ctx,
+		`UPDATE applied_migrations SET checksum = 'deadbeef' WHERE version = ?`,
+		row.version,
+	); err != nil {
+		t.Fatalf("tamper checksum: %v", err)
+	}
+	before := ledgerChecksums(t, db)
+
+	report, err := RehashMigrationLedger(ctx, db, LedgerRehashOptions{})
+	if err != nil {
+		t.Fatalf("RehashMigrationLedger: %v", err)
+	}
+	if len(report.Rows) != 1 {
+		t.Fatalf("expected 1 rehash row, got %+v", report.Rows)
+	}
+	if !report.Rows[0].Updated {
+		t.Fatal("expected mismatched row to be marked updated")
+	}
+
+	after := ledgerChecksums(t, db)
+	for version, beforeChecksum := range before {
+		if version == row.version {
+			continue
+		}
+		if after[version] != beforeChecksum {
+			t.Fatalf("version %d changed unexpectedly: %s -> %s",
+				version, beforeChecksum, after[version])
+		}
+	}
+	want, err := computeMigrationChecksum(row.filename)
+	if err != nil {
+		t.Fatalf("compute checksum: %v", err)
+	}
+	if after[row.version] != want {
+		t.Fatalf("repaired checksum = %s, want %s", after[row.version], want)
+	}
+}
+
+func TestRehashMigrationLedgerIdempotent(t *testing.T) {
+	t.Parallel()
+	db := openLedgerTestDB(t)
+	ctx := context.Background()
+	row := firstLedgerTestRow(t, db)
+
+	if _, err := db.ExecContext(ctx,
+		`UPDATE applied_migrations SET checksum = 'deadbeef' WHERE version = ?`,
+		row.version,
+	); err != nil {
+		t.Fatalf("tamper checksum: %v", err)
+	}
+
+	first, err := RehashMigrationLedger(ctx, db, LedgerRehashOptions{})
+	if err != nil {
+		t.Fatalf("first RehashMigrationLedger: %v", err)
+	}
+	if len(first.Rows) != 1 {
+		t.Fatalf("expected first run to repair 1 row, got %+v", first.Rows)
+	}
+
+	second, err := RehashMigrationLedger(ctx, db, LedgerRehashOptions{})
+	if err != nil {
+		t.Fatalf("second RehashMigrationLedger: %v", err)
+	}
+	if len(second.Rows) != 0 {
+		t.Fatalf("expected second run to be clean, got %+v", second.Rows)
+	}
+}
+
+func TestRehashMigrationLedgerClearsVerifyIssues(t *testing.T) {
+	t.Parallel()
+	db := openLedgerTestDB(t)
+	ctx := context.Background()
+	row := firstLedgerTestRow(t, db)
+
+	if _, err := db.ExecContext(ctx,
+		`UPDATE applied_migrations SET checksum = 'deadbeef' WHERE version = ?`,
+		row.version,
+	); err != nil {
+		t.Fatalf("tamper checksum: %v", err)
+	}
+	issues, err := verifyLedger(ctx, db)
+	if err != nil {
+		t.Fatalf("verify before rehash: %v", err)
+	}
+	if len(issues) == 0 {
+		t.Fatal("expected checksum mismatch before rehash")
+	}
+
+	report, err := RehashMigrationLedger(ctx, db, LedgerRehashOptions{})
+	if err != nil {
+		t.Fatalf("RehashMigrationLedger: %v", err)
+	}
+	if len(report.VerifyIssues) != 0 {
+		t.Fatalf("expected clean ledger after rehash, got %+v", report.VerifyIssues)
 	}
 }
 

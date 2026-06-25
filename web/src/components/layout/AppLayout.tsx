@@ -81,9 +81,9 @@ const setupNav: NavItem[] = [
 // Workspaces: the primary access-control concept. Clicking into a workspace
 // shows servers, routes, memory scope, and tasks scoped to it.
 const workspaceNav: NavItem[] = [
-  { label: 'Workspace access', href: '/workspaces', icon: <Layers className="h-4 w-4" />, hint: 'Control what AI can use in each workspace folder' },
-  { label: 'Routing rules', href: '/workspaces/routes', icon: <RouteIcon className="h-4 w-4" />, hint: 'Create, order, and reload workspace route rules' },
-  { label: 'Workspace settings', href: '/workspaces/manage', icon: <FolderOpen className="h-4 w-4" />, hint: 'Create workspaces and edit root paths and default policy' },
+  { label: 'Command center', href: '/workspaces', icon: <Layers className="h-4 w-4" />, hint: 'Start from a workspace: access, routes, actions, agents, and knowledge' },
+  { label: 'Server access', href: '/workspaces/routes', icon: <RouteIcon className="h-4 w-4" />, hint: 'Choose which servers, credentials, approvals, and matching rules each workspace can use' },
+  { label: 'Workspace setup', href: '/workspaces/manage', icon: <FolderOpen className="h-4 w-4" />, hint: 'Create workspace records and edit root paths, tags, and default policy' },
 ]
 
 const monitorNav: NavItem[] = [
@@ -108,6 +108,7 @@ const workersNavBase: NavItem = {
 }
 
 const automationNavBase: NavItem[] = [
+  { label: 'Tasks', href: '/tasks', icon: <ListTodo className="h-4 w-4" />, hint: 'Operational work items per workspace; agents create them, you triage' },
   workersNavBase,
   { label: 'Delegations', href: '/delegations', icon: <GitBranch className="h-4 w-4" />, hint: 'Parent and worker context trees with token savings and review scores' },
 ]
@@ -121,7 +122,6 @@ const brainNav: NavItem[] = [
 
 const knowledgeNavBase: NavItem[] = [
   { label: 'Memory', href: '/memory', icon: <Brain className="h-4 w-4" />, hint: 'Cross-harness facts and notes your agents have learned; share with peers' },
-  { label: 'Tasks', href: '/tasks', icon: <ListTodo className="h-4 w-4" />, hint: 'Operational work items per workspace; agents create them, you triage' },
   { label: 'Skills', href: '/skills', icon: <Sparkles className="h-4 w-4" />, hint: 'Shared library of reusable agent instructions' },
 ]
 
@@ -438,6 +438,9 @@ function FullSidebarNav({ onNavigate }: { onNavigate?: () => void }) {
   })
 
   const automationNav: NavItem[] = automationNavBase.map((item) => {
+    if (item.href === '/tasks') {
+      return { ...item, infoBadge: taskOffersPending }
+    }
     if (item.href === '/workers') {
       return { ...item, liveBadge: workerLive, alertBadge: workerApprovals }
     }
@@ -451,9 +454,6 @@ function FullSidebarNav({ onNavigate }: { onNavigate?: () => void }) {
     if (item.href === '/memory') {
       return { ...item, infoBadge: memoryCounts.pendingOffers }
     }
-    if (item.href === '/tasks') {
-      return { ...item, infoBadge: taskOffersPending }
-    }
     return item
   })
 
@@ -464,23 +464,8 @@ function FullSidebarNav({ onNavigate }: { onNavigate?: () => void }) {
       </div>
 
       <div className="pt-3">
-        <SectionLabel>Setup</SectionLabel>
-        {setupNav.map((item) => (
-          <NavLink key={item.href} item={item} onNavigate={onNavigate} />
-        ))}
-        <ConfigureWithAI className="mx-4 mt-2" />
-      </div>
-
-      <div className="pt-3">
         <SectionLabel>Workspace</SectionLabel>
         {workspaceNav.map((item) => (
-          <NavLink key={item.href} item={item} onNavigate={onNavigate} />
-        ))}
-      </div>
-
-      <div className="pt-3">
-        <SectionLabel>Monitor</SectionLabel>
-        {monitorNav.map((item) => (
           <NavLink key={item.href} item={item} onNavigate={onNavigate} />
         ))}
       </div>
@@ -493,8 +478,15 @@ function FullSidebarNav({ onNavigate }: { onNavigate?: () => void }) {
       </div>
 
       <div className="pt-3">
-        <SectionLabel>Automation</SectionLabel>
+        <SectionLabel>Work</SectionLabel>
         {automationNav.map((item) => (
+          <NavLink key={item.href} item={item} onNavigate={onNavigate} />
+        ))}
+      </div>
+
+      <div className="pt-3">
+        <SectionLabel>Monitor</SectionLabel>
+        {monitorNav.map((item) => (
           <NavLink key={item.href} item={item} onNavigate={onNavigate} />
         ))}
       </div>
@@ -511,6 +503,14 @@ function FullSidebarNav({ onNavigate }: { onNavigate?: () => void }) {
         {networkNav.map((item) => (
           <NavLink key={item.href} item={item} onNavigate={onNavigate} />
         ))}
+      </div>
+
+      <div className="pt-3">
+        <SectionLabel>Setup</SectionLabel>
+        {setupNav.map((item) => (
+          <NavLink key={item.href} item={item} onNavigate={onNavigate} />
+        ))}
+        <ConfigureWithAI className="mx-4 mt-2" />
       </div>
 
       <div className="pt-3">

@@ -207,11 +207,11 @@ function buildItems(i: AttentionInput): AttentionItem[] {
       icon: <LayoutGrid className="h-3.5 w-3.5" />,
       label: (
         <>
-          <strong className="font-medium">{noRoutesCount}</strong> workspace{noRoutesCount !== 1 ? 's' : ''} {noRoutesCount === 1 ? 'has' : 'have'} no routes
+          <strong className="font-medium">{noRoutesCount}</strong> workspace{noRoutesCount !== 1 ? 's' : ''} {noRoutesCount === 1 ? 'has' : 'have'} no server access
         </>
       ),
       to,
-      cta: 'Wire up',
+      cta: 'Connect',
     })
   }
   const unreviewed = i.unreviewedDelegations ?? 0

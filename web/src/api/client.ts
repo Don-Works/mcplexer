@@ -120,8 +120,8 @@ export async function request<T>(
 }
 
 // Workspaces
-export function listWorkspaces(): Promise<Workspace[]> {
-  return request('/workspaces')
+export function listWorkspaces(init?: RequestInit): Promise<Workspace[]> {
+  return request('/workspaces', init)
 }
 
 export function getWorkspace(id: string): Promise<Workspace> {
@@ -216,8 +216,8 @@ export function getUser(id: string): Promise<UserWithPeers> {
 }
 
 // Auth Scopes
-export function listAuthScopes(): Promise<AuthScope[]> {
-  return request('/auth-scopes')
+export function listAuthScopes(init?: RequestInit): Promise<AuthScope[]> {
+  return request('/auth-scopes', init)
 }
 
 export function getAuthScope(id: string): Promise<AuthScope> {
@@ -344,8 +344,8 @@ export function fetchCatalog(): Promise<CatalogResponse> {
 }
 
 // Downstream Servers
-export function listDownstreams(): Promise<DownstreamServer[]> {
-  return request('/downstreams')
+export function listDownstreams(init?: RequestInit): Promise<DownstreamServer[]> {
+  return request('/downstreams', init)
 }
 
 export function getDownstream(id: string): Promise<DownstreamServer> {
@@ -376,8 +376,8 @@ export function deleteDownstream(id: string): Promise<void> {
 }
 
 // Route Rules
-export function listRoutes(): Promise<RouteRule[]> {
-  return request('/routes')
+export function listRoutes(init?: RequestInit): Promise<RouteRule[]> {
+  return request('/routes', init)
 }
 
 export function getRoute(id: string): Promise<RouteRule> {

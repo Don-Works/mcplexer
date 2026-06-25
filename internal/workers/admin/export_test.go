@@ -135,6 +135,18 @@ func ExplorationStateForTest(runs, success, operationalFailures int) (underSampl
 	return r.underSampled(), r.explorationThrashed()
 }
 
+// OperationalQuarantinedForTest exposes the capacity circuit breaker for
+// focused tests.
+func OperationalQuarantinedForTest(runs, success, failure, operationalFailures int) bool {
+	r := delegationCandidateRank{
+		runs:                runs,
+		success:             success,
+		failure:             failure,
+		operationalFailures: operationalFailures,
+	}
+	return r.operationalQuarantined()
+}
+
 // CapacityScoreWithReliabilityForTest exposes capacity scoring with the
 // operational-failure and running counters set, so anti-thrash and
 // broken-model demotion can be table-tested directly against the score.

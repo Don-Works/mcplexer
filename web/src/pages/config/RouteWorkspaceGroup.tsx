@@ -109,7 +109,7 @@ export function RouteWorkspaceGroup({
           {rules.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-8 text-muted-foreground">
               <Server className="mb-2 h-8 w-8 text-muted-foreground/50" />
-              <p className="text-sm">No route rules</p>
+              <p className="text-sm">No access rules</p>
               <button onClick={onEnableServers} className="text-xs text-primary hover:underline">
                 Click Enable Servers to get started
               </button>
@@ -217,7 +217,7 @@ export function RouteWorkspaceGroup({
               <div className="mt-3 flex justify-end">
                 <Button variant="ghost" size="sm" onClick={onAddRule}>
                   <Plus className="mr-1.5 h-3.5 w-3.5" />
-                  Add Rule
+                  Add access rule
                 </Button>
               </div>
             </>

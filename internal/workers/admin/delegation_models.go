@@ -46,6 +46,13 @@ const (
 	// genuinely-broken model (e.g. the mimo 400 "Not supported model"
 	// dispatch deaths) stops being force-explored forever.
 	explorationFailureCutoff = 3
+	// operationalQuarantineFailureCutoff is the hard capacity circuit breaker.
+	// Anti-thrash handles "never succeeded" models; this handles mostly-bad
+	// transports with occasional successes (the shape that keeps re-entering
+	// capacity waves and burning parallelism). When operational failures are at
+	// least this count AND at least half of terminal attempts, capacity mode
+	// stops selecting the model until healthier runs dilute the ratio.
+	operationalQuarantineFailureCutoff = 5
 )
 
 func (s *Service) resolveDelegationModelCandidates(
@@ -109,10 +116,17 @@ func (s *Service) resolveDelegationModelCandidates(
 	if mode == delegationModelSelectionCapacity {
 		available := make([]delegationResolvedModelCandidate, 0, len(resolved))
 		var firstErr error
+		ranks := s.delegationCandidateRanks(ctx, in.WorkspaceID, in.TaskKind)
 		for _, c := range resolved {
 			if err := validateModelProvider(c.ModelProvider, c.ModelEndpointURL); err != nil {
 				if firstErr == nil {
 					firstErr = err
+				}
+				continue
+			}
+			if rank := ranks[c.ModelProvider+"/"+c.ModelID]; rank != nil && rank.operationalQuarantined() {
+				if firstErr == nil {
+					firstErr = fmt.Errorf("model %q quarantined after repeated operational failures", c.ModelProvider+"/"+c.ModelID)
 				}
 				continue
 			}
@@ -297,6 +311,9 @@ func (s *Service) bestReviewedDelegationCandidate(
 	for i, c := range candidates {
 		r := byKey[c.ModelProvider+"/"+c.ModelID]
 		if r == nil || r.reviews == 0 {
+			continue
+		}
+		if r.operationalQuarantined() {
 			continue
 		}
 		if bestRank == nil || r.betterThan(bestRank, taskKind) {
@@ -620,6 +637,21 @@ func (r delegationCandidateRank) explorationThrashed() bool {
 	return r.operationalFailures >= explorationFailureCutoff && r.success == 0
 }
 
+// operationalQuarantined reports whether capacity mode should stop selecting
+// this model for now. Unlike explorationThrashed, this trips even when the
+// model occasionally succeeds: repeated adapter/launch deaths are an operator
+// reliability problem, not a quality datapoint to keep re-testing in live work.
+func (r delegationCandidateRank) operationalQuarantined() bool {
+	if r.operationalFailures < operationalQuarantineFailureCutoff {
+		return false
+	}
+	terminal := r.success + r.failure
+	if terminal <= 0 {
+		return true
+	}
+	return float64(r.operationalFailures)/float64(terminal) >= 0.5
+}
+
 // explorationBonus returns the UCB-style optimism added to the capacity
 // score for an under-sampled candidate. It decays as 1/sqrt(runs+1) so a
 // brand-new (0-run) model floats near the top of the ranking and is
@@ -663,6 +695,11 @@ func capacityScoreForCandidate(
 		score += (r.reliabilityRateForRanking() - 0.5) * 20
 		score -= minFloat(18, float64(r.running)*7)
 		score -= minFloat(12, float64(r.failure)*3)
+		if r.operationalQuarantined() {
+			score -= 100
+		} else if r.operationalFailures > 0 {
+			score -= minFloat(24, float64(r.operationalFailures)*4)
+		}
 		// Cost penalty over KNOWN-cost runs only. A candidate whose
 		// every run is missing usage telemetry gets a flat midpoint
 		// penalty instead — missing accounting must not score better
