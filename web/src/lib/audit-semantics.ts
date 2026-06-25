@@ -18,6 +18,27 @@
 /** The three visual outcomes the dashboard styles audit rows by. */
 export type StatusTone = 'success' | 'error' | 'blocked'
 
+// A minimal record shape for getErrorReason — kept structural so it accepts
+// the full AuditRecord without importing the API type into this lib module.
+interface ErrorReasonRecord {
+  status?: string | null
+  error_message?: string
+  error_code?: string
+}
+
+/**
+ * getErrorReason — the short failure descriptor shown in the row + inspector
+ * header. Empty string for successful rows so callers can render it
+ * unconditionally. "blocked" / "no route" are folded to stable phrasings; any
+ * other failure falls back to the raw message/code.
+ */
+export function getErrorReason(record: ErrorReasonRecord): string {
+  if (isSuccessStatus(record.status)) return ''
+  if (record.error_message?.includes('denied')) return 'blocked'
+  if (record.error_message === 'no matching route') return 'no route'
+  return record.error_message || record.error_code || 'error'
+}
+
 /**
  * normalizeStatus folds the raw audit status string into one of three
  * tones. "ok" (secrets resolver + some built-ins) is success, full stop.
@@ -50,6 +71,15 @@ export interface SecretSemantics {
   tone: 'info' | 'notice' | 'neutral'
   /** One sentence a non-engineer can read and relax (or pay attention) to. */
   blurb: string
+}
+
+// SECRET_TONE — Tailwind classes for each secret-event tone. Shared by the
+// list chip and the inspector banner so enumeration (blue) vs decryption
+// (amber) reads identically everywhere.
+export const SECRET_TONE: Record<SecretSemantics['tone'], string> = {
+  info: 'border-sky-500/40 bg-sky-500/10 text-sky-300',
+  notice: 'border-amber-500/40 bg-amber-500/10 text-amber-300',
+  neutral: 'border-border bg-muted/40 text-muted-foreground',
 }
 
 /**

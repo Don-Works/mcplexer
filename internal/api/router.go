@@ -247,6 +247,21 @@ func NewRouter(deps RouterDeps) http.Handler {
 	auditH := &auditHandler{store: deps.Store}
 	mux.HandleFunc("GET /api/v1/audit", auditH.query)
 
+	// Ranked relevance search + capability probe. Static segments —
+	// registered before any /audit/{id}-style param routes (none today,
+	// but keep specificity ordering explicit).
+	auditSearchH := &auditSearchHandler{store: deps.Store, mem: deps.MemorySvc}
+	mux.HandleFunc("GET /api/v1/audit/search", auditSearchH.search)
+	mux.HandleFunc("GET /api/v1/audit/capabilities", auditSearchH.capabilities)
+
+	// Deterministic alerts + saved-search CRUD.
+	auditAlertsH := &auditAlertsHandler{store: deps.Store, notifyBus: deps.NotifyBus}
+	mux.HandleFunc("GET /api/v1/audit/alerts", auditAlertsH.alerts)
+	mux.HandleFunc("GET /api/v1/audit/saved-searches", auditAlertsH.listSaved)
+	mux.HandleFunc("POST /api/v1/audit/saved-searches", auditAlertsH.createSaved)
+	mux.HandleFunc("PATCH /api/v1/audit/saved-searches/{id}", auditAlertsH.updateSaved)
+	mux.HandleFunc("DELETE /api/v1/audit/saved-searches/{id}", auditAlertsH.deleteSaved)
+
 	if deps.AuditBus != nil {
 		sse := &auditSSEHandler{bus: deps.AuditBus}
 		mux.HandleFunc("GET /api/v1/audit/stream", sse.stream)

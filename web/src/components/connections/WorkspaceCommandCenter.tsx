@@ -186,7 +186,7 @@ export function WorkspaceCommandCenter({
 
         <div className="space-y-4 p-4">
           <ActionFeed items={actions} />
-          <RecentAudit rows={operations.recentAudit} />
+          <RecentAudit rows={operations.recentAudit} workspaceId={workspace.id} />
         </div>
       </div>
     </section>
