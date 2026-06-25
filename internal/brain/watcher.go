@@ -38,6 +38,7 @@ type Watcher struct {
 	mu     sync.Mutex
 	timers map[string]*debounceState
 	closed bool
+	done   chan struct{}
 }
 
 type debounceState struct {
@@ -88,11 +89,39 @@ func (w *Watcher) AddDir(dir string) error {
 // workspaces/) and runs the event loop in a goroutine until ctx is
 // cancelled or Close is called.
 func (w *Watcher) Start(ctx context.Context) error {
+	w.mu.Lock()
+	if w.closed {
+		w.mu.Unlock()
+		return nil
+	}
+	if w.done != nil {
+		w.mu.Unlock()
+		return nil
+	}
+	w.mu.Unlock()
+
 	root := filepath.Join(w.ix.cfg.Dir, "workspaces")
 	if err := w.addTree(root); err != nil {
 		return err
 	}
-	go w.loop(ctx)
+
+	w.mu.Lock()
+	if w.closed {
+		w.mu.Unlock()
+		return nil
+	}
+	if w.done != nil {
+		w.mu.Unlock()
+		return nil
+	}
+	done := make(chan struct{})
+	w.done = done
+	w.mu.Unlock()
+
+	go func() {
+		defer close(done)
+		w.loop(ctx)
+	}()
 	return nil
 }
 
@@ -149,6 +178,13 @@ func (w *Watcher) loop(ctx context.Context) {
 
 // handle routes one fsnotify event.
 func (w *Watcher) handle(ev fsnotify.Event) {
+	w.mu.Lock()
+	closed := w.closed
+	w.mu.Unlock()
+	if closed {
+		return
+	}
+
 	if ev.Op&fsnotify.Chmod != 0 && ev.Op == fsnotify.Chmod {
 		return // pure Chmod — ignore (SPEC §6.1)
 	}
@@ -227,6 +263,12 @@ func (w *Watcher) Close() error {
 		}
 	}
 	w.timers = make(map[string]*debounceState)
+	done := w.done
 	w.mu.Unlock()
-	return w.w.Close()
+
+	err := w.w.Close()
+	if done != nil {
+		<-done
+	}
+	return err
 }

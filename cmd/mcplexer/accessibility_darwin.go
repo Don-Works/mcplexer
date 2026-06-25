@@ -8,19 +8,15 @@ package main
 #include <ApplicationServices/ApplicationServices.h>
 #include <stdbool.h>
 
-// mcplexer_check_accessibility_prompt wraps AXIsProcessTrustedWithOptions
+static bool mcplexer_check_accessibility(void) {
+    return AXIsProcessTrusted();
+}
+
+// mcplexer_request_accessibility_prompt wraps AXIsProcessTrustedWithOptions
 // with kAXTrustedCheckOptionPrompt=true so the system surfaces the
-// "Allow X to control your computer using accessibility features" prompt
-// the first time a binary asks. macOS is idempotent here: subsequent
-// calls when already trusted return true without re-prompting, and
-// repeated calls while denied don't re-spam the user — the system
-// rate-limits the dialog itself.
-//
-// Returns true when the calling process is in the Accessibility allowlist
-// at /System/Library/PrivateFrameworks/... (System Settings → Privacy &
-// Security → Accessibility). When false, the system has already shown or
-// queued the prompt for the user.
-static bool mcplexer_check_accessibility_prompt(void) {
+// "Allow X to control your computer using accessibility features" prompt.
+// This must be called only from an explicit user action, not daemon startup.
+static bool mcplexer_request_accessibility_prompt(void) {
     const void *keys[]   = { kAXTrustedCheckOptionPrompt };
     const void *values[] = { kCFBooleanTrue };
     CFDictionaryRef options = CFDictionaryCreate(
@@ -39,35 +35,51 @@ import (
 	"os"
 )
 
-// requestAccessibility asks macOS to grant the daemon Accessibility
-// permission, triggering the "Allow … to control your computer using
-// accessibility features" system prompt the first time. Required for
-// native UI control surfaces — focus_app, send_keys, key chords —
-// that mcplexer drives directly (separate from the Hammerspoon bridge,
-// which has its own grant against the Hammerspoon binary).
-//
-// Idempotent: macOS no-ops when already granted, and won't re-spam the
-// dialog when denied. Safe to call on every daemon startup.
-//
-// The system prompt identifies the calling binary by absolute path
-// ("Allow /Users/<you>/.mcplexer/bin/mcplexer to control your computer…").
-// Granting attaches to that exact path, so a `make upgrade` that
-// atomically swaps the file under the same path keeps the grant — but
-// re-installing to a different location requires re-grant.
+const accessibilityPromptEnv = "MCPLEXER_REQUEST_ACCESSIBILITY"
+
+func accessibilityTrusted() bool {
+	return bool(C.mcplexer_check_accessibility())
+}
+
+func promptAccessibility() bool {
+	return bool(C.mcplexer_request_accessibility_prompt())
+}
+
+// requestAccessibility checks macOS Accessibility state for daemon logs.
+// It deliberately does not open the system prompt during normal daemon
+// startup. Rebuilt command-line binaries can get new TCC code identities,
+// so prompting from launchd startup causes repeated macOS dialogs during
+// local upgrades. Use `mcplexer doctor --request-accessibility`, or set
+// MCPLEXER_REQUEST_ACCESSIBILITY=1 for a one-off explicit prompt.
 func requestAccessibility(logger *slog.Logger) {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	trusted := bool(C.mcplexer_check_accessibility_prompt())
 	exe, _ := os.Executable()
-	if trusted {
+	if accessibilityTrusted() {
 		logger.Info("macOS Accessibility: granted",
 			"binary", exe,
 		)
 		return
 	}
-	logger.Warn("macOS Accessibility: NOT granted — system prompt surfaced",
+
+	if os.Getenv(accessibilityPromptEnv) == "1" {
+		trusted := promptAccessibility()
+		if trusted {
+			logger.Info("macOS Accessibility: granted after explicit prompt",
+				"binary", exe,
+			)
+			return
+		}
+		logger.Warn("macOS Accessibility: explicit prompt requested, still not granted",
+			"binary", exe,
+			"hint", "open System Settings > Privacy & Security > Accessibility and enable this mcplexer binary",
+		)
+		return
+	}
+
+	logger.Warn("macOS Accessibility: not granted; not prompting automatically",
 		"binary", exe,
-		"hint", "open System Settings → Privacy & Security → Accessibility and enable the entry for this mcplexer binary",
+		"hint", exe+" doctor --request-accessibility",
 	)
 }

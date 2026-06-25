@@ -223,6 +223,12 @@ func buildCodeModeInstructions(profile HarnessProfile, meshEnabled bool) string 
 			"inside `mcpx__execute_code`.\n\n")
 	}
 
+	b.WriteString("For browser or browsing tasks, search for `brw`/browser tools first; " +
+		"if the `brw` namespace is available, prefer it as the mcplexer browser-control " +
+		"surface. For non-trivial browser workflows, fetch an installed browser skill " +
+		"from the registry, such as `generic-browser-operator`, `playwright-browser`, " +
+		"or `cmux-browser`.\n\n")
+
 	b.WriteString("To call a downstream tool, invoke ")
 	if profile == HarnessServerPrefixed {
 		b.WriteString("`mcplexer__execute_code`")

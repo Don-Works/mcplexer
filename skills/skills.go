@@ -10,6 +10,9 @@ import _ "embed"
 //go:embed agent-mesh.md
 var AgentMesh string
 
+//go:embed brw.md
+var Brw string
+
 //go:embed cross-machine-test.md
 var CrossMachineTest string
 

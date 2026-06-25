@@ -53,6 +53,8 @@ func TestWorkerPreamble_Stable(t *testing.T) {
 		"mcpx__execute_code",
 		"memory",
 		"mcplexer",
+		"`brw`/browser tools first",
+		"browser skill",
 	} {
 		if !strings.Contains(got, must) {
 			t.Errorf("preamble missing required token %q\n--- preamble ---\n%s", must, got)

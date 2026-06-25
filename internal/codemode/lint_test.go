@@ -23,6 +23,20 @@ func TestLint_JSONParseWarning(t *testing.T) {
 	}
 }
 
+func TestLint_JSONParseUntrustedContentParserNoWarning(t *testing.T) {
+	code := `
+function unwrap(r) {
+  const m = String(r.text || r).match(/<untrusted-content[^>]*>([\s\S]*?)<\/untrusted-content>/);
+  return JSON.parse(m ? m[1] : r);
+}`
+	result := Lint(code)
+	for _, w := range result.Warnings {
+		if strings.Contains(w.Message, "JSON.parse") {
+			t.Fatalf("untrusted-content parser should not get JSON.parse warning, got: %+v", result.Warnings)
+		}
+	}
+}
+
 func TestLint_JSONParseInsideStringNoWarning(t *testing.T) {
 	code := `print("use JSON.parse() on server response");`
 	result := Lint(code)

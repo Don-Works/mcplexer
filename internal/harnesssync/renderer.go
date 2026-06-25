@@ -15,6 +15,8 @@ For the full contract, fetch mcpx.skill_get({name:"using-mcplexer"}) directly. U
 
 Start mcpx__search_tools in summary or exact-tool mode; avoid broad detail:"full" searches.
 
+Browser/browser-control tasks: assume brw may be installed. Search brw/browser tools first and prefer the brw namespace when available; for non-trivial browser workflows fetch an installed browser skill (for example generic-browser-operator, playwright-browser, or cmux-browser) with mcpx.skill_search/get.
+
 The using-mcplexer skill (this bootstrap) is the source of truth for the contract.
 
 ## Memory — mcplexer is the single source of truth
@@ -36,6 +38,7 @@ func Render(k HarnessKey, version int) string {
 			"Full skill body: ~/.claude/skills/using-mcplexer/SKILL.md (materialized from registry v%d).\n\n"+
 			"Use the 4 top-level tools: mcpx__search_tools + mcpx__execute_code (batch everything), secret__prompt / secret__list_refs.\n"+
 			"Fetch deeper playbooks via the skill registry on demand.\n\n"+
+			"Browser work: search for brw/browser tools and prefer brw when installed; fetch an installed browser skill such as generic-browser-operator, playwright-browser, or cmux-browser for non-trivial workflows.\n\n"+
 			"## Memory — mcplexer is the single source of truth\n\n"+
 			"Do NOT use your native memory system. All persistent memory MUST be saved via memory.save({...}) inside mcpx__execute_code.\n"+
 			"Read mcplexer memory first: memory.recall({query}) or memory.list({}) inside mcpx__execute_code.\n"+
@@ -47,6 +50,7 @@ func Render(k HarnessKey, version int) string {
 			"Full skill body: ~/.config/opencode/skills/using-mcplexer/SKILL.md (materialized from registry v%d).\n\n"+
 			"Use the 4 top-level tools: mcpx__search_tools + mcpx__execute_code (batch everything), secret__prompt / secret__list_refs.\n"+
 			"Fetch deeper playbooks via the skill registry on demand.\n\n"+
+			"Browser work: search for brw/browser tools and prefer brw when installed; fetch an installed browser skill such as generic-browser-operator, playwright-browser, or cmux-browser for non-trivial workflows.\n\n"+
 			"## Memory — mcplexer is the single source of truth\n\n"+
 			"Do NOT use your native memory system. All persistent memory MUST be saved via memory.save({...}) inside mcpx__execute_code.\n"+
 			"Read mcplexer memory first: memory.recall({query}) or memory.list({}) inside mcpx__execute_code.\n"+

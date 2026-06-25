@@ -8,12 +8,25 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"time"
 
 	"github.com/don-works/mcplexer/internal/store/sqlite"
 )
 
 func cmdDoctor(args []string) error {
+	if len(args) > 0 {
+		switch args[0] {
+		case "--request-accessibility":
+			return cmdDoctorRequestAccessibility()
+		case "-h", "--help":
+			fmt.Println("Usage: mcplexer doctor [--request-accessibility]")
+			return nil
+		default:
+			return fmt.Errorf("unknown doctor argument: %s", args[0])
+		}
+	}
+
 	cfg, err := loadConfig()
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
@@ -48,6 +61,28 @@ func cmdDoctor(args []string) error {
 	if passed < len(checks) {
 		return fmt.Errorf("some checks failed")
 	}
+	return nil
+}
+
+func cmdDoctorRequestAccessibility() error {
+	if runtime.GOOS != "darwin" {
+		fmt.Println("macOS Accessibility is not required on this platform.")
+		return nil
+	}
+	exe, _ := os.Executable()
+	if accessibilityTrusted() {
+		fmt.Printf("macOS Accessibility is already granted for %s\n", exe)
+		return nil
+	}
+
+	fmt.Printf("Requesting macOS Accessibility for %s\n", exe)
+	if promptAccessibility() {
+		fmt.Println("macOS Accessibility is now granted.")
+		return nil
+	}
+
+	fmt.Println("macOS opened or queued the Accessibility prompt.")
+	fmt.Println("Enable this mcplexer entry in System Settings > Privacy & Security > Accessibility.")
 	return nil
 }
 

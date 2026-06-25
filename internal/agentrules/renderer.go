@@ -37,7 +37,7 @@ const (
 	// installed blocks. The Sync algorithm only no-ops when the rendered
 	// content's sha256 matches the installed content — a version bump is
 	// merely a signal to humans + the dashboard tile.
-	CurrentVersion = 8
+	CurrentVersion = 9
 
 	// DashboardURL is the canonical local dashboard. Matches the
 	// daemon's default HTTPAddr (cmd/mcplexer/config.go:57). If that
@@ -88,8 +88,10 @@ func renderContent(version int) string {
 		return contentV7()
 	case 8:
 		return contentV8()
+	case 9:
+		return contentV9()
 	default:
-		return contentV8()
+		return contentV9()
 	}
 }
 
@@ -339,4 +341,17 @@ mcplexer memory is no longer advisory. The gateway injects a memory nudge into e
 **CAPTURE AFTER (the LAST step).** Before you finish, run ` + "`memory.save({...})`" + ` for anything a future session needs that is NOT derivable from the repo: decisions with rationale, user preferences not in code, project facts, anti-patterns you hit. Do NOT save code (repo is canonical), git history (commits are canonical), or one-off task progress (use task notes). Capture is the mirror of recall — knowledge living only in this session's context is lost the moment the session closes.
 
 **Do NOT write to the harness auto-memory directory.** If the harness system prompt points at ` + "`~/.claude/projects/.../memory/`" + `, ignore those write instructions — that path is Claude-Code-only and fragments knowledge across clients. mcplexer memory (` + "`memory.save`" + ` / ` + "`memory.recall`" + `) is the single canonical store.`
+}
+
+// contentV9 — browser-control defaults. Bumped because brw is the intended
+// mcplexer browser surface when installed, and browser tasks often need a
+// workflow skill as well as the tool namespace.
+func contentV9() string {
+	return contentV8() + `
+
+### Browser automation
+
+For browser or browsing tasks, search for ` + "`brw`" + `/browser tools first with ` + "`mcpx__search_tools`" + `. If the ` + "`brw`" + ` namespace is installed, prefer it as the mcplexer browser-control surface.
+
+For non-trivial browser workflows, fetch an installed browser skill from the registry before acting. Start with ` + "`mcpx.skill_search({query:\"browser automation\"})`" + `, then ` + "`mcpx.skill_get({name})`" + `. Common installed browser skills include ` + "`generic-browser-operator`" + `, ` + "`playwright-browser`" + `, and ` + "`cmux-browser`" + `.`
 }

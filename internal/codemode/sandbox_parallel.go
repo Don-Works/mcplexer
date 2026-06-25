@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"sync"
 	"time"
 
@@ -124,7 +125,7 @@ func collectParallelResults(
 	results []parallelCallResult,
 	toolNames []string,
 ) goja.Value {
-	jsResults := make([]any, len(results))
+	jsResults := vm.NewArray()
 	for _, cr := range results {
 		toolName := descriptors[cr.index].Tool
 		record := ToolCallRecord{
@@ -138,17 +139,17 @@ func collectParallelResults(
 
 		if cr.err != nil {
 			record.Error = buildToolErrorMessage(toolName, argsJSON, cr.err.Error(), nil, nil, toolNames)
-			jsResults[cr.index] = nil
+			_ = jsResults.Set(strconv.Itoa(cr.index), nil)
 		} else {
 			compacted := compactForSandbox(cr.result)
 			val, errText := parseToolResultValue(compacted)
 			if errText != "" {
 				record.Error = buildToolErrorMessage(toolName, argsJSON, errText, nil, nil, toolNames)
 				record.Result = cr.result
-				jsResults[cr.index] = nil
+				_ = jsResults.Set(strconv.Itoa(cr.index), nil)
 			} else {
 				record.Result = cr.result
-				jsResults[cr.index] = val
+				_ = jsResults.Set(strconv.Itoa(cr.index), toolValueToGoja(vm, val))
 			}
 		}
 
@@ -157,7 +158,7 @@ func collectParallelResults(
 		mu.Unlock()
 	}
 
-	return vm.ToValue(jsResults)
+	return jsResults
 }
 
 // parseToolResultValue converts an MCP CallToolResult to a Go value
@@ -200,6 +201,9 @@ func parseToolResultValue(raw json.RawMessage) (any, string) {
 		if len(envelope.Content) > 0 {
 			item := envelope.Content[0]
 			if text, ok := item["text"].(string); ok {
+				if untrusted, ok := parseUntrustedStructuredText(text); ok {
+					return untrusted, ""
+				}
 				var parsed any
 				if err := json.Unmarshal([]byte(text), &parsed); err == nil {
 					return parsed, ""

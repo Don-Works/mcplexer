@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/don-works/mcplexer/internal/approval"
@@ -338,9 +337,13 @@ func (h *handler) handleFlushCache(serverID string) (json.RawMessage, *RPCError)
 func (h *handler) handleReloadServer(ctx context.Context, serverID string) (json.RawMessage, *RPCError) {
 	// Flush the in-memory catalog cache so the next gather gets live data.
 	h.toolsListCache.Flush()
-	// Reset all per-key onces so subsequent startup-path background refreshes
-	// can re-arm for both static and dynamic server groups.
-	h.backgroundRefreshOnceByKey = sync.Map{}
+	// Clear the per-key refresh timestamps so the next gather triggers an
+	// immediate live re-introspection for every server group rather than waiting
+	// out backgroundRefreshInterval.
+	h.bgRefreshMu.Lock()
+	h.bgRefreshAt = map[string]time.Time{}
+	h.bgRefreshInFlight = map[string]bool{}
+	h.bgRefreshMu.Unlock()
 
 	var serverIDs []string
 	if serverID != "" {

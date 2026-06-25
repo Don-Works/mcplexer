@@ -82,11 +82,11 @@ web-build:
 
 go-build:
 	go build -ldflags "$(GO_LDFLAGS)" -o bin/mcplexer ./cmd/mcplexer
-	@if [ "$$(uname -s)" = "Darwin" ]; then codesign --force -s - bin/mcplexer; fi
+	@if [ "$$(uname -s)" = "Darwin" ]; then sh scripts/codesign-darwin.sh bin/mcplexer com.donworks.mcplexer; fi
 
 go-build-p2p:
 	go build -tags p2p -ldflags "$(GO_LDFLAGS)" -o bin/mcplexer-p2p ./cmd/mcplexer
-	@if [ "$$(uname -s)" = "Darwin" ]; then codesign --force -s - bin/mcplexer-p2p; fi
+	@if [ "$$(uname -s)" = "Darwin" ]; then sh scripts/codesign-darwin.sh bin/mcplexer-p2p com.donworks.mcplexer; fi
 
 run: build
 	-./bin/mcplexer daemon stop 2>/dev/null

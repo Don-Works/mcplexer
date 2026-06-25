@@ -93,6 +93,27 @@ var peerOriginTools = map[string]bool{
 	MeshPrefix + "thread":         true,
 }
 
+// trustedDownstreamMetadataTools enumerates downstream tools whose outputs
+// are gateway/browser-control metadata rather than page body content. They
+// should stay clean JSON even when the sanitizer envelope-always toggle is
+// enabled, so code-mode can consume ids, tab lists, and group rows directly.
+var trustedDownstreamMetadataTools = map[string]bool{
+	"brw__brw_open":                     true,
+	"brw__brw_list_tabs":                true,
+	"brw__brw_list_tab_groups":          true,
+	"brw__brw_focus_tab":                true,
+	"brw__brw_group_tabs":               true,
+	"brw__brw_close_tab":                true,
+	"brw__brw_navigate":                 true,
+	"brw_chromium__brw_open":            true,
+	"brw_chromium__brw_list_tabs":       true,
+	"brw_chromium__brw_list_tab_groups": true,
+	"brw_chromium__brw_focus_tab":       true,
+	"brw_chromium__brw_group_tabs":      true,
+	"brw_chromium__brw_close_tab":       true,
+	"brw_chromium__brw_navigate":        true,
+}
+
 // isTrustedBuiltinResult reports whether the tool's result comes from
 // a trusted in-process builtin (mcpx__/task__/memory__/secret__/
 // mcplexer__/mesh-local-tools). Used by the handler to decide whether
@@ -154,6 +175,14 @@ func classifyTrust(toolName string) TrustClassification {
 				Source:        src,
 				TrustLevel:    "high",
 			}
+		}
+	}
+
+	if trustedDownstreamMetadataTools[toolName] {
+		return TrustClassification{
+			NeedsSanitize: false,
+			Source:        src,
+			TrustLevel:    "high",
 		}
 	}
 

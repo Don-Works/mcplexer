@@ -151,7 +151,7 @@ func (s *Sandbox) Execute(ctx context.Context, code string, tools []ToolDef) (*E
 	)
 
 	// Shared print handler used by both print() and console.log.
-	printFn := makePrintFunc(&mu, output)
+	printFn := makePrintFunc(vm, &mu, output)
 
 	if err := vm.Set("print", printFn); err != nil {
 		return nil, fmt.Errorf("set print: %w", err)
@@ -885,7 +885,7 @@ func parseToolResult(vm *goja.Runtime, raw json.RawMessage) (goja.Value, string)
 	if m, ok := val.(map[string]any); ok && isTextProjection(m) {
 		return textProjectionToObject(vm, m), ""
 	}
-	return vm.ToValue(val), ""
+	return toolValueToGoja(vm, val), ""
 }
 
 // textProjectionToObject builds the projected text value as a goja object
@@ -1483,7 +1483,7 @@ func isUTF8ContinuationByte(b byte) bool {
 }
 
 // makePrintFunc returns a Goja-compatible function that captures output.
-func makePrintFunc(mu *sync.Mutex, output *outputCapture) func(goja.FunctionCall) goja.Value {
+func makePrintFunc(vm *goja.Runtime, mu *sync.Mutex, output *outputCapture) func(goja.FunctionCall) goja.Value {
 	return func(call goja.FunctionCall) goja.Value {
 		mu.Lock()
 		for i, arg := range call.Arguments {
@@ -1496,7 +1496,7 @@ func makePrintFunc(mu *sync.Mutex, output *outputCapture) func(goja.FunctionCall
 			if arg != nil && !goja.IsUndefined(arg) && !goja.IsNull(arg) {
 				output.recordShape(arg.Export())
 			}
-			output.WriteString(formatPrintArg(arg))
+			output.WriteString(formatPrintArg(vm, arg))
 		}
 		output.writeByte('\n')
 		mu.Unlock()
@@ -1505,9 +1505,17 @@ func makePrintFunc(mu *sync.Mutex, output *outputCapture) func(goja.FunctionCall
 }
 
 // formatPrintArg converts a Goja value to a readable string.
-func formatPrintArg(arg goja.Value) string {
+func formatPrintArg(vm *goja.Runtime, arg goja.Value) string {
 	if arg == nil || goja.IsUndefined(arg) || goja.IsNull(arg) {
 		return arg.String()
+	}
+	if source, trust, ok := untrustedMetaForValue(vm, arg); ok {
+		exported := arg.Export()
+		data, err := json.Marshal(exported)
+		if err != nil {
+			return envelopeUntrustedForPrint(source, trust, arg.String())
+		}
+		return envelopeUntrustedForPrint(source, trust, string(data))
 	}
 	exported := arg.Export()
 	switch v := exported.(type) {

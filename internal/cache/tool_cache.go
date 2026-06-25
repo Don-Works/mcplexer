@@ -79,6 +79,17 @@ func (tc *ToolCache) IsCacheable(serverID, toolName string) bool {
 	}
 	// Strip namespace prefix for pattern matching.
 	bare := stripNamespace(toolName)
+	// Hard, non-overridable exclusions: browser-automation and other stateful
+	// session tools (brw_*, browser_*, navigate_*, screenshot_*, …) must NEVER be
+	// cached — their responses are ephemeral page state that changes between calls,
+	// so a cache hit silently serves a stale observation. This guard applies the
+	// package DefaultNoCacheablePatterns regardless of the per-server config, because
+	// downstream servers are keyed by UUID (so isBrowserAutomationServer can't match
+	// the name) and a narrowed per-server NoCacheablePatterns would otherwise re-enable
+	// caching for them. The per-server NoCacheablePatterns below remain additive.
+	if matchesAny(bare, DefaultNoCacheablePatterns) {
+		return false
+	}
 	// NoCacheablePatterns take precedence: if the tool matches any
 	// exclusion pattern, it is never cached regardless of CacheablePatterns.
 	if len(cfg.NoCacheablePatterns) > 0 && matchesAny(bare, cfg.NoCacheablePatterns) {

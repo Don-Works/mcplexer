@@ -23,12 +23,56 @@ func TestIsTrustedBuiltinResult(t *testing.T) {
 		{"mesh__thread", false, "peer-origin"},
 		{"linear__search", false, "downstream"},
 		{"playwright__browser_evaluate", false, "downstream"},
+		{"brw_chromium__brw_list_tabs", true, "trusted downstream metadata"},
+		{"brw_chromium__brw_read", false, "browser content"},
 	}
 	for _, c := range cases {
 		t.Run(c.group+":"+c.tool, func(t *testing.T) {
 			if got := isTrustedBuiltinResult(c.tool); got != c.want {
 				t.Errorf("isTrustedBuiltinResult(%q) = %v, want %v",
 					c.tool, got, c.want)
+			}
+		})
+	}
+}
+
+func TestClassifyTrust_BrowserStructuralMetadataSkipsSanitize(t *testing.T) {
+	for _, name := range []string{
+		"brw__brw_open",
+		"brw__brw_list_tabs",
+		"brw__brw_list_tab_groups",
+		"brw_chromium__brw_open",
+		"brw_chromium__brw_list_tabs",
+		"brw_chromium__brw_list_tab_groups",
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := classifyTrust(name)
+			if got.NeedsSanitize {
+				t.Errorf("NeedsSanitize = true, want false for structural metadata")
+			}
+			if got.TrustLevel != "high" {
+				t.Errorf("TrustLevel = %q, want high", got.TrustLevel)
+			}
+		})
+	}
+}
+
+func TestClassifyTrust_BrowserContentStillSanitizes(t *testing.T) {
+	for _, name := range []string{
+		"brw__brw_read",
+		"brw__brw_find",
+		"brw__brw_screenshot",
+		"brw_chromium__brw_read",
+		"brw_chromium__brw_find",
+		"brw_chromium__brw_screenshot",
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := classifyTrust(name)
+			if !got.NeedsSanitize {
+				t.Errorf("NeedsSanitize = false, want true for browser content")
+			}
+			if got.TrustLevel != "low" {
+				t.Errorf("TrustLevel = %q, want low", got.TrustLevel)
 			}
 		})
 	}
