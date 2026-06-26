@@ -52,6 +52,12 @@ type Prefetcher interface {
 	EnsureRunning(ctx context.Context, serverID, authScopeID string)
 }
 
+// ServerInstanceReloader evicts live downstream instances so the next
+// introspection/call starts from the latest configured process or HTTP session.
+type ServerInstanceReloader interface {
+	ReloadServerInstances(serverID string) int
+}
+
 // SessionReleaser tears down any per-session downstream instances owned by a
 // session (browser-automation processes keyed per agent). The downstream
 // Manager implements it; the caching wrapper forwards it. Optional — the

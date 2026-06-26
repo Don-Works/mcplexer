@@ -49,3 +49,51 @@ func TestDownstreamHandlerApplyCacheConfigHotAppliesAndInvalidates(t *testing.T)
 		t.Fatal("partial cache_config should inherit default cacheable patterns")
 	}
 }
+
+func TestDownstreamRuntimeChanged(t *testing.T) {
+	urlA := "http://example.test/a"
+	urlB := "http://example.test/b"
+	base := &store.DownstreamServer{
+		ID:             "srv",
+		Transport:      "stdio",
+		Command:        "old",
+		Args:           json.RawMessage(`["--old"]`),
+		URL:            &urlA,
+		IdleTimeoutSec: 30,
+		CallTimeoutSec: 60,
+		MaxInstances:   1,
+		RestartPolicy:  "on-failure",
+	}
+	same := *base
+	if downstreamRuntimeChanged(base, &same) {
+		t.Fatal("identical runtime should not be marked changed")
+	}
+
+	renamed := *base
+	renamed.Name = "new display name"
+	if downstreamRuntimeChanged(base, &renamed) {
+		t.Fatal("display-only change should not be marked runtime changed")
+	}
+
+	cases := map[string]func(*store.DownstreamServer){
+		"transport":        func(ds *store.DownstreamServer) { ds.Transport = "http" },
+		"command":          func(ds *store.DownstreamServer) { ds.Command = "new" },
+		"args":             func(ds *store.DownstreamServer) { ds.Args = json.RawMessage(`["--new"]`) },
+		"url":              func(ds *store.DownstreamServer) { ds.URL = &urlB },
+		"idle_timeout":     func(ds *store.DownstreamServer) { ds.IdleTimeoutSec = 31 },
+		"call_timeout":     func(ds *store.DownstreamServer) { ds.CallTimeoutSec = 61 },
+		"max_instances":    func(ds *store.DownstreamServer) { ds.MaxInstances = 2 },
+		"restart_policy":   func(ds *store.DownstreamServer) { ds.RestartPolicy = "always" },
+		"disabled":         func(ds *store.DownstreamServer) { ds.Disabled = true },
+		"url_nil_to_value": func(ds *store.DownstreamServer) { ds.URL = nil },
+	}
+	for name, mutate := range cases {
+		t.Run(name, func(t *testing.T) {
+			changed := *base
+			mutate(&changed)
+			if !downstreamRuntimeChanged(base, &changed) {
+				t.Fatal("runtime change was not detected")
+			}
+		})
+	}
+}

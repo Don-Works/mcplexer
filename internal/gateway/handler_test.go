@@ -75,6 +75,21 @@ func (m *prefetchToolLister) EnsureRunning(_ context.Context, serverID, _ string
 	m.prefetched <- serverID
 }
 
+type reloadTrackingToolLister struct {
+	mockToolLister
+	events []string
+}
+
+func (m *reloadTrackingToolLister) ReloadServerInstances(serverID string) int {
+	m.events = append(m.events, "reload:"+serverID)
+	return 1
+}
+
+func (m *reloadTrackingToolLister) ListToolsForServers(ctx context.Context, serverIDs []string) (map[string]json.RawMessage, error) {
+	m.events = append(m.events, "list:"+strings.Join(serverIDs, ","))
+	return m.mockToolLister.ListToolsForServers(ctx, serverIDs)
+}
+
 // mockStore implements store.Store with minimal stubs for handler tests.
 type mockStore struct {
 	servers          []store.DownstreamServer
@@ -2021,6 +2036,35 @@ func TestHandleReloadServer_AllServers(t *testing.T) {
 	// The in-memory tools/list cache should be empty after reload (was flushed).
 	if h.toolsListCache.Len() != 0 {
 		t.Errorf("expected empty toolsListCache after reload, got %d entries", h.toolsListCache.Len())
+	}
+}
+
+func TestHandleReloadServer_EvictsInstancesBeforeListing(t *testing.T) {
+	servers := []store.DownstreamServer{
+		{ID: "srv1", ToolNamespace: "ns1", Discovery: "static"},
+	}
+	lister := &reloadTrackingToolLister{
+		mockToolLister: mockToolLister{
+			tools: map[string]json.RawMessage{
+				"srv1": toolsJSON(Tool{Name: "new_tool", Description: "A brand new tool"}),
+			},
+		},
+	}
+	h, _ := newTestHandler(lister, servers)
+
+	result, rpcErr := h.handleReloadServer(context.Background(), "srv1")
+	if rpcErr != nil {
+		t.Fatalf("unexpected RPC error: %v", rpcErr)
+	}
+	if got := strings.Join(lister.events, "|"); got != "reload:srv1|list:srv1" {
+		t.Fatalf("events = %s, want reload before list", got)
+	}
+	var tr CallToolResult
+	if err := json.Unmarshal(result, &tr); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(tr.Content) == 0 || !contains(tr.Content[0].Text, "Evicted 1 live instance") {
+		t.Fatalf("reload result did not report evicted instance: %+v", tr)
 	}
 }
 
