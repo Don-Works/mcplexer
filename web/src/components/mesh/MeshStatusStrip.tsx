@@ -53,7 +53,7 @@ export function MeshStatusStrip({
             value={peerCount}
             sublabel={
               offlinePeerCount > 0 ? (
-                <Link to="/pairing" className="text-amber-600 hover:underline dark:text-amber-400">
+                <Link to="/pairing?tab=devices" className="text-amber-600 hover:underline dark:text-amber-400">
                   {offlinePeerCount} offline
                 </Link>
               ) : undefined

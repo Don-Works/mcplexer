@@ -142,8 +142,8 @@ function buildItems(i: AttentionInput): AttentionItem[] {
           <strong className="font-medium">{i.offlinePeers}</strong> paired peer{i.offlinePeers !== 1 ? 's' : ''} offline
         </>
       ),
-      to: '/pairing',
-      cta: 'Pairing',
+      to: '/pairing?tab=devices',
+      cta: 'Devices',
     })
   }
   if (i.pendingMemoryOffers > 0) {

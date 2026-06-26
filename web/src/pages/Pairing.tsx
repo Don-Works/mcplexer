@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { CopyButton } from '@/components/ui/copy-button'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   Select,
   SelectContent,
@@ -30,6 +31,7 @@ import { ReconnectBadge } from '@/components/p2p/ReconnectBadge'
 
 const GETTING_STARTED_DISMISSED_KEY = 'mcplexer:pairing:getting-started:dismissed'
 const UNLINKED_OWNER_VALUE = '__unlinked__'
+type PairingTab = 'people' | 'devices'
 
 // shortPeerSuffix is the same 8-char tail we use server-side for the
 // fallback "peer-…" label. Keeping this in sync is load-bearing — UI logic
@@ -396,12 +398,24 @@ export function PairingPage() {
   // confirms the 6-digit code. We strip the query param after consuming
   // it so a refresh doesn't replay an old URL.
   const pastePayload = useMemo(() => searchParams.get('paste') ?? '', [searchParams])
+  const activeTab = useMemo<PairingTab>(() => {
+    if (pastePayload) return 'devices'
+    return searchParams.get('tab') === 'people' ? 'people' : 'devices'
+  }, [pastePayload, searchParams])
   useEffect(() => {
     if (!pastePayload) return
     const next = new URLSearchParams(searchParams)
     next.delete('paste')
+    next.set('tab', 'devices')
     setSearchParams(next, { replace: true })
   }, [pastePayload, searchParams, setSearchParams])
+
+  const changeTab = useCallback((value: string) => {
+    const tab: PairingTab = value === 'people' ? 'people' : 'devices'
+    const next = new URLSearchParams(searchParams)
+    next.set('tab', tab)
+    setSearchParams(next)
+  }, [searchParams, setSearchParams])
 
   const refresh = useCallback(async () => {
     setLoading(true)
@@ -541,141 +555,159 @@ export function PairingPage() {
           <div className="mt-1 text-xl font-semibold">{ownerDataReady ? `${linkedActiveDeviceCount}/${activePeers.length}` : '...'}</div>
         </div>
       </div>
-      {showGettingStarted && (
-        <GettingStartedCard onDismiss={dismissGettingStarted} />
-      )}
-      <div className="flex gap-2">
-        <ShowCodeModal onComplete={refreshPeopleAndDevices} />
-        <EnterCodeModal
-          onComplete={refreshPeopleAndDevices}
-          initialPayload={pastePayload}
-          autoOpen={!!pastePayload}
-        />
-      </div>
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Devices</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {loading && (
-            <div className="flex items-center gap-2 py-6 text-sm text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              Loading peers...
-            </div>
-          )}
-          {error && (
-            <div className="flex items-center gap-2 py-6 text-sm text-destructive">
-              <ShieldOff className="h-4 w-4" />
-              {error}
-            </div>
-          )}
-          {!loading && !error && peers.length === 0 && (
-            <p className="py-6 text-sm text-muted-foreground">
-              No paired devices yet. Tap "Pair this device" above to start.
-            </p>
-          )}
-          {!loading && !error && unlinkedActivePeers.length > 0 && (
-            <div className="mb-3 border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
-              {unlinkedActivePeers.length} paired device{unlinkedActivePeers.length === 1 ? '' : 's'} are not linked to a human identity yet.
-            </div>
-          )}
-          {!loading && (() => {
-            // Names that appear more than once across the active peer list
-            // get a short peer suffix appended so users can tell them apart.
-            const counts: Record<string, number> = {}
-            for (const p of peers) {
-              if (!p.revoked_at && p.display_name) {
-                counts[p.display_name] = (counts[p.display_name] ?? 0) + 1
-              }
-            }
-            return peers.map((p) => (
-              <PeerRowItem
-                key={p.peer_id}
-                peer={p}
-                collides={(counts[p.display_name] ?? 0) > 1}
-                owners={ownerByPeerID.get(p.peer_id) ?? []}
-                ownerChoices={ownerChoices}
-                ownersReady={ownerDataReady}
-                ownerUpdating={updatingOwnerPeerID === p.peer_id}
-                onOwnerChange={(userID) => { void changeDeviceOwner(p.peer_id, userID) }}
-                onRevoke={() => revoke(p.peer_id)}
-              />
-            ))
-          })()}
-        </CardContent>
-      </Card>
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Human identities</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {usersLoading && (
-            <div className="flex items-center gap-2 py-6 text-sm text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              Loading identities...
-            </div>
-          )}
-          {usersError && (
-            <div className="flex items-center gap-2 py-6 text-sm text-destructive">
-              <ShieldOff className="h-4 w-4" />
-              {usersError}
-            </div>
-          )}
-          {!usersLoading && !usersError && users.length === 0 && (
-            <p className="py-6 text-sm text-muted-foreground">
-              No human identities recorded yet. Pair another device to link an owner.
-            </p>
-          )}
-          {!usersLoading && !usersError && users.length > 0 && (
-            <div className="divide-y divide-border/40">
-              {users.map((user) => (
-                <div key={user.user_id} className="py-3" data-testid={`user-row-${user.user_id}`}>
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="flex min-w-0 items-center gap-2 text-sm font-medium">
-                      <UserRound className="h-4 w-4 shrink-0 text-muted-foreground" />
-                      <span className="truncate">{user.display_name || user.user_id}</span>
-                      {user.is_self && (
-                        <Badge variant="outline" tone="success" className="text-[10px]">you</Badge>
-                      )}
-                    </div>
-                    {!user.is_self && user.peers.length === 0 ? (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => { void removeStaleIdentity(user) }}
-                        disabled={deletingUserID === user.user_id}
-                        className="text-destructive hover:bg-destructive/10 hover:text-destructive"
-                      >
-                        {deletingUserID === user.user_id ? (
-                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                        ) : (
-                          <Trash2 className="h-3.5 w-3.5" />
-                        )}
-                        Remove
-                      </Button>
-                    ) : null}
-                  </div>
-                  {user.peers.length === 0 ? (
-                    <div className="mt-1 text-xs text-muted-foreground">No linked devices</div>
-                  ) : (
-                    <div className="mt-2 flex flex-wrap gap-1.5">
-                      {user.peers.map((peer) => (
-                        <Badge key={peer.peer_id} variant="outline" tone="muted" className="text-[10px]">
-                          <Laptop className="h-3 w-3" />
-                          {peer.display_name || `peer-${shortPeerSuffix(peer.peer_id)}`}
-                        </Badge>
-                      ))}
-                    </div>
-                  )}
-                  <div className="mt-0.5 font-mono text-[10px] text-muted-foreground/70">
-                    {user.user_id}
-                  </div>
+      <Tabs value={activeTab} onValueChange={changeTab} className="space-y-4">
+        <TabsList variant="line" className="w-full justify-start overflow-x-auto border-b border-border">
+          <TabsTrigger value="people" data-testid="pairing-tab-people">
+            <UsersRound className="h-3.5 w-3.5" />
+            People
+          </TabsTrigger>
+          <TabsTrigger value="devices" data-testid="pairing-tab-devices">
+            <Laptop className="h-3.5 w-3.5" />
+            Devices
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="people" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Human identities</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {usersLoading && (
+                <div className="flex items-center gap-2 py-6 text-sm text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Loading identities...
                 </div>
-              ))}
-            </div>
+              )}
+              {usersError && (
+                <div className="flex items-center gap-2 py-6 text-sm text-destructive">
+                  <ShieldOff className="h-4 w-4" />
+                  {usersError}
+                </div>
+              )}
+              {!usersLoading && !usersError && users.length === 0 && (
+                <p className="py-6 text-sm text-muted-foreground">
+                  No human identities recorded yet. Pair another device to link an owner.
+                </p>
+              )}
+              {!usersLoading && !usersError && users.length > 0 && (
+                <div className="divide-y divide-border/40">
+                  {users.map((user) => (
+                    <div key={user.user_id} className="py-3" data-testid={`user-row-${user.user_id}`}>
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="flex min-w-0 items-center gap-2 text-sm font-medium">
+                          <UserRound className="h-4 w-4 shrink-0 text-muted-foreground" />
+                          <span className="truncate">{user.display_name || user.user_id}</span>
+                          {user.is_self && (
+                            <Badge variant="outline" tone="success" className="text-[10px]">you</Badge>
+                          )}
+                        </div>
+                        {!user.is_self && user.peers.length === 0 ? (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => { void removeStaleIdentity(user) }}
+                            disabled={deletingUserID === user.user_id}
+                            className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+                          >
+                            {deletingUserID === user.user_id ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <Trash2 className="h-3.5 w-3.5" />
+                            )}
+                            Remove
+                          </Button>
+                        ) : null}
+                      </div>
+                      {user.peers.length === 0 ? (
+                        <div className="mt-1 text-xs text-muted-foreground">No linked devices</div>
+                      ) : (
+                        <div className="mt-2 flex flex-wrap gap-1.5">
+                          {user.peers.map((peer) => (
+                            <Badge key={peer.peer_id} variant="outline" tone="muted" className="text-[10px]">
+                              <Laptop className="h-3 w-3" />
+                              {peer.display_name || `peer-${shortPeerSuffix(peer.peer_id)}`}
+                            </Badge>
+                          ))}
+                        </div>
+                      )}
+                      <div className="mt-0.5 font-mono text-[10px] text-muted-foreground/70">
+                        {user.user_id}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="devices" className="space-y-4">
+          {showGettingStarted && (
+            <GettingStartedCard onDismiss={dismissGettingStarted} />
           )}
-        </CardContent>
-      </Card>
+          <div className="flex flex-wrap gap-2">
+            <ShowCodeModal onComplete={refreshPeopleAndDevices} />
+            <EnterCodeModal
+              onComplete={refreshPeopleAndDevices}
+              initialPayload={pastePayload}
+              autoOpen={!!pastePayload}
+            />
+          </div>
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Devices</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {loading && (
+                <div className="flex items-center gap-2 py-6 text-sm text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Loading peers...
+                </div>
+              )}
+              {error && (
+                <div className="flex items-center gap-2 py-6 text-sm text-destructive">
+                  <ShieldOff className="h-4 w-4" />
+                  {error}
+                </div>
+              )}
+              {!loading && !error && peers.length === 0 && (
+                <p className="py-6 text-sm text-muted-foreground">
+                  No paired devices yet. Tap "Pair this device" above to start.
+                </p>
+              )}
+              {!loading && !error && unlinkedActivePeers.length > 0 && (
+                <div className="mb-3 border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+                  {unlinkedActivePeers.length} paired device{unlinkedActivePeers.length === 1 ? '' : 's'} are not linked to a human identity yet.
+                </div>
+              )}
+              {!loading && (() => {
+                // Names that appear more than once across the active peer list
+                // get a short peer suffix appended so users can tell them apart.
+                const counts: Record<string, number> = {}
+                for (const p of peers) {
+                  if (!p.revoked_at && p.display_name) {
+                    counts[p.display_name] = (counts[p.display_name] ?? 0) + 1
+                  }
+                }
+                return peers.map((p) => (
+                  <PeerRowItem
+                    key={p.peer_id}
+                    peer={p}
+                    collides={(counts[p.display_name] ?? 0) > 1}
+                    owners={ownerByPeerID.get(p.peer_id) ?? []}
+                    ownerChoices={ownerChoices}
+                    ownersReady={ownerDataReady}
+                    ownerUpdating={updatingOwnerPeerID === p.peer_id}
+                    onOwnerChange={(userID) => { void changeDeviceOwner(p.peer_id, userID) }}
+                    onRevoke={() => revoke(p.peer_id)}
+                  />
+                ))
+              })()}
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
     </div>
   )
 }

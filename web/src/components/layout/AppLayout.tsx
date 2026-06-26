@@ -9,10 +9,10 @@ import {
   GitBranch,
   Layers,
   LayoutDashboard,
+  Laptop,
   Link2,
   ListTodo,
   Menu,
-  QrCode,
   Radio,
   Route as RouteIcon,
   Search as SearchIcon,
@@ -20,6 +20,7 @@ import {
   ShieldCheck,
   Sliders,
   Sparkles,
+  UsersRound,
   Wrench,
 } from 'lucide-react'
 import { useActiveWorkers, useLiveDelegationCount, useWorkerLiveCount } from './use-worker-live-count'
@@ -128,7 +129,8 @@ const knowledgeNavBase: NavItem[] = [
 
 const networkNav: NavItem[] = [
   { label: 'Mesh', href: '/mesh', icon: <Radio className="h-4 w-4" />, hint: 'Peer-to-peer agent network: live agents, messages, file claims' },
-  { label: 'Paired devices', href: '/pairing', icon: <QrCode className="h-4 w-4" />, hint: 'Pair another machine with this MCPlexer' },
+  { label: 'People', href: '/pairing?tab=people', icon: <UsersRound className="h-4 w-4" />, hint: 'Human identities and the devices linked to them' },
+  { label: 'Devices', href: '/pairing?tab=devices', icon: <Laptop className="h-4 w-4" />, hint: 'Paired machines and device ownership' },
   { label: 'Linked workspaces', href: '/workspace-links', icon: <Link2 className="h-4 w-4" />, hint: 'Sync a workspace across paired machines' },
 ]
 
@@ -139,51 +141,79 @@ const settingsNav: NavItem[] = [
   { label: 'Settings', href: '/settings', icon: <Settings className="h-4 w-4" /> },
 ]
 
+function splitNavHref(href: string): { path: string; search: string } {
+  const [rawPath, search = ''] = href.split('?')
+  return { path: rawPath || '/', search }
+}
+
+function navTestID(href: string): string {
+  return `nav-${href.replace(/^\//, '').replace(/[/?=&]/g, '-') || 'dashboard'}`
+}
+
+function navSearchMatches(path: string, expectedSearch: string, currentSearch: string): boolean {
+  const expected = new URLSearchParams(expectedSearch)
+  const current = new URLSearchParams(currentSearch)
+  for (const [key, expectedValue] of expected.entries()) {
+    const actualValue = current.get(key)
+    if (actualValue === expectedValue) continue
+    if (path === '/pairing' && key === 'tab' && expectedValue === 'devices' && actualValue === null) {
+      continue
+    }
+    return false
+  }
+  return true
+}
+
 function NavLink({ item, onNavigate }: { item: NavItem; onNavigate?: () => void }) {
   const location = useLocation()
+  const { path: itemPath, search: itemSearch } = splitNavHref(item.href)
+  const navID = navTestID(item.href)
+  const hasSearch = itemSearch.length > 0
   const active =
-    location.pathname === item.href ||
-    // Workspaces: keep access, routing, and settings distinct in the sidebar.
-    (item.href === '/workspaces' && location.pathname === '/workspaces') ||
-    (item.href === '/workspaces/routes' && location.pathname.startsWith('/workspaces/routes')) ||
-    (item.href === '/workspaces/manage' && location.pathname.startsWith('/workspaces/manage')) ||
-    // Advanced: /advanced and all sub-paths (/advanced/credentials, etc.).
-    (item.href === '/advanced' && location.pathname.startsWith('/advanced')) ||
-    // Legacy /config/* deep links still highlight Advanced.
-    (item.href === '/advanced' && location.pathname.startsWith('/config')) ||
-    (item.href === '/guards' && location.pathname.startsWith('/guards')) ||
-    // Workers detail/edit subpaths (/workers/:id, /workers/new) keep the
-    // parent entry active — but sibling tabs (/workers/cost) are their own
-    // NavLinks and must NOT also light up the Workers parent. Match /workers
-    // exactly OR /workers/<id> where <id> isn't a sibling-tab slug.
-    (item.href === '/workers' &&
-      (location.pathname === '/workers' ||
-        (location.pathname.startsWith('/workers/') &&
-          !location.pathname.startsWith('/workers/cost') &&
-          !location.pathname.startsWith('/workers/model-leaderboard')))) ||
-    // Guards "Overview" matches /guards exactly; the sub-page entries
-    // (Shell/Sanitizer/etc.) match their own path. Avoid both lighting
-    // up when on /guards/shell by anchoring the overview match to the
-    // exact path only.
-    (item.href !== '/guards' && item.href.startsWith('/guards/') && location.pathname.startsWith(item.href)) ||
-    // Memory: landing + all subpages light the same nav entry.
-    (item.href === '/memory' && location.pathname.startsWith('/memory')) ||
-    // Tasks: list + detail (/tasks/:id) share one entry.
-    (item.href === '/tasks' && location.pathname.startsWith('/tasks')) ||
-    // Delegations: context ledger and launch surface.
-    (item.href === '/delegations' && location.pathname.startsWith('/delegations')) ||
-    // Brain browser: the editor entry stays active on deep-linked records
-    // (/brain/browse/:ws/:kind/:id). The "Sync & status" entry (/brain) is
-    // matched by the exact-path check above only, so the two never both light.
-    (item.href === '/brain/browse' && location.pathname.startsWith('/brain/browse')) ||
-    (item.href === '/harness-setup' && (location.pathname === '/harness-setup' || location.pathname === '/install'))
+    (hasSearch && location.pathname === itemPath && navSearchMatches(itemPath, itemSearch, location.search)) ||
+    (!hasSearch &&
+      (location.pathname === itemPath ||
+        // Workspaces: keep access, routing, and settings distinct in the sidebar.
+        (itemPath === '/workspaces' && location.pathname === '/workspaces') ||
+        (itemPath === '/workspaces/routes' && location.pathname.startsWith('/workspaces/routes')) ||
+        (itemPath === '/workspaces/manage' && location.pathname.startsWith('/workspaces/manage')) ||
+        // Advanced: /advanced and all sub-paths (/advanced/credentials, etc.).
+        (itemPath === '/advanced' && location.pathname.startsWith('/advanced')) ||
+        // Legacy /config/* deep links still highlight Advanced.
+        (itemPath === '/advanced' && location.pathname.startsWith('/config')) ||
+        (itemPath === '/guards' && location.pathname.startsWith('/guards')) ||
+        // Workers detail/edit subpaths (/workers/:id, /workers/new) keep the
+        // parent entry active — but sibling tabs (/workers/cost) are their own
+        // NavLinks and must NOT also light up the Workers parent. Match /workers
+        // exactly OR /workers/<id> where <id> isn't a sibling-tab slug.
+        (itemPath === '/workers' &&
+          (location.pathname === '/workers' ||
+            (location.pathname.startsWith('/workers/') &&
+              !location.pathname.startsWith('/workers/cost') &&
+              !location.pathname.startsWith('/workers/model-leaderboard')))) ||
+        // Guards "Overview" matches /guards exactly; the sub-page entries
+        // (Shell/Sanitizer/etc.) match their own path. Avoid both lighting
+        // up when on /guards/shell by anchoring the overview match to the
+        // exact path only.
+        (itemPath !== '/guards' && itemPath.startsWith('/guards/') && location.pathname.startsWith(itemPath)) ||
+        // Memory: landing + all subpages light the same nav entry.
+        (itemPath === '/memory' && location.pathname.startsWith('/memory')) ||
+        // Tasks: list + detail (/tasks/:id) share one entry.
+        (itemPath === '/tasks' && location.pathname.startsWith('/tasks')) ||
+        // Delegations: context ledger and launch surface.
+        (itemPath === '/delegations' && location.pathname.startsWith('/delegations')) ||
+        // Brain browser: the editor entry stays active on deep-linked records
+        // (/brain/browse/:ws/:kind/:id). The "Sync & status" entry (/brain) is
+        // matched by the exact-path check above only, so the two never both light.
+        (itemPath === '/brain/browse' && location.pathname.startsWith('/brain/browse')) ||
+        (itemPath === '/harness-setup' && (location.pathname === '/harness-setup' || location.pathname === '/install'))))
 
   return (
     <Link
       to={item.href}
       onClick={onNavigate}
       title={item.hint}
-      data-testid={`nav-${item.href.replace(/^\//, '').replace(/\//g, '-') || 'dashboard'}`}
+      data-testid={navID}
       className={cn(
         'group relative flex items-center gap-3 px-4 py-2 text-[13px] tracking-wide transition-colors duration-150',
         active
@@ -212,7 +242,7 @@ function NavLink({ item, onNavigate }: { item: NavItem; onNavigate?: () => void 
       <span className="ml-auto inline-flex items-center gap-1">
         {typeof item.liveBadge === 'number' && item.liveBadge > 0 && (
           <span
-            data-testid={`nav-${item.href.replace(/^\//, '')}-live-badge`}
+            data-testid={`${navID}-live-badge`}
             className="inline-flex h-5 min-w-5 items-center justify-center rounded-sm bg-emerald-500/15 px-1.5 font-mono text-[10px] font-medium tabular-nums text-emerald-300"
             title={`${item.liveBadge} running`}
           >
@@ -221,7 +251,7 @@ function NavLink({ item, onNavigate }: { item: NavItem; onNavigate?: () => void 
         )}
         {typeof item.warnBadge === 'number' && item.warnBadge > 0 && (
           <span
-            data-testid={`nav-${item.href.replace(/^\//, '')}-warn-badge`}
+            data-testid={`${navID}-warn-badge`}
             className="inline-flex h-5 min-w-5 items-center justify-center rounded-sm bg-amber-500/15 px-1.5 font-mono text-[10px] font-medium tabular-nums text-amber-300"
             title={`${item.warnBadge} waiting on you`}
           >
@@ -230,7 +260,7 @@ function NavLink({ item, onNavigate }: { item: NavItem; onNavigate?: () => void 
         )}
         {typeof item.infoBadge === 'number' && item.infoBadge > 0 && (
           <span
-            data-testid={`nav-${item.href.replace(/^\//, '')}-info-badge`}
+            data-testid={`${navID}-info-badge`}
             className="inline-flex h-5 min-w-5 items-center justify-center rounded-sm bg-sky-500/15 px-1.5 font-mono text-[10px] font-medium tabular-nums text-sky-300"
             title={`${item.infoBadge} incoming`}
           >
@@ -239,7 +269,7 @@ function NavLink({ item, onNavigate }: { item: NavItem; onNavigate?: () => void 
         )}
         {typeof item.alertBadge === 'number' && item.alertBadge > 0 && (
           <span
-            data-testid={`nav-${item.href.replace(/^\//, '')}-alert-badge`}
+            data-testid={`${navID}-alert-badge`}
             className="inline-flex h-2 w-2 rounded-full bg-red-500"
             title={`${item.alertBadge} pending approval${item.alertBadge === 1 ? '' : 's'}`}
           />
@@ -609,7 +639,10 @@ function ServerSidebarNav({
 
   const serverDeviceNav: NavItem[] = [
     ...(p2pEnabled
-      ? [{ label: 'Paired Devices', href: '/pairing', icon: <QrCode className="h-4 w-4" /> }]
+      ? [
+          { label: 'People', href: '/pairing?tab=people', icon: <UsersRound className="h-4 w-4" /> },
+          { label: 'Devices', href: '/pairing?tab=devices', icon: <Laptop className="h-4 w-4" /> },
+        ]
       : []),
     { label: 'Backups', href: '/backups', icon: <Archive className="h-4 w-4" /> },
     { label: 'Settings', href: '/settings', icon: <Settings className="h-4 w-4" /> },

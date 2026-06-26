@@ -18,7 +18,7 @@ const PAGE_TITLES: Record<string, string> = {
   config: 'Config',
   servers: 'Servers',
   workspaces: 'Workspaces',
-  pairing: 'Paired Devices',
+  pairing: 'People & Devices',
   backups: 'Backups',
   settings: 'Settings',
   setup: 'Quick Setup',

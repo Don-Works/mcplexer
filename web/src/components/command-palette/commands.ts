@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { NavigateFunction } from 'react-router-dom'
-import { Activity, AlertTriangle, Archive, Bell, Bot, Brain as BrainIcon, DollarSign, FileText, Gauge, GitBranch, Globe, Key, KeyRound, Layers, LayoutDashboard, Link2, ListTodo, Lock, Package, Plus, QrCode, Radio, Search, Server, Settings, ShieldCheck, Sliders, Sparkles, Wrench, Zap } from 'lucide-react'
+import { Activity, AlertTriangle, Archive, Bell, Bot, Brain as BrainIcon, DollarSign, FileText, Gauge, GitBranch, Globe, Key, KeyRound, Laptop, Layers, LayoutDashboard, Link2, ListTodo, Lock, Package, Plus, Radio, Search, Server, Settings, ShieldCheck, Sliders, Sparkles, UsersRound, Wrench, Zap } from 'lucide-react'
 import { createElement } from 'react'
 import { getDashboard, listAuthScopes, listDownstreams, listRoutes, listWorkspaces } from '@/api/client'
 import { listNotifications, type StoredNotification } from '@/api/notifications'
@@ -56,7 +56,8 @@ const PAGES: CommandEntry[] = [
   { id: 'page-skills', label: 'Skills', to: '/skills', keywords: 'recipe skill md registry knowledge', icon: createElement(Sparkles, { className: iconClass }) },
   { id: 'page-brain', label: 'Brain notes', to: '/brain/browse', keywords: 'brain ledger records tasks memories notes knowledge', icon: createElement(BrainIcon, { className: iconClass }) },
   { id: 'page-mesh', label: 'Mesh', to: '/mesh', keywords: 'p2p agents network inter peer', icon: createElement(Radio, { className: iconClass }) },
-  { id: 'page-pairing', label: 'Paired devices', to: '/pairing', keywords: 'peer p2p pair network device', icon: createElement(QrCode, { className: iconClass }) },
+  { id: 'page-network-people', label: 'People', to: '/pairing?tab=people', keywords: 'human identities owners people p2p network devices', icon: createElement(UsersRound, { className: iconClass }) },
+  { id: 'page-network-devices', label: 'Devices', to: '/pairing?tab=devices', keywords: 'peer p2p pair network device owner machine', icon: createElement(Laptop, { className: iconClass }) },
   { id: 'page-linked-workspaces', label: 'Linked workspaces', to: '/workspace-links', keywords: 'sync paired machines network workspace links', icon: createElement(Link2, { className: iconClass }) },
   { id: 'page-harnesses', label: 'AI Harnesses', to: '/harness-setup', keywords: 'wire mcp ide claude cursor codex opencode gemini mimo pi harness bootstrap setup', icon: createElement(Wrench, { className: iconClass }) },
   { id: 'page-setup', label: 'Add integration', to: '/setup', keywords: 'quick setup add server service tool github linear postgres clickup', icon: createElement(Sparkles, { className: iconClass }) },
