@@ -125,6 +125,65 @@ func TestPeerUserLinkPairWithOnePeer(t *testing.T) {
 	}
 }
 
+func TestPeerUserRelinkMovesDeviceBetweenUsers(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+
+	addPairedPeer(t, ctx, db, "peer-1", "laptop")
+	if err := db.UpsertUser(ctx, "u-old", "Old"); err != nil {
+		t.Fatalf("upsert old: %v", err)
+	}
+	if err := db.UpsertUser(ctx, "u-new", "New"); err != nil {
+		t.Fatalf("upsert new: %v", err)
+	}
+	if err := db.LinkPeerToUser(ctx, "peer-1", "u-old"); err != nil {
+		t.Fatalf("link old: %v", err)
+	}
+
+	if err := db.RelinkPeerToUser(ctx, "peer-1", "u-new"); err != nil {
+		t.Fatalf("relink: %v", err)
+	}
+
+	oldPeers, err := db.ListPeersForUser(ctx, "u-old")
+	if err != nil {
+		t.Fatalf("list old peers: %v", err)
+	}
+	if len(oldPeers) != 0 {
+		t.Fatalf("old owner peers = %+v, want none", oldPeers)
+	}
+	newPeers, err := db.ListPeersForUser(ctx, "u-new")
+	if err != nil {
+		t.Fatalf("list new peers: %v", err)
+	}
+	if len(newPeers) != 1 || newPeers[0].PeerID != "peer-1" {
+		t.Fatalf("new owner peers = %+v, want peer-1", newPeers)
+	}
+}
+
+func TestPeerUserUnlinkClearsDeviceOwner(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+
+	addPairedPeer(t, ctx, db, "peer-1", "laptop")
+	if err := db.UpsertUser(ctx, "u-old", "Old"); err != nil {
+		t.Fatalf("upsert old: %v", err)
+	}
+	if err := db.LinkPeerToUser(ctx, "peer-1", "u-old"); err != nil {
+		t.Fatalf("link old: %v", err)
+	}
+
+	if err := db.UnlinkPeerFromUsers(ctx, "peer-1"); err != nil {
+		t.Fatalf("unlink: %v", err)
+	}
+	peers, err := db.ListPeersForUser(ctx, "u-old")
+	if err != nil {
+		t.Fatalf("list old peers: %v", err)
+	}
+	if len(peers) != 0 {
+		t.Fatalf("owner peers = %+v, want none", peers)
+	}
+}
+
 // TestPeerUserLinkMultiMachine is the M7.1 hero scenario: the same human
 // (Max) operates two laptops. Pairing the second laptop should NOT create
 // a second user row — the new peer just gets linked to Max's existing

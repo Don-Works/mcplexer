@@ -3,7 +3,7 @@
 // with composer. Sidebar: status history timeline, composition view,
 // quick actions (claim, edit, delete, pin).
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import {
   AlertTriangle,
@@ -32,7 +32,7 @@ import { useApi } from '@/hooks/use-api'
 import { useTasksStream } from '@/hooks/use-tasks-stream'
 import { useStatusVocab } from '@/hooks/use-status-vocab'
 import { useActiveMeshAgents } from '@/hooks/use-active-mesh-agents'
-import { listWorkspaces } from '@/api/client'
+import { listUsers, listWorkspaces } from '@/api/client'
 import {
   appendTaskNote,
   claimTask,
@@ -129,6 +129,8 @@ export function TaskDetailPage() {
 
   const wsFetcher = useCallback(() => listWorkspaces(), [])
   const { data: workspaces } = useApi(wsFetcher)
+  const usersFetcher = useCallback(() => listUsers(), [])
+  const { data: usersResponse } = useApi(usersFetcher)
 
   const taskFetcher = useCallback(() => {
     if (!workspaceId || !id) return Promise.resolve(null as unknown as Task)
@@ -203,24 +205,35 @@ export function TaskDetailPage() {
   const [editOpen, setEditOpen] = useState(false)
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [noteInput, setNoteInput] = useState('')
+  const claimInFlightRef = useRef(false)
 
-  // Claim auto-resolves to a stable "dashboard:<short-window-id>"
-  // session identifier — the operator should never be prompted to type
-  // an opaque session id by hand. Window.crypto.randomUUID gives us a
-  // per-tab stable handle that survives soft reloads via sessionStorage.
+  // Dashboard claims should use the local human identity when it exists:
+  // people own tasks, devices/sessions only hold agent leases. The synthetic
+  // dashboard session remains a fallback for pre-user bootstrap installs.
   const handleClaim = useCallback(async () => {
-    if (!task) return
+    if (!task || claimInFlightRef.current) return
+    claimInFlightRef.current = true
     setBusy('claim')
     try {
-      await claimTask(task.workspace_id, task.id, { session_id: dashboardSessionId() })
-      toast.success('Claimed')
+      const selfUser = usersResponse?.users?.find((u) => u.is_self)
+      if (selfUser?.user_id) {
+        await updateTask(task.workspace_id, task.id, {
+          assignee: { user_id: selfUser.user_id },
+          status: isWorkingStatus(task.status, statusVocab) ? undefined : 'doing',
+        })
+        toast.success(`Claimed as @${selfUser.display_name || selfUser.user_id}`)
+      } else {
+        await claimTask(task.workspace_id, task.id, { session_id: dashboardSessionId() })
+        toast.success('Claimed')
+      }
       refetch()
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Claim failed')
     } finally {
+      claimInFlightRef.current = false
       setBusy(null)
     }
-  }, [task, refetch])
+  }, [task, usersResponse, statusVocab, refetch])
 
   const handleTogglePin = useCallback(async () => {
     if (!task) return
@@ -321,10 +334,20 @@ export function TaskDetailPage() {
   const workspaceName = workspaces?.find((w) => w.id === task.workspace_id)?.name ?? shortTaskId(task.workspace_id)
   const inStateMs = timeInCurrentState(history, now)
   const workedMs = cumulativeTimeWorked(history, now)
-  const lease = leaseStaleness(task.status, task.assignee_session_id, task.closed_at, activeAgents.ready ? activeAgents.sessionIds : null, statusVocab)
-  const myDashboardSession = dashboardSessionId()
-  const iOwnTheLease = task.assignee_session_id === myDashboardSession
   const humanOwner = isHumanAssigned(task)
+  const lease = leaseStaleness(
+    task.status,
+    task.assignee_session_id,
+    task.closed_at,
+    activeAgents.ready ? activeAgents.sessionIds : null,
+    statusVocab,
+    task.assignee_user_id,
+  )
+  const myDashboardSession = dashboardSessionId()
+  const iOwnTheLease = !humanOwner && task.assignee_session_id === myDashboardSession
+  const abandonedAssigneeLabel = task.assignee_session_id?.startsWith('dashboard')
+    ? 'dashboard session'
+    : assigneeLabel(task)
 
   return (
     <div className="space-y-5">
@@ -380,7 +403,7 @@ export function TaskDetailPage() {
           <span className="inline-flex items-center gap-2">
             <AlertTriangle className="h-4 w-4" />
             <span>
-              Assignee <span className="font-mono">{task.assignee_session_id?.slice(0, 8) ?? '—'}</span> is no longer on the mesh — task abandoned.
+              Assignee <span className="font-mono">{abandonedAssigneeLabel}</span> is no longer active on the mesh. This task can be reclaimed.
             </span>
           </span>
           <Button size="sm" variant="ghost" onClick={handleClaim} disabled={busy === 'claim'}>

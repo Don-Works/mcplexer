@@ -1,11 +1,23 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/don-works/mcplexer/internal/store"
 )
+
+type userAdminStore interface {
+	DeleteUser(ctx context.Context, userID string) error
+}
+
+type userDeviceAdminStore interface {
+	GetPeer(ctx context.Context, peerID string) (*store.P2PPeer, error)
+	RelinkPeerToUser(ctx context.Context, peerID, userID string) error
+	UnlinkPeerFromUsers(ctx context.Context, peerID string) error
+}
 
 // usersHandler exposes the M7.1 per-human user identity API. It is a thin
 // projection over store.UserStore: list every known user (self + paired
@@ -63,6 +75,117 @@ func (h *usersHandler) get(w http.ResponseWriter, r *http.Request) {
 		peers = []store.P2PPeer{}
 	}
 	writeJSON(w, http.StatusOK, userWithPeers{User: *u, Peers: peers})
+}
+
+// delete removes a stale non-self human identity, but only after confirming it
+// has no linked devices. Device revocation stays on /api/p2p/peers/{id}; this
+// endpoint is for cleaning up orphaned people rows left by old pairing flows.
+func (h *usersHandler) delete(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "missing user id")
+		return
+	}
+	u, err := h.store.GetUser(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "user not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "get user: "+err.Error())
+		return
+	}
+	if u.IsSelf {
+		writeError(w, http.StatusBadRequest, "cannot delete the local self identity")
+		return
+	}
+	peers, err := h.store.ListPeersForUser(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "list peers: "+err.Error())
+		return
+	}
+	if len(peers) > 0 {
+		writeError(w, http.StatusConflict, "identity still has linked devices")
+		return
+	}
+	deleter, ok := h.store.(userAdminStore)
+	if !ok {
+		writeError(w, http.StatusNotImplemented, "user deletion is not supported by this store")
+		return
+	}
+	if err := deleter.DeleteUser(r.Context(), id); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "user not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "delete user: "+err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// updateDeviceOwner reassigns a paired peer (device) to a human identity, or
+// unlinks it when user_id is null/empty. This is deliberately scoped to the
+// ownership join table; device trust/revocation stays on the p2p peer routes.
+func (h *usersHandler) updateDeviceOwner(w http.ResponseWriter, r *http.Request) {
+	peerID := r.PathValue("peer_id")
+	if peerID == "" {
+		writeError(w, http.StatusBadRequest, "missing peer id")
+		return
+	}
+	admin, ok := h.store.(userDeviceAdminStore)
+	if !ok {
+		writeError(w, http.StatusNotImplemented, "device ownership is not supported by this store")
+		return
+	}
+	peer, err := admin.GetPeer(r.Context(), peerID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "peer not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "get peer: "+err.Error())
+		return
+	}
+	if peer == nil {
+		writeError(w, http.StatusNotFound, "peer not found")
+		return
+	}
+	var req map[string]*string
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "decode: "+err.Error())
+		return
+	}
+	rawUserID, ok := req["user_id"]
+	if !ok {
+		writeError(w, http.StatusBadRequest, "user_id is required; use null or empty string to unlink")
+		return
+	}
+	userID := ""
+	if rawUserID != nil {
+		userID = strings.TrimSpace(*rawUserID)
+	}
+	if userID == "" {
+		if err := admin.UnlinkPeerFromUsers(r.Context(), peerID); err != nil {
+			writeError(w, http.StatusInternalServerError, "unlink device owner: "+err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"peer_id": peerID, "user_id": nil})
+		return
+	}
+	if _, err := h.store.GetUser(r.Context(), userID); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "user not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "get user: "+err.Error())
+		return
+	}
+	if err := admin.RelinkPeerToUser(r.Context(), peerID, userID); err != nil {
+		writeError(w, http.StatusInternalServerError, "update device owner: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"peer_id": peerID, "user_id": userID})
 }
 
 // whoamiResponse is the JSON shape of GET /api/v1/users/self. On a fresh

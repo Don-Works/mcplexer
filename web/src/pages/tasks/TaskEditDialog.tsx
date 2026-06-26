@@ -4,7 +4,7 @@
 // dialogs that drift apart. The submit handler picks the right API
 // call from `mode`.
 
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Loader2, Plus, X } from 'lucide-react'
 import { toast } from 'sonner'
 
@@ -28,6 +28,8 @@ import {
   type Task,
   type UpdateTaskBody,
 } from '@/api/tasks'
+import { listUsers } from '@/api/client'
+import { useApi } from '@/hooks/use-api'
 import { cn } from '@/lib/utils'
 
 interface BaseProps {
@@ -96,6 +98,11 @@ function taskAssigneePayload(s: string): CreateTaskBody['assignee'] {
 
 export function TaskEditDialog(props: TaskEditDialogProps) {
   const isEdit = props.mode === 'edit'
+  const editTask = isEdit ? props.task : null
+  const editTagsKey = editTask?.tags?.join('\n') ?? ''
+  const resetKey = isEdit
+    ? `edit:${props.task.workspace_id}:${props.task.id}`
+    : `create:${props.defaultWorkspaceId ?? ''}:${props.composeInto ?? ''}:${props.initialAssignee ?? ''}`
   const initial = useMemo<{
     workspaceId: string
     title: string
@@ -109,16 +116,17 @@ export function TaskEditDialog(props: TaskEditDialogProps) {
     composeInto: string
   }>(() => {
     if (isEdit) {
+      const task = props.task
       return {
-        workspaceId: props.task.workspace_id,
-        title: props.task.title,
-        description: props.task.description ?? '',
-        status: props.task.status,
-        priority: props.task.priority || 'normal',
-        dueAtLocal: toLocalInputValue(props.task.due_at),
-        tags: props.task.tags ?? [],
-        meta: props.task.meta ?? '',
-        assignee: taskAssigneeInput(props.task),
+        workspaceId: task.workspace_id,
+        title: task.title,
+        description: task.description ?? '',
+        status: task.status,
+        priority: task.priority || 'normal',
+        dueAtLocal: toLocalInputValue(task.due_at),
+        tags: task.tags ?? [],
+        meta: task.meta ?? '',
+        assignee: taskAssigneeInput(task),
         composeInto: '',
       }
     }
@@ -134,7 +142,24 @@ export function TaskEditDialog(props: TaskEditDialogProps) {
       assignee: props.initialAssignee ?? '',
       composeInto: props.composeInto ?? '',
     }
-  }, [props, isEdit])
+  }, [
+    isEdit,
+    editTask?.workspace_id,
+    editTask?.id,
+    editTask?.title,
+    editTask?.description,
+    editTask?.status,
+    editTask?.priority,
+    editTask?.due_at,
+    editTagsKey,
+    editTask?.meta,
+    editTask?.assignee_user_id,
+    editTask?.assignee_peer_id,
+    editTask?.assignee_session_id,
+    props.mode === 'create' ? props.defaultWorkspaceId : undefined,
+    props.mode === 'create' ? props.initialAssignee : undefined,
+    props.mode === 'create' ? props.composeInto : undefined,
+  ])
 
   const [workspaceId, setWorkspaceId] = useState(initial.workspaceId)
   const [title, setTitle] = useState(initial.title)
@@ -160,9 +185,22 @@ export function TaskEditDialog(props: TaskEditDialogProps) {
   const [assignee, setAssignee] = useState(initial.assignee)
   const [composeInto, setComposeInto] = useState(initial.composeInto)
   const [busy, setBusy] = useState(false)
+  const usersFetcher = useCallback(() => listUsers(), [])
+  const { data: usersResponse } = useApi(usersFetcher)
+  const humanUsers = usersResponse?.users ?? []
+  const wasOpenRef = useRef(false)
+  const lastResetKeyRef = useRef<string | null>(null)
 
   useEffect(() => {
-    if (!props.open) return
+    if (!props.open) {
+      wasOpenRef.current = false
+      return
+    }
+    const shouldReset = !wasOpenRef.current || lastResetKeyRef.current !== resetKey
+    wasOpenRef.current = true
+    if (!shouldReset) return
+    lastResetKeyRef.current = resetKey
+
     setWorkspaceId(initial.workspaceId)
     setTitle(initial.title)
     setDescription(initial.description)
@@ -181,7 +219,7 @@ export function TaskEditDialog(props: TaskEditDialogProps) {
           ? 'session'
           : 'none',
     )
-  }, [props.open, initial])
+  }, [props.open, resetKey, initial, isEdit, props])
 
   function commitTag() {
     const v = tagInput.trim()
@@ -190,8 +228,7 @@ export function TaskEditDialog(props: TaskEditDialogProps) {
     setTagInput('')
   }
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault()
+  async function saveTask() {
     if (!workspaceId) {
       toast.error('workspace is required')
       return
@@ -267,7 +304,7 @@ export function TaskEditDialog(props: TaskEditDialogProps) {
   return (
     <Dialog open={props.open} onOpenChange={props.onOpenChange}>
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form onSubmit={(e) => e.preventDefault()} className="space-y-4">
           <DialogHeader>
             <DialogTitle>{isEdit ? 'Edit task' : 'New task'}</DialogTitle>
             <DialogDescription>
@@ -365,7 +402,7 @@ export function TaskEditDialog(props: TaskEditDialogProps) {
               label="Assignee"
               hint={
                 assigneeKind === 'user'
-                  ? 'Human user id (from the users surface). Routes to a person, not an agent.'
+                  ? 'Human identity. People can own tasks across many devices.'
                   : 'Session id or peer:session. Blank = unassigned.'
               }
             >
@@ -394,12 +431,30 @@ export function TaskEditDialog(props: TaskEditDialogProps) {
                   ))}
                 </div>
                 {assigneeKind !== 'none' ? (
-                  <Input
-                    value={assignee}
-                    onChange={(e) => setAssignee(e.target.value)}
-                    placeholder={assigneeKind === 'user' ? 'user_xxx' : 'sess_xxx or peer:sess_xxx'}
-                    className="font-mono text-sm"
-                  />
+                  assigneeKind === 'user' && humanUsers.length > 0 ? (
+                    <select
+                      value={assignee}
+                      onChange={(e) => setAssignee(e.target.value)}
+                      className="h-8 w-full border border-border bg-background px-2 text-sm"
+                    >
+                      <option value="">select human identity</option>
+                      {assignee && !humanUsers.some((u) => u.user_id === assignee) ? (
+                        <option value={assignee}>{assignee}</option>
+                      ) : null}
+                      {humanUsers.map((u) => (
+                        <option key={u.user_id} value={u.user_id}>
+                          {u.display_name || u.user_id}{u.is_self ? ' (you)' : ''}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <Input
+                      value={assignee}
+                      onChange={(e) => setAssignee(e.target.value)}
+                      placeholder={assigneeKind === 'user' ? 'user_id' : 'sess_xxx or peer:sess_xxx'}
+                      className="font-mono text-sm"
+                    />
+                  )
                 ) : null}
               </div>
             </Field>
@@ -468,7 +523,7 @@ export function TaskEditDialog(props: TaskEditDialogProps) {
             <Button type="button" variant="ghost" onClick={() => props.onOpenChange(false)} disabled={busy}>
               Cancel
             </Button>
-            <Button type="submit" disabled={busy}>
+            <Button type="button" disabled={busy} onClick={() => void saveTask()}>
               {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : isEdit ? null : <Plus className="h-4 w-4" />}
               {isEdit ? 'Save changes' : 'Create task'}
             </Button>

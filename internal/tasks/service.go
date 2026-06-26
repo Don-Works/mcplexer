@@ -460,7 +460,11 @@ func (s *Service) updateWithSignals(ctx context.Context, workspaceID, id string,
 	// detect assignee transitions. Single-event-per-call contract per
 	// PLAN.md.
 	preStatus := t.Status
-	preAssignee := t.AssigneeSessionID
+	preAssignee := assigneeDisplay(&Assignee{
+		SessionID: t.AssigneeSessionID,
+		PeerID:    t.AssigneePeerID,
+		UserID:    t.AssigneeUserID,
+	})
 	preClosed := t.ClosedAt != nil
 	history := readHistory(t.StatusHistoryJSON)
 	now := time.Now().UTC()
@@ -531,6 +535,8 @@ func (s *Service) updateWithSignals(ctx context.Context, workspaceID, id string,
 	}
 	if p.Assignee != nil {
 		from := assigneeDisplay(&Assignee{SessionID: t.AssigneeSessionID, PeerID: t.AssigneePeerID, UserID: t.AssigneeUserID})
+		to := assigneeDisplay(p.Assignee)
+		assigneeChanged := from != to
 		t.AssigneeSessionID = p.Assignee.SessionID
 		t.AssigneePeerID = p.Assignee.PeerID
 		t.AssigneeUserID = p.Assignee.UserID
@@ -541,12 +547,14 @@ func (s *Service) updateWithSignals(ctx context.Context, workspaceID, id string,
 		} else {
 			t.AssigneeOriginKind = store.TaskAssigneeLocal
 		}
-		t.AssignedBySessionID = p.UpdatedBySessionID
-		t.AssignedAt = &now
-		history = append(history, store.TaskStatusHistoryEntry{
-			At: now, BySession: p.UpdatedBySessionID, Evt: "assigned",
-			From: from, To: assigneeDisplay(p.Assignee),
-		})
+		if assigneeChanged {
+			t.AssignedBySessionID = p.UpdatedBySessionID
+			t.AssignedAt = &now
+			history = append(history, store.TaskStatusHistoryEntry{
+				At: now, BySession: p.UpdatedBySessionID, Evt: "assigned",
+				From: from, To: to,
+			})
+		}
 	}
 	if p.Pinned != nil {
 		t.Pinned = *p.Pinned
@@ -639,7 +647,8 @@ func (s *Service) updateWithSignals(ctx context.Context, workspaceID, id string,
 	// a converging peer push stomps the in-progress work.
 	statusEntered := s.isWorkingStatus(ctx, t.WorkspaceID, t.Status) &&
 		p.Status != nil && !s.isWorkingStatus(ctx, t.WorkspaceID, preStatus)
-	assigneeJustSet := p.Assignee != nil && (t.AssigneeSessionID != "" || t.AssigneePeerID != "")
+	postAssignee := assigneeDisplay(&Assignee{SessionID: t.AssigneeSessionID, PeerID: t.AssigneePeerID, UserID: t.AssigneeUserID})
+	assigneeJustSet := p.Assignee != nil && postAssignee != preAssignee && (t.AssigneeSessionID != "" || t.AssigneePeerID != "")
 	hasAssignee := t.AssigneeSessionID != "" || t.AssigneePeerID != ""
 	if t.ClosedAt == nil && s.isWorkingStatus(ctx, t.WorkspaceID, t.Status) && hasAssignee && (statusEntered || assigneeJustSet) {
 		expires := now.Add(LeaseTTL)
@@ -903,7 +912,11 @@ func (s *Service) emitUpdate(
 	}
 	statusChanged := p.Status != nil && *p.Status != preStatus
 	enteredTerminal := !preClosed && updated.ClosedAt != nil
-	assigneeChanged := p.Assignee != nil && updated.AssigneeSessionID != preAssignee
+	assigneeChanged := p.Assignee != nil && assigneeDisplay(&Assignee{
+		SessionID: updated.AssigneeSessionID,
+		PeerID:    updated.AssigneePeerID,
+		UserID:    updated.AssigneeUserID,
+	}) != preAssignee
 	switch {
 	case enteredTerminal:
 		s.emitter.EmitClosed(ctx, updated, p.UpdatedBySessionID, ec)
