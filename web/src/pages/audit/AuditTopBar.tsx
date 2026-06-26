@@ -40,7 +40,7 @@ export function AuditTopBar({
         onSubmit={onSearchSubmit}
         mode={searchMode}
         capabilities={capabilities}
-        className="min-w-[16rem] flex-1"
+        className="min-w-0 flex-1 basis-full sm:basis-[20rem]"
       />
 
       {paused && bufferedCount > 0 && (

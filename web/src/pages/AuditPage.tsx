@@ -20,6 +20,7 @@ import { AuditLeftRail } from '@/pages/audit/AuditLeftRail'
 import { AuditFeed } from '@/pages/audit/AuditFeed'
 import { useAuditUrlFilter } from '@/pages/audit/use-audit-url-filter'
 import { useAuditSelection } from '@/pages/audit/use-audit-selection'
+import { cn } from '@/lib/utils'
 
 const PAGE_SIZE = 50
 
@@ -119,6 +120,7 @@ export function AuditPage() {
   // --- Local UI state ---
   const [dense, setDense] = useState(false)
   const [filtersOpen, setFiltersOpen] = useState(false) // mobile facet sheet
+  const showInlineInspector = isWide && selected !== null
 
   const onFilterPatch = useCallback(
     (patch: Partial<AuditFilter>) => {
@@ -166,9 +168,9 @@ export function AuditPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between gap-3">
-        <h1 className="text-2xl font-bold">Audit Logs</h1>
-        <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h1 className="text-xl font-semibold tracking-tight">Audit Logs</h1>
+        <div className="flex shrink-0 items-center gap-2">
           {uniqueLive.length > 0 && !searchActive && (
             <Button variant="ghost" size="sm" onClick={clear} data-testid="audit-clear-live">
               Clear live
@@ -210,7 +212,12 @@ export function AuditPage() {
         </div>
       )}
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[15rem_minmax(0,1fr)_21rem]">
+      <div
+        className={cn(
+          'grid grid-cols-1 gap-4 lg:grid-cols-[15rem_minmax(0,1fr)]',
+          showInlineInspector && '2xl:grid-cols-[15rem_minmax(0,1fr)_21rem]',
+        )}
+      >
         {/* LEFT rail (desktop) */}
         <aside className="hidden lg:block">
           <div className="sticky top-4 max-h-[calc(100vh-2rem)] overflow-y-auto pr-1">{leftRail}</div>
@@ -249,9 +256,9 @@ export function AuditPage() {
           onLoadMore={loadMore}
         />
 
-        {/* RIGHT inline inspector (desktop lg+) — replaces the modal drawer */}
-        <aside className="hidden lg:block">
-          {selected ? (
+        {/* RIGHT inline inspector (desktop 2xl+) — replaces the modal drawer */}
+        {showInlineInspector && selected && (
+          <aside className="hidden 2xl:block">
             <div className="sticky top-4 max-h-[calc(100vh-2rem)] overflow-y-auto border border-border bg-card">
               <AuditInspector
                 record={selected}
@@ -261,17 +268,11 @@ export function AuditPage() {
                 onClose={() => setSelected(null)}
               />
             </div>
-          ) : (
-            <div className="sticky top-4 flex h-48 items-center justify-center border border-dashed border-border text-center">
-              <p className="px-4 font-mono text-xs text-muted-foreground/60">
-                Select a record to inspect. ↑/↓ or j/k to walk, Esc to clear.
-              </p>
-            </div>
-          )}
-        </aside>
+          </aside>
+        )}
       </div>
 
-      {/* Mobile / tablet: Sheet drawer (below lg, where there's no inline pane).
+      {/* Mobile / tablet / laptop: Sheet drawer (below 2xl, where there's no inline pane).
           Only mounted when narrow so its built-in j/k nav can't double-fire
           alongside the inline inspector's keyboard handler. */}
       {!isWide && (

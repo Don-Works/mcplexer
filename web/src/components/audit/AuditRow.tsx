@@ -112,7 +112,7 @@ export function AuditRow({
       }}
     >
       {col.timestamp && (
-        <TableCell className={cn('whitespace-nowrap font-mono text-xs text-muted-foreground', cellPad)}>
+        <TableCell className={cn('w-[7rem] whitespace-nowrap font-mono text-xs text-muted-foreground', cellPad)}>
           <Tooltip>
             <TooltipTrigger asChild>
               <span>{new Date(record.timestamp).toLocaleTimeString()}</span>
@@ -123,7 +123,7 @@ export function AuditRow({
       )}
 
       {col.tool && (
-        <TableCell className={cellPad}>
+        <TableCell className={cn('w-[18rem]', cellPad)}>
           <div className="max-w-[20rem] truncate font-mono text-sm text-accent-foreground" title={record.tool_name}>
             {record.tool_name}
           </div>
@@ -141,7 +141,7 @@ export function AuditRow({
       )}
 
       {col.workspace && (
-        <TableCell className={cn('hidden md:table-cell text-muted-foreground', cellPad)}>
+        <TableCell className={cn('hidden w-[10rem] text-muted-foreground md:table-cell', cellPad)}>
           <div className="max-w-[10rem] truncate">
             {record.workspace_name || (record.workspace_id ? ws(record.workspace_id) : '-')}
           </div>
@@ -149,7 +149,7 @@ export function AuditRow({
       )}
 
       {col.session && (
-        <TableCell className={cn('hidden lg:table-cell', cellPad)}>
+        <TableCell className={cn('hidden w-[8rem] 2xl:table-cell', cellPad)}>
           {record.session_id && (
             <Tooltip>
               <TooltipTrigger asChild>
@@ -181,7 +181,7 @@ export function AuditRow({
       )}
 
       {col.client && (
-        <TableCell className={cn('hidden lg:table-cell', cellPad)}>
+        <TableCell className={cn('hidden w-[9rem] 2xl:table-cell', cellPad)}>
           {record.client_type ? (
             <div className="min-w-0">
               <div className="flex items-center gap-1 text-xs text-foreground" title={record.client_type}>
@@ -201,7 +201,7 @@ export function AuditRow({
       )}
 
       {col.status && (
-        <TableCell className={cellPad}>
+        <TableCell className={cn('w-[6rem]', cellPad)}>
           <Badge
             variant={tone === 'success' ? 'secondary' : tone === 'blocked' ? 'outline' : 'destructive'}
             className={tone === 'blocked' ? 'border-amber-500/40 text-amber-500' : ''}
@@ -218,7 +218,7 @@ export function AuditRow({
       )}
 
       {col.cache && (
-        <TableCell className={cn('hidden lg:table-cell', cellPad)}>
+        <TableCell className={cn('hidden w-[5rem] 2xl:table-cell', cellPad)}>
           {record.cache_hit && (
             <Badge variant="outline" className="border-blue-500/40 text-blue-400">
               cached
@@ -228,7 +228,7 @@ export function AuditRow({
       )}
 
       {col.group && (
-        <TableCell className={cn('hidden lg:table-cell', cellPad)}>
+        <TableCell className={cn('hidden w-[8rem] 2xl:table-cell', cellPad)}>
           {record.execution_id && (
             <Tooltip>
               <TooltipTrigger asChild>
@@ -260,7 +260,7 @@ export function AuditRow({
       )}
 
       {col.latency && (
-        <TableCell className={cn('hidden sm:table-cell text-right font-mono text-sm text-muted-foreground tabular-nums', cellPad)}>
+        <TableCell className={cn('hidden w-[5.5rem] pl-4 text-right font-mono text-sm text-muted-foreground tabular-nums sm:table-cell', cellPad)}>
           {record.latency_ms}ms
         </TableCell>
       )}
