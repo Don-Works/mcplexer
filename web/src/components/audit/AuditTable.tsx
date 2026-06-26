@@ -2,7 +2,6 @@ import { ArrowDown, ArrowUp, Radio } from 'lucide-react'
 import {
   Table,
   TableBody,
-  TableCell,
   TableHead,
   TableHeader,
   TableRow,
@@ -64,8 +63,8 @@ function SortHead({
 }
 
 /**
- * AuditTable — the Mission Control list shell. Owns the colgroup widths +
- * sortable header (time / latency) + the empty state, and maps each record to
+ * AuditTable — the Mission Control list shell. Owns the responsive table
+ * widths + sortable header (time / latency) + the empty state, and maps each record to
  * an AuditRow. Selection, density, column visibility, and the live region are
  * all caller-controlled so scoped feeds can reuse the exact same body with a
  * trimmed column set.
@@ -119,59 +118,36 @@ export function AuditTable({
     latency: true,
     ...columns,
   }
-  const visibleCount = Object.values(col).filter(Boolean).length
+  const empty = records.length === 0 && !loading
 
   return (
-    <Table className="table-fixed">
-      <colgroup>
-        {col.timestamp && <col className="w-[7rem]" />}
-        {col.tool && <col className="w-[18rem]" />}
-        {col.workspace && <col className="hidden md:table-column w-[10rem]" />}
-        {col.session && <col className="hidden lg:table-column w-[8rem]" />}
-        {col.client && <col className="hidden lg:table-column w-[9rem]" />}
-        {col.status && <col className="w-[6rem]" />}
-        {col.reason && <col />}
-        {col.cache && <col className="hidden lg:table-column w-[5rem]" />}
-        {col.group && <col className="hidden lg:table-column w-[8rem]" />}
-        {col.latency && <col className="hidden sm:table-column w-[5rem]" />}
-      </colgroup>
-      <TableHeader>
-        <TableRow className="border-border/50 hover:bg-transparent">
-          {col.timestamp && (
-            <TableHead>
-              <SortHead field="time" label="Timestamp" sort={sort} onSort={onSort} />
-            </TableHead>
-          )}
-          {col.tool && <TableHead>Tool</TableHead>}
-          {col.workspace && <TableHead className="hidden md:table-cell">Workspace</TableHead>}
-          {col.session && <TableHead className="hidden lg:table-cell">Session</TableHead>}
-          {col.client && <TableHead className="hidden lg:table-cell">Client</TableHead>}
-          {col.status && <TableHead>Status</TableHead>}
-          {col.reason && <TableHead>Reason</TableHead>}
-          {col.cache && <TableHead className="hidden lg:table-cell">Cache</TableHead>}
-          {col.group && <TableHead className="hidden lg:table-cell">Group</TableHead>}
-          {col.latency && (
-            <TableHead className="hidden sm:table-cell text-right">
-              <SortHead field="latency" label="Latency" align="right" sort={sort} onSort={onSort} />
-            </TableHead>
-          )}
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {records.length === 0 && !loading ? (
-          <TableRow>
-            <TableCell colSpan={visibleCount} className="h-32">
-              <div className="flex flex-col items-center justify-center text-muted-foreground">
-                <Radio className="mb-2 h-8 w-8 text-muted-foreground/50" />
-                <p className="text-sm">{emptyTitle ?? 'Waiting for events...'}</p>
-                <p className="text-xs text-muted-foreground/60">
-                  {emptyHint ?? 'New audit records will appear here in real-time'}
-                </p>
-              </div>
-            </TableCell>
+    <>
+      <Table className="min-w-[37rem] table-fixed md:min-w-[52rem] 2xl:min-w-[86rem]">
+        <TableHeader>
+          <TableRow className="border-border/50 hover:bg-transparent">
+            {col.timestamp && (
+              <TableHead className="w-[7rem]">
+                <SortHead field="time" label="Timestamp" sort={sort} onSort={onSort} />
+              </TableHead>
+            )}
+            {col.tool && <TableHead className="w-[18rem]">Tool</TableHead>}
+            {col.workspace && <TableHead className="hidden w-[10rem] md:table-cell">Workspace</TableHead>}
+            {col.session && <TableHead className="hidden w-[8rem] 2xl:table-cell">Session</TableHead>}
+            {col.client && <TableHead className="hidden w-[9rem] 2xl:table-cell">Client</TableHead>}
+            {col.status && <TableHead className="w-[6rem]">Status</TableHead>}
+            {col.reason && <TableHead>Reason</TableHead>}
+            {col.cache && <TableHead className="hidden w-[5rem] 2xl:table-cell">Cache</TableHead>}
+            {col.group && <TableHead className="hidden w-[8rem] 2xl:table-cell">Group</TableHead>}
+            {col.latency && (
+              <TableHead className="hidden w-[5.5rem] pl-4 text-right sm:table-cell">
+                <SortHead field="latency" label="Latency" align="right" sort={sort} onSort={onSort} />
+              </TableHead>
+            )}
           </TableRow>
-        ) : (
-          records.map((record, idx) => (
+        </TableHeader>
+        <TableBody>
+          {!empty &&
+            records.map((record, idx) => (
             <AuditRow
               key={record.id}
               record={record}
@@ -184,9 +160,18 @@ export function AuditTable({
               onSelect={onSelect}
               onFilter={onFilter}
             />
-          ))
-        )}
-      </TableBody>
-    </Table>
+          ))}
+        </TableBody>
+      </Table>
+      {empty && (
+        <div className="flex h-32 flex-col items-center justify-center border-t border-border/50 px-4 text-center text-muted-foreground">
+          <Radio className="mb-2 h-8 w-8 text-muted-foreground/50" />
+          <p className="text-sm">{emptyTitle ?? 'Waiting for events...'}</p>
+          <p className="max-w-full truncate text-xs text-muted-foreground/60">
+            {emptyHint ?? 'New audit records will appear here in real-time'}
+          </p>
+        </div>
+      )}
+    </>
   )
 }

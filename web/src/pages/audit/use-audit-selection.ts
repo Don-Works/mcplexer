@@ -11,7 +11,7 @@ interface UseAuditSelection {
   goNext: () => void
   hasPrev: boolean
   hasNext: boolean
-  // True at the lg breakpoint — the page mounts the inline inspector vs the
+  // True at the 2xl breakpoint — the page mounts the inline inspector vs the
   // Sheet drawer off this so only one keyboard nav handler is ever live.
   isWide: boolean
 }
@@ -21,7 +21,7 @@ interface UseAuditSelection {
  * audit page. Selection survives filter changes and deep links: when the id
  * isn't in the loaded feed (deep link to an old page) it fetches the record by
  * id and pins it. Owns the keyboard nav (j/k + arrows to walk, Esc to clear),
- * armed only at lg+ where the inline inspector is the active surface.
+ * armed only at 2xl+ where the inline inspector is the active surface.
  */
 export function useAuditSelection(
   feedRecords: AuditRecord[],
@@ -75,18 +75,19 @@ export function useAuditSelection(
     if (hasNext) setSelected(feedRecords[selectedIndex + 1])
   }, [hasNext, selectedIndex, feedRecords, setSelected])
 
-  // Track the lg breakpoint reactively.
+  // Track the 2xl breakpoint reactively. Below this the audit table needs the
+  // width more than it needs a persistent empty inspector pane.
   const [isWide, setIsWide] = useState(
-    () => typeof window !== 'undefined' && window.matchMedia('(min-width: 1024px)').matches,
+    () => typeof window !== 'undefined' && window.matchMedia('(min-width: 1536px)').matches,
   )
   useEffect(() => {
-    const mq = window.matchMedia('(min-width: 1024px)')
+    const mq = window.matchMedia('(min-width: 1536px)')
     const onChange = (e: MediaQueryListEvent) => setIsWide(e.matches)
     mq.addEventListener('change', onChange)
     return () => mq.removeEventListener('change', onChange)
   }, [])
 
-  // Inline-inspector keyboard nav, armed only when a record is selected at lg+.
+  // Inline-inspector keyboard nav, armed only when a record is selected at 2xl+.
   useEffect(() => {
     if (!selected || !isWide) return
     const onKey = (e: KeyboardEvent) => {
