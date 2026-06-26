@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -65,6 +66,28 @@ func (h *downstreamHandler) applyCacheConfig(ds *store.DownstreamServer) {
 	// Invalidate existing cached entries for this server so stale data
 	// from the old config is never served.
 	h.toolCache.InvalidateServer(ds.ID)
+}
+
+func downstreamRuntimeChanged(before, after *store.DownstreamServer) bool {
+	if before == nil || after == nil {
+		return false
+	}
+	if before.Transport != after.Transport ||
+		before.Command != after.Command ||
+		before.IdleTimeoutSec != after.IdleTimeoutSec ||
+		before.CallTimeoutSec != after.CallTimeoutSec ||
+		before.MaxInstances != after.MaxInstances ||
+		before.RestartPolicy != after.RestartPolicy ||
+		before.Disabled != after.Disabled {
+		return true
+	}
+	if !bytes.Equal(before.Args, after.Args) {
+		return true
+	}
+	if before.URL == nil || after.URL == nil {
+		return before.URL != after.URL
+	}
+	return *before.URL != *after.URL
 }
 
 func (h *downstreamHandler) list(w http.ResponseWriter, r *http.Request) {
@@ -155,6 +178,7 @@ func (h *downstreamHandler) update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ds.ID = id
+	runtimeChanged := downstreamRuntimeChanged(existing, &ds)
 
 	if ds.Transport == "stdio" {
 		args, err := decodeArgs(ds.Args)
@@ -180,6 +204,9 @@ func (h *downstreamHandler) update(w http.ResponseWriter, r *http.Request) {
 		h.engine.InvalidateAllRoutes()
 	}
 	h.applyCacheConfig(&ds)
+	if runtimeChanged && h.manager != nil {
+		h.manager.ReloadServerInstances(id)
+	}
 	h.notifyToolsChanged()
 	writeJSON(w, http.StatusOK, ds)
 }
@@ -200,6 +227,9 @@ func (h *downstreamHandler) delete(w http.ResponseWriter, r *http.Request) {
 	if h.toolCache != nil {
 		h.toolCache.RemoveConfig(id)
 		h.toolCache.InvalidateServer(id)
+	}
+	if h.manager != nil {
+		h.manager.ReloadServerInstances(id)
 	}
 	h.notifyToolsChanged()
 	w.WriteHeader(http.StatusNoContent)

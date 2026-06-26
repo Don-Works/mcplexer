@@ -125,6 +125,35 @@ func TestManagerGetOrStartCoalescesSameKeyColdStart(t *testing.T) {
 	}
 }
 
+func TestManagerReloadServerInstancesEvictsAllKeys(t *testing.T) {
+	m := newHTTPManager(t)
+	srvA := &trackedHanging{}
+	srvAScoped := &trackedHanging{}
+	srvASession := &trackedHanging{}
+	srvB := &trackedHanging{}
+	m.mu.Lock()
+	m.instances[InstanceKey{ServerID: "srv-a"}] = srvA
+	m.instances[InstanceKey{ServerID: "srv-a", AuthScopeID: "scope"}] = srvAScoped
+	m.instances[InstanceKey{ServerID: "srv-a", SessionID: "session"}] = srvASession
+	m.instances[InstanceKey{ServerID: "srv-b"}] = srvB
+	m.mu.Unlock()
+
+	if got := m.ReloadServerInstances("srv-a"); got != 3 {
+		t.Fatalf("ReloadServerInstances evicted %d instances, want 3", got)
+	}
+	if srvA.stops.Load() != 1 || srvAScoped.stops.Load() != 1 || srvASession.stops.Load() != 1 {
+		t.Fatalf("srv-a instances were not all stopped: default=%d scoped=%d session=%d",
+			srvA.stops.Load(), srvAScoped.stops.Load(), srvASession.stops.Load())
+	}
+	if srvB.stops.Load() != 0 {
+		t.Fatalf("unrelated server was stopped %d times, want 0", srvB.stops.Load())
+	}
+	instances := m.ListInstances()
+	if len(instances) != 1 || instances[0].Key.ServerID != "srv-b" {
+		t.Fatalf("remaining instances = %+v, want only srv-b", instances)
+	}
+}
+
 func TestManagerGetOrStartDifferentKeysDoNotBlockOnColdStart(t *testing.T) {
 	m := newHTTPManager(t)
 	slowEntered := make(chan struct{})

@@ -373,6 +373,12 @@ func (h *handler) handleReloadServer(ctx context.Context, serverID string) (json
 		return marshalToolResult("No downstream servers configured."), nil
 	}
 
+	evicted := 0
+	if reloader, ok := h.manager.(ServerInstanceReloader); ok {
+		for _, id := range serverIDs {
+			evicted += reloader.ReloadServerInstances(id)
+		}
+	}
 	result, err := h.manager.ListToolsForServers(ctx, serverIDs)
 	if err != nil {
 		return nil, &RPCError{Code: CodeInternalError, Message: fmt.Sprintf("re-introspect: %v", err)}
@@ -399,8 +405,8 @@ func (h *handler) handleReloadServer(ctx context.Context, serverID string) (json
 	}
 	// Stable output order.
 	sort.Strings(counts)
-	msg := fmt.Sprintf("Reloaded %d server(s): %s. Tool catalog refreshed; notifications/tools/list_changed sent.",
-		len(counts), strings.Join(counts, ", "))
+	msg := fmt.Sprintf("Reloaded %d server(s): %s. Evicted %d live instance(s); tool catalog refreshed; notifications/tools/list_changed sent.",
+		len(counts), strings.Join(counts, ", "), evicted)
 	return marshalToolResult(msg), nil
 }
 

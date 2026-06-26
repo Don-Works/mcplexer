@@ -66,9 +66,10 @@ func reloadServerToolDefinition() Tool {
 	return Tool{
 		Name: "mcpx__reload_server",
 		Description: "Re-introspect a downstream MCP server's tool catalog immediately, " +
-			"bypassing the in-memory cache. Use this after a downstream server adds, " +
-			"removes, or renames tools so that mcpx__execute_code and mcpx__search_tools " +
-			"see the latest surface. Omit server_id to reload all servers at once.",
+			"evicting any live downstream instances and bypassing the in-memory cache. " +
+			"Use this after a downstream server adds, removes, or renames tools so that " +
+			"mcpx__execute_code and mcpx__search_tools see the latest surface. Omit " +
+			"server_id to reload all servers at once.",
 		InputSchema: json.RawMessage(`{
 			"type": "object",
 			"properties": {

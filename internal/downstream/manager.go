@@ -433,21 +433,7 @@ func (m *Manager) performAutoReload(serverID string, snap ServerHealth) {
 		"last_failure_reason", snap.LastFailureReason,
 	)
 
-	// Evict every InstanceKey for this server (any auth scope). The
-	// fresh instance is lazy-started on the next call.
-	m.mu.Lock()
-	toStop := make([]downstream, 0, 2)
-	for key, inst := range m.instances {
-		if key.ServerID == serverID {
-			toStop = append(toStop, inst)
-			delete(m.instances, key)
-			delete(m.instanceStartedAt, key)
-		}
-	}
-	m.mu.Unlock()
-	for _, inst := range toStop {
-		inst.stop()
-	}
+	m.ReloadServerInstances(serverID)
 
 	m.health.MarkReload(serverID, time.Now())
 
@@ -471,6 +457,35 @@ func (m *Manager) performAutoReload(serverID string, snap ServerHealth) {
 	// Surface the catalog change to live sessions so they re-pull
 	// tools/list if they cache descriptions client-side.
 	m.NotifyToolsChanged()
+}
+
+// ReloadServerInstances evicts every running instance for a downstream server,
+// across auth scopes and per-session keys. The next ListTools/Call lazy-starts
+// a fresh process or HTTP MCP session from the latest server configuration.
+func (m *Manager) ReloadServerInstances(serverID string) int {
+	if serverID == "" {
+		return 0
+	}
+
+	m.mu.Lock()
+	keys := make([]InstanceKey, 0, 2)
+	for key := range m.instances {
+		if key.ServerID == serverID {
+			keys = append(keys, key)
+		}
+	}
+	m.mu.Unlock()
+
+	for _, key := range keys {
+		m.evict(key)
+	}
+	if len(keys) > 0 {
+		slog.Info("evicted downstream instances for reload",
+			"server_id", serverID,
+			"count", len(keys),
+		)
+	}
+	return len(keys)
 }
 
 // ErrCallTimeout is returned (wrapped) when Manager.Call's per-server

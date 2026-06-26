@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strconv"
 
 	"github.com/don-works/mcplexer/internal/addon"
 	"github.com/don-works/mcplexer/internal/downstream"
@@ -21,7 +22,8 @@ func (h *discoverHandler) discover(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 
-	if _, err := h.store.GetDownstreamServer(ctx, id); err != nil {
+	srv, err := h.store.GetDownstreamServer(ctx, id)
+	if err != nil {
 		writeError(w, http.StatusNotFound, "downstream server not found")
 		return
 	}
@@ -34,6 +36,14 @@ func (h *discoverHandler) discover(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "downstream manager not available")
 		return
 	}
+	freshInstance := srv.Transport != "internal"
+	evicted := 0
+	if freshInstance {
+		evicted = h.manager.ReloadServerInstances(id)
+	}
+	w.Header().Set("X-Mcplexer-Discovery-Fresh-Instance", strconv.FormatBool(freshInstance))
+	w.Header().Set("X-Mcplexer-Discovery-Evicted-Instances", strconv.Itoa(evicted))
+
 	authScopeID := h.findAuthScope(ctx, id)
 	raw, err := h.manager.ListTools(ctx, id, authScopeID)
 	if err != nil {
@@ -53,7 +63,7 @@ func (h *discoverHandler) discover(w http.ResponseWriter, r *http.Request) {
 	// tools/list so they see the refreshed surface without reconnecting.
 	h.manager.NotifyToolsChanged()
 
-	srv, err := h.store.GetDownstreamServer(ctx, id)
+	srv, err = h.store.GetDownstreamServer(ctx, id)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to read updated server")
 		return
