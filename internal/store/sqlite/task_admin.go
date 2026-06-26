@@ -46,17 +46,19 @@ func (d *DB) SelectDistinctTaskStatuses(ctx context.Context, workspaceID string)
 // actually present in the active task population rather than the configured
 // vocabulary.
 func (d *DB) CountTaskStatuses(ctx context.Context, workspaceID, state string) (map[string]int, error) {
-	conds := []string{"deleted_at IS NULL"}
+	terminal := taskStatusTerminalPredicate("tasks")
+	conds := []string{"tasks.deleted_at IS NULL"}
 	args := []any{}
 	if workspaceID != "" {
-		conds = append(conds, "workspace_id = ?")
+		conds = append(conds, "tasks.workspace_id = ?")
 		args = append(args, workspaceID)
 	}
 	switch strings.ToLower(strings.TrimSpace(state)) {
 	case "", "open":
-		conds = append(conds, "closed_at IS NULL")
+		conds = append(conds, "tasks.closed_at IS NULL")
+		conds = append(conds, "NOT "+terminal)
 	case "closed":
-		conds = append(conds, "closed_at IS NOT NULL")
+		conds = append(conds, "(tasks.closed_at IS NOT NULL OR "+terminal+")")
 	case "all", "any":
 		// non-deleted only
 	default:
@@ -83,6 +85,16 @@ func (d *DB) CountTaskStatuses(ctx context.Context, workspaceID, state string) (
 		out[s] = n
 	}
 	return out, rows.Err()
+}
+
+func taskStatusTerminalPredicate(alias string) string {
+	return fmt.Sprintf(`(LOWER(%[1]s.status) IN ('done', 'cancelled', 'completed', 'complete', 'archived')
+		OR EXISTS (
+			SELECT 1 FROM task_status_vocabulary v
+			WHERE v.workspace_id = %[1]s.workspace_id
+			  AND v.status_text = %[1]s.status
+			  AND (v.is_terminal = 1 OR v.kind IN ('done', 'cancelled'))
+		))`, alias)
 }
 
 // rebindUpdate describes one UPDATE statement applied during

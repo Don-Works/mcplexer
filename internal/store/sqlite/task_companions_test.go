@@ -107,12 +107,23 @@ func TestCountTaskStatusesFiltersStateAndWorkspace(t *testing.T) {
 		{WorkspaceID: ws1, Title: "open b", Status: "triage"},
 		{WorkspaceID: ws1, Title: "working", Status: "coding"},
 		{WorkspaceID: ws1, Title: "closed", Status: "done", ClosedAt: &now},
+		{WorkspaceID: ws1, Title: "legacy closed", Status: "completed"},
+		{WorkspaceID: ws1, Title: "vocab closed", Status: "shipped"},
 		{WorkspaceID: ws2, Title: "other", Status: "remote"},
 	}
 	for _, row := range rows {
 		if err := d.CreateTask(ctx, row); err != nil {
 			t.Fatalf("CreateTask %s: %v", row.Title, err)
 		}
+	}
+	if err := d.UpsertTaskStatusVocab(ctx, &store.TaskStatusVocab{
+		WorkspaceID: ws1,
+		StatusText:  "shipped",
+		IsTerminal:  true,
+		Kind:        "done",
+		ManagedBy:   "user",
+	}); err != nil {
+		t.Fatalf("UpsertTaskStatusVocab: %v", err)
 	}
 	deleted := &store.Task{WorkspaceID: ws1, Title: "deleted", Status: "ghost"}
 	if err := d.CreateTask(ctx, deleted); err != nil {
@@ -126,15 +137,23 @@ func TestCountTaskStatusesFiltersStateAndWorkspace(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CountTaskStatuses open: %v", err)
 	}
-	if openCounts["triage"] != 2 || openCounts["coding"] != 1 || openCounts["done"] != 0 || openCounts["ghost"] != 0 {
+	if openCounts["triage"] != 2 ||
+		openCounts["coding"] != 1 ||
+		openCounts["done"] != 0 ||
+		openCounts["completed"] != 0 ||
+		openCounts["shipped"] != 0 ||
+		openCounts["ghost"] != 0 {
 		t.Fatalf("open counts = %v, want triage/coding only", openCounts)
 	}
 	closedCounts, err := d.CountTaskStatuses(ctx, ws1, "closed")
 	if err != nil {
 		t.Fatalf("CountTaskStatuses closed: %v", err)
 	}
-	if len(closedCounts) != 1 || closedCounts["done"] != 1 {
-		t.Fatalf("closed counts = %v, want {done:1}", closedCounts)
+	if len(closedCounts) != 3 ||
+		closedCounts["done"] != 1 ||
+		closedCounts["completed"] != 1 ||
+		closedCounts["shipped"] != 1 {
+		t.Fatalf("closed counts = %v, want terminal statuses", closedCounts)
 	}
 	allCounts, err := d.CountTaskStatuses(ctx, "", "all")
 	if err != nil {

@@ -168,6 +168,7 @@ func TestListTaskStatusesEndpointScopesStateAndWorkspace(t *testing.T) {
 		{WorkspaceID: wsA.ID, Title: "a2", Status: "triage"},
 		{WorkspaceID: wsA.ID, Title: "a3", Status: "coding"},
 		{WorkspaceID: wsA.ID, Title: "a4", Status: "done", ClosedAt: &closedAt},
+		{WorkspaceID: wsA.ID, Title: "a5", Status: "completed"},
 		{WorkspaceID: wsB.ID, Title: "b1", Status: "other"},
 	} {
 		if err := db.CreateTask(ctx, row); err != nil {
@@ -194,7 +195,11 @@ func TestListTaskStatusesEndpointScopesStateAndWorkspace(t *testing.T) {
 	for _, row := range out.Statuses {
 		got[row.Status] = row.Count
 	}
-	if got["triage"] != 2 || got["coding"] != 1 || got["done"] != 0 || got["other"] != 0 {
+	if got["triage"] != 2 ||
+		got["coding"] != 1 ||
+		got["done"] != 0 ||
+		got["completed"] != 0 ||
+		got["other"] != 0 {
 		t.Fatalf("open workspace statuses = %v", got)
 	}
 
@@ -213,8 +218,8 @@ func TestListTaskStatusesEndpointScopesStateAndWorkspace(t *testing.T) {
 	for _, row := range all.Statuses {
 		allGot[row.Status] = row.Count
 	}
-	if allGot["done"] != 1 || allGot["other"] != 1 {
-		t.Fatalf("all-workspace statuses = %v, want done and other included", allGot)
+	if allGot["done"] != 1 || allGot["completed"] != 1 || allGot["other"] != 1 {
+		t.Fatalf("all-workspace statuses = %v, want terminal and other included", allGot)
 	}
 }
 
