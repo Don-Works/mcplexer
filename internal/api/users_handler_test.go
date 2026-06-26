@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/don-works/mcplexer/internal/config"
 	"github.com/don-works/mcplexer/internal/store"
 )
 
@@ -183,6 +184,115 @@ func TestUsersListEmpty(t *testing.T) {
 	}
 }
 
+func TestUsersListHidesSyntheticDeviceIdentities(t *testing.T) {
+	t.Parallel()
+	st := newFakeUserStore()
+	syntheticID := config.SyntheticUserIDForPeer("peer-legacy")
+	st.users["u-self"] = store.User{UserID: "u-self", DisplayName: "Max", IsSelf: true}
+	st.users[syntheticID] = store.User{UserID: syntheticID, DisplayName: "peer-legacy"}
+	st.users["u-elliot"] = store.User{UserID: "u-elliot", DisplayName: "Elliot"}
+	st.peers["peer-legacy"] = store.P2PPeer{PeerID: "peer-legacy", DisplayName: "dev-laptop-b"}
+	st.peers["peer-elliot"] = store.P2PPeer{PeerID: "peer-elliot", DisplayName: "elliot-mbp"}
+	st.peerUsers[syntheticID] = []string{"peer-legacy"}
+	st.peerUsers["u-elliot"] = []string{"peer-elliot"}
+
+	h := &usersHandler{store: st}
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/users", nil)
+	rr := httptest.NewRecorder()
+	h.list(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+	var got struct {
+		Users []store.User `json:"users"`
+	}
+	if err := json.NewDecoder(rr.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(got.Users) != 2 {
+		t.Fatalf("users = %+v, want self + elliot only", got.Users)
+	}
+	for _, u := range got.Users {
+		if u.UserID == syntheticID {
+			t.Fatalf("synthetic device identity leaked into people list: %+v", got.Users)
+		}
+	}
+}
+
+func TestUsersListHidesLegacyDeviceNamedIdentities(t *testing.T) {
+	t.Parallel()
+	st := newFakeUserStore()
+	st.users["u-self"] = store.User{UserID: "u-self", DisplayName: "Max", IsSelf: true}
+	st.users["u-device-name"] = store.User{UserID: "u-device-name", DisplayName: "dev-laptop-b"}
+	st.users["u-peer-label"] = store.User{UserID: "u-peer-label", DisplayName: "peer-abcdef12"}
+	st.users["u-person"] = store.User{UserID: "u-person", DisplayName: "Elliot"}
+	st.peers["peer-device"] = store.P2PPeer{PeerID: "peer-device", DisplayName: "dev-laptop-b"}
+	st.peers["12D3KooWabcdef12"] = store.P2PPeer{PeerID: "12D3KooWabcdef12"}
+	st.peers["peer-person"] = store.P2PPeer{PeerID: "peer-person", DisplayName: "elliot-mbp"}
+	st.peerUsers["u-device-name"] = []string{"peer-device"}
+	st.peerUsers["u-peer-label"] = []string{"12D3KooWabcdef12"}
+	st.peerUsers["u-person"] = []string{"peer-person"}
+
+	h := &usersHandler{store: st}
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/users", nil)
+	rr := httptest.NewRecorder()
+	h.list(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+	var got struct {
+		Users []store.User `json:"users"`
+	}
+	if err := json.NewDecoder(rr.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	ids := map[string]bool{}
+	for _, u := range got.Users {
+		ids[u.UserID] = true
+	}
+	if !ids["u-self"] || !ids["u-person"] {
+		t.Fatalf("real people missing from users list: %+v", got.Users)
+	}
+	if ids["u-device-name"] || ids["u-peer-label"] {
+		t.Fatalf("legacy device identity leaked into people list: %+v", got.Users)
+	}
+}
+
+func TestUsersCreatePerson(t *testing.T) {
+	t.Parallel()
+	st := newFakeUserStore()
+	h := &usersHandler{store: st}
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/users",
+		strings.NewReader(`{"display_name":"  Elliot  "}`))
+	rr := httptest.NewRecorder()
+	h.create(rr, req)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201; body=%s", rr.Code, rr.Body.String())
+	}
+	var got store.User
+	if err := json.NewDecoder(rr.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.UserID == "" || got.DisplayName != "Elliot" || got.IsSelf {
+		t.Fatalf("created user = %+v", got)
+	}
+	if _, ok := st.users[got.UserID]; !ok {
+		t.Fatalf("created user not persisted: %+v", st.users)
+	}
+}
+
+func TestUsersCreatePersonRejectsBlankName(t *testing.T) {
+	t.Parallel()
+	h := &usersHandler{store: newFakeUserStore()}
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/users",
+		strings.NewReader(`{"display_name":"  "}`))
+	rr := httptest.NewRecorder()
+	h.create(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rr.Code)
+	}
+}
+
 // TestUsersGetReturnsUserAndPeers verifies the {id} endpoint embeds the
 // peers linked to that user.
 func TestUsersGetReturnsUserAndPeers(t *testing.T) {
@@ -209,6 +319,43 @@ func TestUsersGetReturnsUserAndPeers(t *testing.T) {
 	}
 	if len(got.Peers) != 1 || got.Peers[0].PeerID != "peer-1" {
 		t.Fatalf("peers = %+v", got.Peers)
+	}
+}
+
+func TestUsersUpdateDisplayName(t *testing.T) {
+	t.Parallel()
+	st := newFakeUserStore()
+	st.users["u-1"] = store.User{UserID: "u-1", DisplayName: "Old"}
+	h := &usersHandler{store: st}
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/users/u-1",
+		strings.NewReader(`{"display_name":"  New Name  "}`))
+	req.SetPathValue("id", "u-1")
+	rr := httptest.NewRecorder()
+	h.update(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+	var got store.User
+	if err := json.NewDecoder(rr.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.DisplayName != "New Name" || st.users["u-1"].DisplayName != "New Name" {
+		t.Fatalf("display_name not updated: got=%+v stored=%+v", got, st.users["u-1"])
+	}
+}
+
+func TestUsersUpdateDisplayNameRejectsBlank(t *testing.T) {
+	t.Parallel()
+	st := newFakeUserStore()
+	st.users["u-1"] = store.User{UserID: "u-1", DisplayName: "Old"}
+	h := &usersHandler{store: st}
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/users/u-1",
+		strings.NewReader(`{"display_name":""}`))
+	req.SetPathValue("id", "u-1")
+	rr := httptest.NewRecorder()
+	h.update(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rr.Code)
 	}
 }
 

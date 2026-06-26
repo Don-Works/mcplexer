@@ -129,7 +129,7 @@ const knowledgeNavBase: NavItem[] = [
 
 const networkNav: NavItem[] = [
   { label: 'Mesh', href: '/mesh', icon: <Radio className="h-4 w-4" />, hint: 'Peer-to-peer agent network: live agents, messages, file claims' },
-  { label: 'People', href: '/pairing?tab=people', icon: <UsersRound className="h-4 w-4" />, hint: 'Human identities and the devices linked to them' },
+  { label: 'People', href: '/pairing?tab=people', icon: <UsersRound className="h-4 w-4" />, hint: 'People and the devices linked to them' },
   { label: 'Devices', href: '/pairing?tab=devices', icon: <Laptop className="h-4 w-4" />, hint: 'Paired machines and device ownership' },
   { label: 'Linked workspaces', href: '/workspace-links', icon: <Link2 className="h-4 w-4" />, hint: 'Sync a workspace across paired machines' },
 ]

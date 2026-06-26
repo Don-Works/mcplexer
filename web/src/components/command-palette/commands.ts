@@ -56,7 +56,7 @@ const PAGES: CommandEntry[] = [
   { id: 'page-skills', label: 'Skills', to: '/skills', keywords: 'recipe skill md registry knowledge', icon: createElement(Sparkles, { className: iconClass }) },
   { id: 'page-brain', label: 'Brain notes', to: '/brain/browse', keywords: 'brain ledger records tasks memories notes knowledge', icon: createElement(BrainIcon, { className: iconClass }) },
   { id: 'page-mesh', label: 'Mesh', to: '/mesh', keywords: 'p2p agents network inter peer', icon: createElement(Radio, { className: iconClass }) },
-  { id: 'page-network-people', label: 'People', to: '/pairing?tab=people', keywords: 'human identities owners people p2p network devices', icon: createElement(UsersRound, { className: iconClass }) },
+  { id: 'page-network-people', label: 'People', to: '/pairing?tab=people', keywords: 'people owners humans p2p network devices', icon: createElement(UsersRound, { className: iconClass }) },
   { id: 'page-network-devices', label: 'Devices', to: '/pairing?tab=devices', keywords: 'peer p2p pair network device owner machine', icon: createElement(Laptop, { className: iconClass }) },
   { id: 'page-linked-workspaces', label: 'Linked workspaces', to: '/workspace-links', keywords: 'sync paired machines network workspace links', icon: createElement(Link2, { className: iconClass }) },
   { id: 'page-harnesses', label: 'AI Harnesses', to: '/harness-setup', keywords: 'wire mcp ide claude cursor codex opencode gemini mimo pi harness bootstrap setup', icon: createElement(Wrench, { className: iconClass }) },
