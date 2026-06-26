@@ -113,8 +113,8 @@ export function DisconnectedPeersBanner({ agents }: Props): React.ReactElement |
             <div className="flex-1 space-y-1">
               <p className="font-medium">{formatOfflineHeadline(offline)}</p>
               <p className="text-xs opacity-80">
-                <Link to="/pairing" className="underline hover:no-underline">
-                  Open Paired Devices
+                <Link to="/pairing?tab=devices" className="underline hover:no-underline">
+                  Open Devices
                 </Link>{' '}
                 to inspect pairing state. The reconnector is searching.
               </p>
