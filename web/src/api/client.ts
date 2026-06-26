@@ -208,9 +208,16 @@ export function suggestWorkspaceLinks(): Promise<{
   return request('/workspace-links/suggest')
 }
 
-// Human users / owned devices
+// People / owned devices
 export function listUsers(): Promise<UsersResponse> {
   return request('/users')
+}
+
+export function createUser(displayName: string): Promise<User> {
+  return request('/users', {
+    method: 'POST',
+    body: JSON.stringify({ display_name: displayName }),
+  })
 }
 
 export function getSelfUser(): Promise<User> {
@@ -219,6 +226,13 @@ export function getSelfUser(): Promise<User> {
 
 export function getUser(id: string): Promise<UserWithPeers> {
   return request(`/users/${encodeURIComponent(id)}`)
+}
+
+export function updateUser(id: string, displayName: string): Promise<User> {
+  return request(`/users/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ display_name: displayName }),
+  })
 }
 
 export function deleteUser(id: string): Promise<void> {

@@ -702,12 +702,14 @@ func NewRouter(deps RouterDeps) http.Handler {
 	// M7.1 — per-human user identity endpoints.
 	uh := &usersHandler{store: deps.Store}
 	mux.HandleFunc("GET /api/v1/users", uh.list)
+	mux.HandleFunc("POST /api/v1/users", uh.create)
 	// Static sub-route registered before the parameterised /{id} variant
 	// so the Go 1.22 mux picks the most-specific match first (mirrors the
 	// tasks handler ordering for /tasks/stream vs /tasks/{id}).
 	mux.HandleFunc("GET /api/v1/users/self", uh.self)
 	mux.HandleFunc("PATCH /api/v1/users/devices/{peer_id}", uh.updateDeviceOwner)
 	mux.HandleFunc("GET /api/v1/users/{id}", uh.get)
+	mux.HandleFunc("PATCH /api/v1/users/{id}", uh.update)
 	mux.HandleFunc("DELETE /api/v1/users/{id}", uh.delete)
 
 	// Peer-scope registry — read-only catalog of scope strings the UI's

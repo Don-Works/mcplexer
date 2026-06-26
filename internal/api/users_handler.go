@@ -6,6 +6,9 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/google/uuid"
+
+	"github.com/don-works/mcplexer/internal/config"
 	"github.com/don-works/mcplexer/internal/store"
 )
 
@@ -34,7 +37,10 @@ type userWithPeers struct {
 	Peers []store.P2PPeer `json:"peers"`
 }
 
-// list returns every user row, with self first, ordered by display_name.
+// list returns every real human user row, with self first, ordered by
+// display_name. Legacy pairings may have created fallback user rows from peer
+// IDs or device display names; those rows represent devices, not people, so
+// they are hidden here.
 // 200 + {"users":[...]} even when the table is empty (callers expect a
 // stable shape).
 func (h *usersHandler) list(w http.ResponseWriter, r *http.Request) {
@@ -43,10 +49,76 @@ func (h *usersHandler) list(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "list users: "+err.Error())
 		return
 	}
-	if users == nil {
-		users = []store.User{}
+	people := make([]store.User, 0, len(users))
+	for _, u := range users {
+		synthetic, err := h.isSyntheticDeviceUser(r.Context(), u)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "classify user: "+err.Error())
+			return
+		}
+		if !synthetic {
+			people = append(people, u)
+		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"users": users})
+	if people == nil {
+		people = []store.User{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"users": people})
+}
+
+func (h *usersHandler) isSyntheticDeviceUser(ctx context.Context, u store.User) (bool, error) {
+	if u.IsSelf || u.UserID == "" {
+		return false, nil
+	}
+	peers, err := h.store.ListPeersForUser(ctx, u.UserID)
+	if err != nil {
+		return false, err
+	}
+	if len(peers) == 0 {
+		return false, nil
+	}
+	display := strings.TrimSpace(u.DisplayName)
+	if len(peers) == 1 {
+		peer := peers[0]
+		if display == strings.TrimSpace(peer.DisplayName) || display == shortPeerID(peer.PeerID) {
+			return true, nil
+		}
+	}
+	for _, peer := range peers {
+		if u.UserID != config.SyntheticUserIDForPeer(peer.PeerID) {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+type createUserRequest struct {
+	DisplayName string `json:"display_name"`
+}
+
+// create inserts an explicit human identity. Device rows are still created by
+// pairing; this endpoint is only for people the operator wants to assign
+// devices or tasks to.
+func (h *usersHandler) create(w http.ResponseWriter, r *http.Request) {
+	var req createUserRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "decode: "+err.Error())
+		return
+	}
+	displayName := strings.TrimSpace(req.DisplayName)
+	if displayName == "" {
+		writeError(w, http.StatusBadRequest, "display_name is required")
+		return
+	}
+	u := &store.User{
+		UserID:      uuid.NewString(),
+		DisplayName: displayName,
+	}
+	if err := h.store.CreateUser(r.Context(), u); err != nil {
+		writeError(w, http.StatusInternalServerError, "create user: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, u)
 }
 
 // get returns one user with the peers they own. 404 when the user_id
@@ -75,6 +147,51 @@ func (h *usersHandler) get(w http.ResponseWriter, r *http.Request) {
 		peers = []store.P2PPeer{}
 	}
 	writeJSON(w, http.StatusOK, userWithPeers{User: *u, Peers: peers})
+}
+
+type updateUserRequest struct {
+	DisplayName *string `json:"display_name"`
+}
+
+// update renames an explicit human identity. Ownership links stay unchanged.
+func (h *usersHandler) update(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "missing user id")
+		return
+	}
+	var req updateUserRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "decode: "+err.Error())
+		return
+	}
+	if req.DisplayName == nil {
+		writeError(w, http.StatusBadRequest, "display_name is required")
+		return
+	}
+	displayName := strings.TrimSpace(*req.DisplayName)
+	if displayName == "" {
+		writeError(w, http.StatusBadRequest, "display_name is required")
+		return
+	}
+	if err := h.store.UpdateUserDisplayName(r.Context(), id, displayName); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "user not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "update user: "+err.Error())
+		return
+	}
+	u, err := h.store.GetUser(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "user not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "get user: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, u)
 }
 
 // delete removes a stale non-self human identity, but only after confirming it

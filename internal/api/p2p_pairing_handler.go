@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/don-works/mcplexer/internal/config"
 	"github.com/don-works/mcplexer/internal/p2p"
 	"github.com/don-works/mcplexer/internal/peerscope"
 	"github.com/don-works/mcplexer/internal/scopes"
@@ -58,7 +59,7 @@ type pairStartResponse struct {
 // M7.1 fields (UserID, RemoteDisplayName) are optional: a peer paired from
 // an older binary won't include them, in which case the initiator side
 // synthesizes a stable user_id from the peer ID (see
-// p2p.SyntheticUserIDForPeer) and falls back to a peer-based display name.
+// config.SyntheticUserIDForPeer) and falls back to a peer-based display name.
 type pairCompleteRequest struct {
 	Code              string `json:"code"`
 	PeerID            string `json:"peer_id"`
@@ -178,7 +179,7 @@ func (h *p2pPairingHandler) linkPeerUser(ctx context.Context, req pairCompleteRe
 	}
 	userID := req.UserID
 	if userID == "" {
-		userID = p2p.SyntheticUserIDForPeer(req.PeerID)
+		userID = config.SyntheticUserIDForPeer(req.PeerID)
 	}
 	display := req.RemoteDisplayName
 	if display == "" {

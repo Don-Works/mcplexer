@@ -13,9 +13,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { Laptop, Link2, Loader2, ShieldOff, Trash2, UserRound, UsersRound, X } from 'lucide-react'
+import { Check, Laptop, Link2, Loader2, Pencil, Plus, ShieldOff, Trash2, UserRound, UsersRound, X } from 'lucide-react'
 import { toast } from 'sonner'
-import { deleteUser, getUser, listUsers, updateDeviceOwner } from '@/api/client'
+import { createUser, deleteUser, getUser, listUsers, updateDeviceOwner, updateUser } from '@/api/client'
 import type { UserWithPeers } from '@/api/types'
 import {
   formatRelative,
@@ -44,6 +44,10 @@ interface DeviceOwner {
   user_id: string
   display_name: string
   is_self: boolean
+}
+
+function displayPeerName(peer: { peer_id: string; display_name?: string }): string {
+  return peer.display_name || `peer-${shortPeerSuffix(peer.peer_id)}`
 }
 
 function GettingStartedCard({ onDismiss }: { onDismiss: () => void }) {
@@ -387,6 +391,12 @@ export function PairingPage() {
   const [usersError, setUsersError] = useState<string | null>(null)
   const [deletingUserID, setDeletingUserID] = useState<string | null>(null)
   const [updatingOwnerPeerID, setUpdatingOwnerPeerID] = useState<string | null>(null)
+  const [newPersonName, setNewPersonName] = useState('')
+  const [creatingPerson, setCreatingPerson] = useState(false)
+  const [editingUserID, setEditingUserID] = useState<string | null>(null)
+  const [editingUserName, setEditingUserName] = useState('')
+  const [savingUserID, setSavingUserID] = useState<string | null>(null)
+  const [assigningDeviceUserID, setAssigningDeviceUserID] = useState<string | null>(null)
   const [searchParams, setSearchParams] = useSearchParams()
   const [gsDismissed, setGsDismissed] = useState(
     () => localStorage.getItem(GETTING_STARTED_DISMISSED_KEY) === '1',
@@ -459,11 +469,11 @@ export function PairingPage() {
 
   const removeStaleIdentity = useCallback(async (user: UserWithPeers) => {
     if (user.is_self || user.peers.length > 0) return
-    if (!window.confirm(`Remove stale identity "${user.display_name || user.user_id}"?`)) return
+    if (!window.confirm(`Remove person "${user.display_name || user.user_id}"?`)) return
     setDeletingUserID(user.user_id)
     try {
       await deleteUser(user.user_id)
-      toast.success('Identity removed')
+      toast.success('Person removed')
       await refreshUsers()
     } catch (e) {
       toast.error(`Remove failed: ${e instanceof Error ? e.message : String(e)}`)
@@ -471,6 +481,55 @@ export function PairingPage() {
       setDeletingUserID(null)
     }
   }, [refreshUsers])
+
+  const createPerson = useCallback(async () => {
+    const displayName = newPersonName.trim()
+    if (!displayName) {
+      toast.error('Enter a person name first')
+      return
+    }
+    setCreatingPerson(true)
+    try {
+      await createUser(displayName)
+      setNewPersonName('')
+      toast.success('Person added')
+      await refreshUsers()
+    } catch (e) {
+      toast.error(`Add person failed: ${e instanceof Error ? e.message : String(e)}`)
+    } finally {
+      setCreatingPerson(false)
+    }
+  }, [newPersonName, refreshUsers])
+
+  const startEditingUser = useCallback((user: UserWithPeers) => {
+    setEditingUserID(user.user_id)
+    setEditingUserName(user.display_name || user.user_id)
+  }, [])
+
+  const cancelEditingUser = useCallback(() => {
+    setEditingUserID(null)
+    setEditingUserName('')
+  }, [])
+
+  const savePersonName = useCallback(async (userID: string) => {
+    const displayName = editingUserName.trim()
+    if (!displayName) {
+      toast.error('Person name cannot be blank')
+      return
+    }
+    setSavingUserID(userID)
+    try {
+      await updateUser(userID, displayName)
+      toast.success('Person updated')
+      setEditingUserID(null)
+      setEditingUserName('')
+      await refreshUsers()
+    } catch (e) {
+      toast.error(`Update failed: ${e instanceof Error ? e.message : String(e)}`)
+    } finally {
+      setSavingUserID(null)
+    }
+  }, [editingUserName, refreshUsers])
 
   const changeDeviceOwner = useCallback(async (peerID: string, userID: string | null) => {
     setUpdatingOwnerPeerID(peerID)
@@ -484,6 +543,15 @@ export function PairingPage() {
       setUpdatingOwnerPeerID(null)
     }
   }, [refreshUsers])
+
+  const assignDeviceToPerson = useCallback(async (peerID: string, userID: string) => {
+    setAssigningDeviceUserID(userID)
+    try {
+      await changeDeviceOwner(peerID, userID)
+    } finally {
+      setAssigningDeviceUserID(null)
+    }
+  }, [changeDeviceOwner])
 
   const dismissGettingStarted = useCallback(() => {
     setGsDismissed(true)
@@ -529,7 +597,7 @@ export function PairingPage() {
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">People & devices</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Human identities own work. Devices are paired peers that can connect, run sessions, and sync for those people.
+          People own work. Devices are paired peers that can connect, run sessions, and sync for those people.
         </p>
       </div>
       <div className="grid gap-3 sm:grid-cols-3">
@@ -569,14 +637,48 @@ export function PairingPage() {
 
         <TabsContent value="people" className="space-y-4">
           <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Human identities</CardTitle>
+            <CardHeader className="gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <CardTitle className="text-base">People</CardTitle>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Create people, then attach one or more paired devices to each person.
+                </p>
+              </div>
+              <div className="flex w-full gap-2 sm:w-auto" data-testid="person-create-row">
+                <Input
+                  value={newPersonName}
+                  onChange={(e) => setNewPersonName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault()
+                      void createPerson()
+                    }
+                  }}
+                  placeholder="New person"
+                  className="h-8 min-w-0 text-xs sm:w-48"
+                  data-testid="person-create-input"
+                />
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={() => { void createPerson() }}
+                  disabled={creatingPerson || !newPersonName.trim()}
+                  data-testid="person-create-submit"
+                >
+                  {creatingPerson ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Plus className="h-3.5 w-3.5" />
+                  )}
+                  Add
+                </Button>
+              </div>
             </CardHeader>
             <CardContent>
               {usersLoading && (
                 <div className="flex items-center gap-2 py-6 text-sm text-muted-foreground">
                   <Loader2 className="h-4 w-4 animate-spin" />
-                  Loading identities...
+                  Loading people...
                 </div>
               )}
               {usersError && (
@@ -587,55 +689,175 @@ export function PairingPage() {
               )}
               {!usersLoading && !usersError && users.length === 0 && (
                 <p className="py-6 text-sm text-muted-foreground">
-                  No human identities recorded yet. Pair another device to link an owner.
+                  No people recorded yet. Add a person, then assign paired devices.
                 </p>
               )}
               {!usersLoading && !usersError && users.length > 0 && (
                 <div className="divide-y divide-border/40">
-                  {users.map((user) => (
-                    <div key={user.user_id} className="py-3" data-testid={`user-row-${user.user_id}`}>
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="flex min-w-0 items-center gap-2 text-sm font-medium">
-                          <UserRound className="h-4 w-4 shrink-0 text-muted-foreground" />
-                          <span className="truncate">{user.display_name || user.user_id}</span>
-                          {user.is_self && (
-                            <Badge variant="outline" tone="success" className="text-[10px]">you</Badge>
-                          )}
-                        </div>
-                        {!user.is_self && user.peers.length === 0 ? (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => { void removeStaleIdentity(user) }}
-                            disabled={deletingUserID === user.user_id}
-                            className="text-destructive hover:bg-destructive/10 hover:text-destructive"
-                          >
-                            {deletingUserID === user.user_id ? (
-                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  {users.map((user) => {
+                    const linkedPeerIDs = new Set(user.peers.map((peer) => peer.peer_id))
+                    const availableDevices = activePeers.filter((peer) => !linkedPeerIDs.has(peer.peer_id))
+                    const isEditing = editingUserID === user.user_id
+                    const isSaving = savingUserID === user.user_id
+                    const isAssigning = assigningDeviceUserID === user.user_id
+                    return (
+                      <div key={user.user_id} className="py-3" data-testid={`user-row-${user.user_id}`}>
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                          <div className="min-w-0 flex-1">
+                            <div className="flex min-w-0 items-center gap-2 text-sm font-medium">
+                              <UserRound className="h-4 w-4 shrink-0 text-muted-foreground" />
+                              {isEditing ? (
+                                <Input
+                                  value={editingUserName}
+                                  onChange={(e) => setEditingUserName(e.target.value)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') {
+                                      e.preventDefault()
+                                      void savePersonName(user.user_id)
+                                    }
+                                    if (e.key === 'Escape') {
+                                      e.preventDefault()
+                                      cancelEditingUser()
+                                    }
+                                  }}
+                                  className="h-8 max-w-xs text-xs"
+                                  data-testid={`person-edit-input-${user.user_id}`}
+                                />
+                              ) : (
+                                <span className="truncate">{user.display_name || user.user_id}</span>
+                              )}
+                              {user.is_self && (
+                                <Badge variant="outline" tone="success" className="text-[10px]">you</Badge>
+                              )}
+                            </div>
+                            <div className="mt-0.5 font-mono text-[10px] text-muted-foreground/70">
+                              {user.user_id}
+                            </div>
+                          </div>
+
+                          <div className="flex shrink-0 flex-wrap items-center gap-2">
+                            <Select
+                              value=""
+                              disabled={isAssigning || availableDevices.length === 0}
+                              onValueChange={(peerID) => { void assignDeviceToPerson(peerID, user.user_id) }}
+                            >
+                              <SelectTrigger
+                                className="h-8 w-[180px] text-xs"
+                                data-testid={`person-assign-device-${user.user_id}`}
+                                aria-label={`Assign device to ${user.display_name || user.user_id}`}
+                              >
+                                {isAssigning ? (
+                                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                ) : (
+                                  <SelectValue placeholder="Assign device" />
+                                )}
+                              </SelectTrigger>
+                              <SelectContent>
+                                {availableDevices.map((peer) => {
+                                  const owners = ownerByPeerID.get(peer.peer_id) ?? []
+                                  const ownerLabel = owners.length > 0
+                                    ? owners.map((owner) => owner.display_name || owner.user_id).join(', ')
+                                    : 'unlinked'
+                                  return (
+                                    <SelectItem key={peer.peer_id} value={peer.peer_id}>
+                                      {displayPeerName(peer)} - {ownerLabel}
+                                    </SelectItem>
+                                  )
+                                })}
+                              </SelectContent>
+                            </Select>
+                            {isEditing ? (
+                              <>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon-xs"
+                                  onClick={() => { void savePersonName(user.user_id) }}
+                                  disabled={isSaving || !editingUserName.trim()}
+                                  aria-label={`Save ${user.display_name || user.user_id}`}
+                                  data-testid={`person-edit-save-${user.user_id}`}
+                                >
+                                  {isSaving ? (
+                                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                  ) : (
+                                    <Check className="h-3.5 w-3.5" />
+                                  )}
+                                </Button>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon-xs"
+                                  onClick={cancelEditingUser}
+                                  aria-label="Cancel edit"
+                                >
+                                  <X className="h-3.5 w-3.5" />
+                                </Button>
+                              </>
                             ) : (
-                              <Trash2 className="h-3.5 w-3.5" />
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon-xs"
+                                onClick={() => startEditingUser(user)}
+                                aria-label={`Edit ${user.display_name || user.user_id}`}
+                                data-testid={`person-edit-${user.user_id}`}
+                              >
+                                <Pencil className="h-3.5 w-3.5" />
+                              </Button>
                             )}
-                            Remove
-                          </Button>
-                        ) : null}
-                      </div>
-                      {user.peers.length === 0 ? (
-                        <div className="mt-1 text-xs text-muted-foreground">No linked devices</div>
-                      ) : (
-                        <div className="mt-2 flex flex-wrap gap-1.5">
-                          {user.peers.map((peer) => (
-                            <Badge key={peer.peer_id} variant="outline" tone="muted" className="text-[10px]">
-                              <Laptop className="h-3 w-3" />
-                              {peer.display_name || `peer-${shortPeerSuffix(peer.peer_id)}`}
-                            </Badge>
-                          ))}
+                            {!user.is_self && user.peers.length === 0 ? (
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon-xs"
+                                onClick={() => { void removeStaleIdentity(user) }}
+                                disabled={deletingUserID === user.user_id}
+                                aria-label={`Remove ${user.display_name || user.user_id}`}
+                                data-testid={`person-remove-${user.user_id}`}
+                                className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+                              >
+                                {deletingUserID === user.user_id ? (
+                                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                ) : (
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                )}
+                              </Button>
+                            ) : null}
+                          </div>
                         </div>
-                      )}
-                      <div className="mt-0.5 font-mono text-[10px] text-muted-foreground/70">
-                        {user.user_id}
+
+                        {user.peers.length === 0 ? (
+                          <div className="mt-2 text-xs text-muted-foreground">No linked devices</div>
+                        ) : (
+                          <div className="mt-3 flex flex-wrap gap-1.5">
+                            {user.peers.map((peer) => (
+                              <span
+                                key={peer.peer_id}
+                                className="inline-flex h-7 items-center gap-1.5 border border-border bg-muted/30 px-2 text-[10px] text-muted-foreground"
+                              >
+                                <Laptop className="h-3 w-3" />
+                                <span>{displayPeerName(peer)}</span>
+                                <button
+                                  type="button"
+                                  onClick={() => { void changeDeviceOwner(peer.peer_id, null) }}
+                                  disabled={updatingOwnerPeerID === peer.peer_id}
+                                  aria-label={`Unlink ${displayPeerName(peer)} from ${user.display_name || user.user_id}`}
+                                  data-testid={`person-unlink-device-${user.user_id}-${peer.peer_id}`}
+                                  className="ml-0.5 inline-flex h-4 w-4 items-center justify-center text-muted-foreground hover:text-foreground disabled:opacity-50"
+                                >
+                                  {updatingOwnerPeerID === peer.peer_id ? (
+                                    <Loader2 className="h-3 w-3 animate-spin" />
+                                  ) : (
+                                    <X className="h-3 w-3" />
+                                  )}
+                                </button>
+                              </span>
+                            ))}
+                          </div>
+                        )}
                       </div>
-                    </div>
-                  ))}
+                    )
+                  })}
                 </div>
               )}
             </CardContent>
@@ -678,7 +900,7 @@ export function PairingPage() {
               )}
               {!loading && !error && unlinkedActivePeers.length > 0 && (
                 <div className="mb-3 border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
-                  {unlinkedActivePeers.length} paired device{unlinkedActivePeers.length === 1 ? '' : 's'} are not linked to a human identity yet.
+                  {unlinkedActivePeers.length} paired device{unlinkedActivePeers.length === 1 ? '' : 's'} are not linked to a person yet.
                 </div>
               )}
               {!loading && (() => {
