@@ -515,7 +515,7 @@ func (s *Service) updateWithSignals(ctx context.Context, workspaceID, id string,
 		// owner" hole: every working-status row should have an agent
 		// next to it. Generalised across the workspace's vocabulary via
 		// migration 070: any vocab entry with kind="working" triggers
-		// the same auto-claim path. The literal "doing" fallback covers
+		// the same auto-claim path. Shared fallback classification covers
 		// fresh installs where no vocab has been declared yet.
 		if p.Assignee == nil && t.AssigneeSessionID == "" && t.AssigneePeerID == "" && t.AssigneeUserID == "" && p.UpdatedBySessionID != "" &&
 			s.isWorkingStatus(ctx, t.WorkspaceID, t.Status) {
@@ -627,7 +627,7 @@ func (s *Service) updateWithSignals(ctx context.Context, workspaceID, id string,
 
 	// Lease auto-stamp — fires whenever the resulting state is a
 	// WORKING status (per the workspace vocabulary, kind="working",
-	// with the literal "doing" as the fresh-install fallback) with an
+	// with shared fallback classification for fresh installs) with an
 	// assignee AND either the status flipped INTO a working status on
 	// this patch OR an explicit Assignee patch landed. The post-state
 	// check covers both the auto-claim branch above (mutates
@@ -1293,24 +1293,14 @@ func (s *Service) ListNotes(ctx context.Context, workspaceID, taskID string, lim
 // isWorkingStatus reports whether a freeform status counts as
 // "actively being worked on" — gates the auto-claim service path.
 // Consults the workspace vocabulary (kind="working") first, then
-// falls back to the literal "doing" so a fresh install with no vocab
-// declarations still works. Errors from the store are swallowed: a
+// falls back to shared default classification so a fresh install with no
+// vocab declarations still works. Errors from the store are swallowed: a
 // vocab-lookup failure must not block the auto-claim transition.
 func (s *Service) isWorkingStatus(ctx context.Context, workspaceID, status string) bool {
 	if status == "" {
 		return false
 	}
-	vocab, err := s.store.ListTaskStatusVocab(ctx, workspaceID)
-	if err == nil {
-		for _, v := range vocab {
-			if v.StatusText == status {
-				return v.Kind == "working"
-			}
-		}
-	}
-	// Fallback for workspaces that haven't declared their vocabulary
-	// yet — covers the six suggested defaults' single working entry.
-	return status == "doing"
+	return s.workspaceStatusKinds(ctx, workspaceID)[status] == KindWorking
 }
 
 // KnownStatuses returns the per-workspace vocabulary entries + the

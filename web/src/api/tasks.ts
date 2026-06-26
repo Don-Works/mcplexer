@@ -78,7 +78,7 @@ export interface TaskNote {
 // StatusKind — the canonical bucket a freeform status word maps to.
 // Drives UI working-state chips + the service-layer auto-claim path.
 // See migration 070 + internal/store/models.go TaskStatusVocab.
-export type StatusKind = 'open' | 'working' | 'blocked' | 'done' | 'cancelled'
+export type StatusKind = 'open' | 'working' | 'blocked' | 'review' | 'done' | 'cancelled'
 
 export interface TaskStatusVocab {
   workspace_id: string

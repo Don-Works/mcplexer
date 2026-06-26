@@ -109,6 +109,7 @@ func TestCountTaskStatusesFiltersStateAndWorkspace(t *testing.T) {
 		{WorkspaceID: ws1, Title: "closed", Status: "done", ClosedAt: &now},
 		{WorkspaceID: ws1, Title: "legacy closed", Status: "completed"},
 		{WorkspaceID: ws1, Title: "vocab closed", Status: "shipped"},
+		{WorkspaceID: ws1, Title: "explicit open", Status: "archived"},
 		{WorkspaceID: ws2, Title: "other", Status: "remote"},
 	}
 	for _, row := range rows {
@@ -125,6 +126,14 @@ func TestCountTaskStatusesFiltersStateAndWorkspace(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("UpsertTaskStatusVocab: %v", err)
 	}
+	if err := d.UpsertTaskStatusVocab(ctx, &store.TaskStatusVocab{
+		WorkspaceID: ws1,
+		StatusText:  "archived",
+		Kind:        "open",
+		ManagedBy:   "user",
+	}); err != nil {
+		t.Fatalf("UpsertTaskStatusVocab archived: %v", err)
+	}
 	deleted := &store.Task{WorkspaceID: ws1, Title: "deleted", Status: "ghost"}
 	if err := d.CreateTask(ctx, deleted); err != nil {
 		t.Fatalf("CreateTask deleted: %v", err)
@@ -139,11 +148,12 @@ func TestCountTaskStatusesFiltersStateAndWorkspace(t *testing.T) {
 	}
 	if openCounts["triage"] != 2 ||
 		openCounts["coding"] != 1 ||
+		openCounts["archived"] != 1 ||
 		openCounts["done"] != 0 ||
 		openCounts["completed"] != 0 ||
 		openCounts["shipped"] != 0 ||
 		openCounts["ghost"] != 0 {
-		t.Fatalf("open counts = %v, want triage/coding only", openCounts)
+		t.Fatalf("open counts = %v, want triage/coding/archived only", openCounts)
 	}
 	closedCounts, err := d.CountTaskStatuses(ctx, ws1, "closed")
 	if err != nil {
@@ -152,7 +162,8 @@ func TestCountTaskStatusesFiltersStateAndWorkspace(t *testing.T) {
 	if len(closedCounts) != 3 ||
 		closedCounts["done"] != 1 ||
 		closedCounts["completed"] != 1 ||
-		closedCounts["shipped"] != 1 {
+		closedCounts["shipped"] != 1 ||
+		closedCounts["archived"] != 0 {
 		t.Fatalf("closed counts = %v, want terminal statuses", closedCounts)
 	}
 	allCounts, err := d.CountTaskStatuses(ctx, "", "all")

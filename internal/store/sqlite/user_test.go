@@ -160,6 +160,40 @@ func TestPeerUserRelinkMovesDeviceBetweenUsers(t *testing.T) {
 	}
 }
 
+func TestPeerUserLinkReplacesExistingOwner(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+
+	addPairedPeer(t, ctx, db, "peer-1", "laptop")
+	if err := db.UpsertUser(ctx, "u-synthetic", "peer-1"); err != nil {
+		t.Fatalf("upsert synthetic: %v", err)
+	}
+	if err := db.UpsertUser(ctx, "u-real", "Elliot"); err != nil {
+		t.Fatalf("upsert real: %v", err)
+	}
+	if err := db.LinkPeerToUser(ctx, "peer-1", "u-synthetic"); err != nil {
+		t.Fatalf("link synthetic: %v", err)
+	}
+	if err := db.LinkPeerToUser(ctx, "peer-1", "u-real"); err != nil {
+		t.Fatalf("link real: %v", err)
+	}
+
+	u, err := db.GetUserForPeer(ctx, "peer-1")
+	if err != nil {
+		t.Fatalf("get user for peer: %v", err)
+	}
+	if u.UserID != "u-real" {
+		t.Fatalf("owner = %q, want u-real", u.UserID)
+	}
+	oldPeers, err := db.ListPeersForUser(ctx, "u-synthetic")
+	if err != nil {
+		t.Fatalf("list synthetic peers: %v", err)
+	}
+	if len(oldPeers) != 0 {
+		t.Fatalf("synthetic owner retained peers = %+v", oldPeers)
+	}
+}
+
 func TestPeerUserUnlinkClearsDeviceOwner(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()

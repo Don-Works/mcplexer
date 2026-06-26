@@ -138,19 +138,15 @@ func (d *DB) UpsertUser(ctx context.Context, userID, displayName string) error {
 	return nil
 }
 
-// LinkPeerToUser inserts into peer_users. Idempotent: duplicate (peer_id,
-// user_id) returns nil so re-pair flows no-op cleanly.
+// LinkPeerToUser links a peer to exactly one user. Re-pair flows may learn a
+// better human identity than an old synthetic fallback, so this replaces any
+// existing owner instead of appending a second one. Re-linking the same
+// (peer_id, user_id) remains idempotent.
 func (d *DB) LinkPeerToUser(ctx context.Context, peerID, userID string) error {
 	if peerID == "" || userID == "" {
 		return errors.New("LinkPeerToUser: peer_id + user_id required")
 	}
-	_, err := d.q.ExecContext(ctx, `
-		INSERT OR IGNORE INTO peer_users (peer_id, user_id)
-		VALUES (?, ?)`, peerID, userID)
-	if err != nil {
-		return fmt.Errorf("link peer to user: %w", err)
-	}
-	return nil
+	return d.RelinkPeerToUser(ctx, peerID, userID)
 }
 
 // UnlinkPeerFromUsers clears every human-owner link for a peer. It is

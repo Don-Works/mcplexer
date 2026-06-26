@@ -810,8 +810,9 @@ type UserStore interface {
 	// either for the first time or on re-pair with an updated name.
 	UpsertUser(ctx context.Context, userID, displayName string) error
 
-	// LinkPeerToUser inserts a (peer_id, user_id) row. Idempotent: a duplicate
-	// (peer_id, user_id) returns nil so re-pair flows just no-op.
+	// LinkPeerToUser links a peer to exactly one user. Re-pair flows replace
+	// any existing owner so a stale synthetic identity cannot shadow a later
+	// real human identity. Re-linking the same pair remains idempotent.
 	LinkPeerToUser(ctx context.Context, peerID, userID string) error
 	GetUserForPeer(ctx context.Context, peerID string) (*User, error)
 	ListPeersForUser(ctx context.Context, userID string) ([]P2PPeer, error)

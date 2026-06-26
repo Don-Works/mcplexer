@@ -365,7 +365,7 @@ export function kindOfStatus(
   if (!status) return null
   if (vocab) {
     const k = vocab.get(status)
-    if (k === 'open' || k === 'working' || k === 'blocked' || k === 'done' || k === 'cancelled') {
+    if (k === 'open' || k === 'working' || k === 'blocked' || k === 'review' || k === 'done' || k === 'cancelled') {
       return k
     }
   }
@@ -386,7 +386,7 @@ export function isWorkingStatus(status: string, vocab?: StatusKindMap): boolean 
     // Explicit non-working classification from vocab wins over the
     // hardcoded fallback — a workspace that declared `doing → blocked`
     // (weird but legal) should NOT be treated as working.
-    if (k === 'open' || k === 'blocked' || k === 'done' || k === 'cancelled') return false
+    if (k === 'open' || k === 'blocked' || k === 'review' || k === 'done' || k === 'cancelled') return false
   }
   return WORKING_STATUSES.has(status)
 }

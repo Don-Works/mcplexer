@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/don-works/mcplexer/internal/store"
+	"github.com/don-works/mcplexer/internal/taskstatus"
 )
 
 // StatusConsolidationProposal is the structured plan returned by
@@ -161,10 +162,18 @@ func (s *Service) applyOneMerge(
 func (s *Service) upsertCanonicalVocab(
 	ctx context.Context, workspaceID, status string, terminal bool,
 ) error {
+	kind := KindOpen
+	if k, ok := taskstatus.DefaultKind(status); ok {
+		kind = k
+	}
+	if terminal && !taskstatus.IsTerminalKind(kind) {
+		kind = KindDone
+	}
 	return s.store.UpsertTaskStatusVocab(ctx, &store.TaskStatusVocab{
 		WorkspaceID: workspaceID,
 		StatusText:  status,
 		IsTerminal:  terminal,
+		Kind:        kind,
 		ManagedBy:   "skill",
 		UpdatedAt:   time.Now().UTC(),
 	})

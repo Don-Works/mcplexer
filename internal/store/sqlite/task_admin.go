@@ -9,8 +9,27 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
+
+	"github.com/don-works/mcplexer/internal/taskstatus"
 )
+
+var terminalStatusKinds = []string{taskstatus.KindDone, taskstatus.KindCancelled}
+
+var terminalFallbackStatuses = func() []string {
+	out := taskstatus.TerminalDefaultStatuses()
+	sort.Strings(out)
+	return out
+}()
+
+func sqlStringLiterals(values []string) string {
+	quoted := make([]string, 0, len(values))
+	for _, v := range values {
+		quoted = append(quoted, "'"+strings.ReplaceAll(v, "'", "''")+"'")
+	}
+	return strings.Join(quoted, ", ")
+}
 
 // SelectDistinctTaskStatuses returns status_text → count of live
 // (non-deleted) tasks in a workspace. Backs task__consolidate_statuses
@@ -88,12 +107,19 @@ func (d *DB) CountTaskStatuses(ctx context.Context, workspaceID, state string) (
 }
 
 func taskStatusTerminalPredicate(alias string) string {
-	return fmt.Sprintf(`(LOWER(%[1]s.status) IN ('done', 'cancelled', 'completed', 'complete', 'archived')
-		OR EXISTS (
+	return fmt.Sprintf(`(EXISTS (
 			SELECT 1 FROM task_status_vocabulary v
 			WHERE v.workspace_id = %[1]s.workspace_id
 			  AND v.status_text = %[1]s.status
-			  AND (v.is_terminal = 1 OR v.kind IN ('done', 'cancelled'))
+			  AND (v.is_terminal = 1 OR v.kind IN (`+sqlStringLiterals(terminalStatusKinds)+`))
+		)
+		OR (
+			NOT EXISTS (
+				SELECT 1 FROM task_status_vocabulary v
+				WHERE v.workspace_id = %[1]s.workspace_id
+				  AND v.status_text = %[1]s.status
+			)
+			AND LOWER(%[1]s.status) IN (`+sqlStringLiterals(terminalFallbackStatuses)+`)
 		))`, alias)
 }
 

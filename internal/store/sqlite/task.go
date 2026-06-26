@@ -15,6 +15,7 @@ import (
 
 	"github.com/don-works/mcplexer/internal/clock"
 	"github.com/don-works/mcplexer/internal/store"
+	"github.com/don-works/mcplexer/internal/taskstatus"
 	"github.com/oklog/ulid/v2"
 )
 
@@ -282,11 +283,6 @@ func (d *DB) ListTasks(ctx context.Context, f store.TaskFilter) ([]store.Task, e
 	// mirror; the JSON column is the source of truth for ALL-must-match).
 	if len(f.Tags) > 0 {
 		out = filterTasksByTags(out, f.Tags)
-	}
-	// OnlyTerminal needs the vocab join — done here since the WHERE
-	// builder doesn't have the workspace context to express it cleanly.
-	if f.OnlyTerminal != nil {
-		out = d.filterTasksByTerminality(ctx, out, *f.OnlyTerminal)
 	}
 	return out, rows.Err()
 }
@@ -706,6 +702,15 @@ func buildTaskWhere(f store.TaskFilter) (string, []any, error) {
 		conds = append(conds, "tasks.status = ?")
 		args = append(args, f.Status)
 	}
+	if f.OnlyTerminal != nil {
+		terminal := taskStatusTerminalPredicate("tasks")
+		if *f.OnlyTerminal {
+			conds = append(conds, "(tasks.closed_at IS NOT NULL OR "+terminal+")")
+		} else {
+			conds = append(conds, "tasks.closed_at IS NULL")
+			conds = append(conds, "NOT "+terminal)
+		}
+	}
 	if f.AssigneeSessionID != "" {
 		conds = append(conds, "tasks.assignee_session_id = ?")
 		args = append(args, f.AssigneeSessionID)
@@ -891,24 +896,28 @@ func (d *DB) filterTasksByTerminality(ctx context.Context, in []store.Task, want
 	if len(in) == 0 {
 		return in
 	}
-	// Build a per-workspace terminal-status set lazily.
+	// Build a per-workspace terminal-status set lazily. Explicit vocabulary
+	// rows win over fallback status-name classification.
 	wsTerminals := map[string]map[string]bool{}
 	out := in[:0]
 	for _, t := range in {
 		set, ok := wsTerminals[t.WorkspaceID]
 		if !ok {
 			set = map[string]bool{}
+			for status, kind := range taskstatus.DefaultKinds {
+				if taskstatus.IsTerminalKind(kind) {
+					set[status] = true
+				}
+			}
 			vocab, err := d.ListTaskStatusVocab(ctx, t.WorkspaceID)
 			if err == nil {
 				for _, v := range vocab {
-					if v.IsTerminal {
-						set[v.StatusText] = true
-					}
+					set[v.StatusText] = v.IsTerminal || taskstatus.IsTerminalKind(v.Kind)
 				}
 			}
 			wsTerminals[t.WorkspaceID] = set
 		}
-		isTerm := set[t.Status] || t.ClosedAt != nil
+		isTerm := set[t.Status] || set[taskstatus.Normalize(t.Status)] || t.ClosedAt != nil
 		if isTerm == wantTerminal {
 			out = append(out, t)
 		}
@@ -1035,18 +1044,28 @@ func (d *DB) HeartbeatTask(ctx context.Context, id, sessionID string, ttl time.D
 	return n > 0, nil
 }
 
+var workingFallbackStatuses = func() []string {
+	out := []string{}
+	for status, kind := range taskstatus.DefaultKinds {
+		if kind == taskstatus.KindWorking {
+			out = append(out, status)
+		}
+	}
+	return out
+}()
+
 // taskWorkingStatusPredicate is a SQL fragment (referencing the `tasks`
 // table alias) that is TRUE when a row's freeform status counts as
 // "actively being worked on". It mirrors Service.isWorkingStatus
 // exactly: the per-workspace task_status_vocabulary kind='working'
-// classification wins; absent ANY vocab row for that status the literal
-// 'doing' is the fallback so a fresh install with no declared vocab is
-// still reclaimable. Keeping this in lock-step with the service-layer
+// classification wins; absent ANY vocab row for that status the shared
+// taskstatus working fallback applies so a fresh install with no declared
+// vocab is still reclaimable. Keeping this in lock-step with the service-layer
 // helper is load-bearing — the Clear* functions return the ids of the
 // rows they reclaim and the service re-runs isWorkingStatus on each to
 // decide whether to demote status; if the two predicates disagreed a
 // row could be un-leased here yet left in a working status there.
-const taskWorkingStatusPredicate = `(
+var taskWorkingStatusPredicate = `(
 		EXISTS (SELECT 1 FROM task_status_vocabulary v
 		         WHERE v.workspace_id = tasks.workspace_id
 		           AND v.status_text = tasks.status
@@ -1055,7 +1074,7 @@ const taskWorkingStatusPredicate = `(
 		    NOT EXISTS (SELECT 1 FROM task_status_vocabulary v
 		                 WHERE v.workspace_id = tasks.workspace_id
 		                   AND v.status_text = tasks.status)
-		    AND tasks.status = 'doing'
+		    AND LOWER(tasks.status) IN (` + sqlStringLiterals(workingFallbackStatuses) + `)
 		)
 	)`
 
@@ -1069,7 +1088,7 @@ const taskWorkingStatusPredicate = `(
 //     by definition an unreclaimable zombie under the old predicate
 //     (lease_expires_at IS NOT NULL filtered it out of BOTH release
 //     paths). This second arm is the structural fix.
-const taskReclaimableExpr = `(
+var taskReclaimableExpr = `(
 		(tasks.lease_expires_at IS NOT NULL AND tasks.lease_expires_at < ?)
 		OR (tasks.assignee_session_id IS NOT NULL
 		    AND tasks.lease_expires_at IS NULL
@@ -1088,7 +1107,7 @@ const taskReclaimableExpr = `(
 // Callers MUST scope this with `assignee_session_id = ?` (done in
 // ClearSessionTaskLeases) so it never reclaims another session's row.
 // Takes NO bind parameters.
-const taskSessionReclaimExpr = `(
+var taskSessionReclaimExpr = `(
 		tasks.lease_expires_at IS NOT NULL
 		OR (tasks.lease_expires_at IS NULL
 		    AND ` + taskWorkingStatusPredicate + `)
