@@ -221,6 +221,20 @@ export function getUser(id: string): Promise<UserWithPeers> {
   return request(`/users/${encodeURIComponent(id)}`)
 }
 
+export function deleteUser(id: string): Promise<void> {
+  return request(`/users/${encodeURIComponent(id)}`, { method: 'DELETE' })
+}
+
+export function updateDeviceOwner(
+  peerId: string,
+  userId: string | null,
+): Promise<{ peer_id: string; user_id: string | null }> {
+  return request(`/users/devices/${encodeURIComponent(peerId)}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ user_id: userId }),
+  })
+}
+
 // Auth Scopes
 export function listAuthScopes(init?: RequestInit): Promise<AuthScope[]> {
   return request('/auth-scopes', init)

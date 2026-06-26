@@ -1425,6 +1425,35 @@ func TestUpdateWithHumanAssignee(t *testing.T) {
 	}
 }
 
+func TestUpdateWithSameHumanAssigneeIsIdempotent(t *testing.T) {
+	ctx := context.Background()
+	svc, _, wsID := newSvc(t)
+	t1, _ := svc.Create(ctx, tasks.CreateOptions{
+		WorkspaceID: wsID,
+		Title:       "Human idempotent",
+		Assignee:    &tasks.Assignee{UserID: "user-456"},
+	})
+	got, err := svc.Update(ctx, wsID, t1.ID, tasks.UpdatePatch{
+		Assignee: &tasks.Assignee{UserID: "user-456"},
+	})
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	var history []store.TaskStatusHistoryEntry
+	if err := json.Unmarshal(got.StatusHistoryJSON, &history); err != nil {
+		t.Fatalf("history json: %v", err)
+	}
+	assignedCount := 0
+	for _, h := range history {
+		if h.Evt == "assigned" && h.To == "user:user-456" {
+			assignedCount++
+		}
+	}
+	if assignedCount != 1 {
+		t.Fatalf("same human assignee should not append duplicate assigned history, got %d entries: %+v", assignedCount, history)
+	}
+}
+
 func TestClearHumanAssignee(t *testing.T) {
 	ctx := context.Background()
 	svc, _, wsID := newSvc(t)

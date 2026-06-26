@@ -5,9 +5,16 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { CopyButton } from '@/components/ui/copy-button'
-import { Loader2, ShieldOff, Trash2, UserRound, X } from 'lucide-react'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import { Laptop, Link2, Loader2, ShieldOff, Trash2, UserRound, UsersRound, X } from 'lucide-react'
 import { toast } from 'sonner'
-import { getUser, listUsers } from '@/api/client'
+import { deleteUser, getUser, listUsers, updateDeviceOwner } from '@/api/client'
 import type { UserWithPeers } from '@/api/types'
 import {
   formatRelative,
@@ -22,12 +29,19 @@ import { PeerConnectionBadge, type ConnectionMode } from '@/components/p2p/PeerC
 import { ReconnectBadge } from '@/components/p2p/ReconnectBadge'
 
 const GETTING_STARTED_DISMISSED_KEY = 'mcplexer:pairing:getting-started:dismissed'
+const UNLINKED_OWNER_VALUE = '__unlinked__'
 
 // shortPeerSuffix is the same 8-char tail we use server-side for the
 // fallback "peer-…" label. Keeping this in sync is load-bearing — UI logic
 // for collision disambiguation depends on it lining up with the server.
 function shortPeerSuffix(peerID: string): string {
   return peerID.length > 8 ? peerID.slice(-8) : peerID
+}
+
+interface DeviceOwner {
+  user_id: string
+  display_name: string
+  is_self: boolean
 }
 
 function GettingStartedCard({ onDismiss }: { onDismiss: () => void }) {
@@ -199,10 +213,20 @@ function GettingStartedCard({ onDismiss }: { onDismiss: () => void }) {
 function PeerRowItem({
   peer,
   collides,
+  owners,
+  ownerChoices,
+  ownersReady,
+  ownerUpdating,
+  onOwnerChange,
   onRevoke,
 }: {
   peer: PeerRow
   collides: boolean
+  owners: DeviceOwner[]
+  ownerChoices: DeviceOwner[]
+  ownersReady: boolean
+  ownerUpdating: boolean
+  onOwnerChange: (userID: string | null) => void
   onRevoke: () => void
 }) {
   const revoked = !!peer.revoked_at
@@ -249,9 +273,13 @@ function PeerRowItem({
   const suffix = shortPeerSuffix(peer.peer_id)
   const primary = peer.display_name || `peer-${suffix}`
   const showPeerPrefix = collides && !!peer.display_name
+  const selectedOwner = owners[0]?.user_id ?? UNLINKED_OWNER_VALUE
+  const ownerText = owners
+    .map((owner) => owner.display_name || owner.user_id)
+    .join(', ')
   return (
     <div
-      className="flex items-center justify-between border-b border-border/40 py-3 last:border-0"
+      className="flex flex-col gap-3 border-b border-border/40 py-3 last:border-0 sm:flex-row sm:items-center sm:justify-between"
       data-testid={`peer-row-${peer.peer_id}`}
     >
       <div className="min-w-0">
@@ -276,6 +304,17 @@ function PeerRowItem({
               className="text-[10px]"
             />
           )}
+          {!revoked && ownersReady && owners.length > 0 && (
+            <Badge variant="outline" tone="info" className="text-[10px]">
+              <UserRound className="h-3 w-3" />
+              {ownerText}
+            </Badge>
+          )}
+          {!revoked && ownersReady && owners.length === 0 && (
+            <Badge variant="outline" tone="warn" className="text-[10px]">
+              unlinked
+            </Badge>
+          )}
         </div>
         <div className="text-xs text-muted-foreground">
           peer-{suffix} · paired {formatRelative(peer.paired_at)} · last seen {formatRelative(peer.last_seen)}
@@ -286,17 +325,48 @@ function PeerRowItem({
         </div>
       </div>
       {!revoked && (
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={onRevoke}
-          data-testid={`peer-revoke-${peer.peer_id}`}
-          aria-label={`Revoke ${primary}`}
-          className="text-destructive hover:bg-destructive/10 hover:text-destructive"
-        >
-          <Trash2 className="mr-1.5 h-3.5 w-3.5" />
-          Revoke
-        </Button>
+        <div className="flex shrink-0 items-center gap-2">
+          {ownersReady && (
+            <Select
+              value={selectedOwner}
+              disabled={ownerUpdating || ownerChoices.length === 0}
+              onValueChange={(value) => {
+                onOwnerChange(value === UNLINKED_OWNER_VALUE ? null : value)
+              }}
+            >
+              <SelectTrigger
+                className="h-8 w-[170px] text-xs"
+                data-testid={`peer-owner-${peer.peer_id}`}
+                aria-label={`Owner for ${primary}`}
+              >
+                {ownerUpdating ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <SelectValue placeholder="Owner" />
+                )}
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={UNLINKED_OWNER_VALUE}>Unlinked</SelectItem>
+                {ownerChoices.map((owner) => (
+                  <SelectItem key={owner.user_id} value={owner.user_id}>
+                    {owner.display_name || owner.user_id}{owner.is_self ? ' (you)' : ''}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={onRevoke}
+            data-testid={`peer-revoke-${peer.peer_id}`}
+            aria-label={`Revoke ${primary}`}
+            className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+          >
+            <Trash2 className="mr-1.5 h-3.5 w-3.5" />
+            Revoke
+          </Button>
+        </div>
       )}
     </div>
   )
@@ -313,6 +383,8 @@ export function PairingPage() {
   const [usersLoading, setUsersLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [usersError, setUsersError] = useState<string | null>(null)
+  const [deletingUserID, setDeletingUserID] = useState<string | null>(null)
+  const [updatingOwnerPeerID, setUpdatingOwnerPeerID] = useState<string | null>(null)
   const [searchParams, setSearchParams] = useSearchParams()
   const [gsDismissed, setGsDismissed] = useState(
     () => localStorage.getItem(GETTING_STARTED_DISMISSED_KEY) === '1',
@@ -365,11 +437,39 @@ export function PairingPage() {
     try {
       await p2pFetch<void>(`/peers/${encodeURIComponent(peerID)}`, { method: 'DELETE' })
       toast.success('Peer revoked')
-      await refresh()
+      await Promise.all([refresh(), refreshUsers()])
     } catch (e) {
       toast.error(`Revoke failed: ${e instanceof Error ? e.message : String(e)}`)
     }
-  }, [refresh])
+  }, [refresh, refreshUsers])
+
+  const removeStaleIdentity = useCallback(async (user: UserWithPeers) => {
+    if (user.is_self || user.peers.length > 0) return
+    if (!window.confirm(`Remove stale identity "${user.display_name || user.user_id}"?`)) return
+    setDeletingUserID(user.user_id)
+    try {
+      await deleteUser(user.user_id)
+      toast.success('Identity removed')
+      await refreshUsers()
+    } catch (e) {
+      toast.error(`Remove failed: ${e instanceof Error ? e.message : String(e)}`)
+    } finally {
+      setDeletingUserID(null)
+    }
+  }, [refreshUsers])
+
+  const changeDeviceOwner = useCallback(async (peerID: string, userID: string | null) => {
+    setUpdatingOwnerPeerID(peerID)
+    try {
+      await updateDeviceOwner(peerID, userID)
+      toast.success(userID ? 'Device owner updated' : 'Device unlinked')
+      await refreshUsers()
+    } catch (e) {
+      toast.error(`Owner update failed: ${e instanceof Error ? e.message : String(e)}`)
+    } finally {
+      setUpdatingOwnerPeerID(null)
+    }
+  }, [refreshUsers])
 
   const dismissGettingStarted = useCallback(() => {
     setGsDismissed(true)
@@ -377,30 +477,84 @@ export function PairingPage() {
   }, [])
 
   const showGettingStarted = !loading && !error && peers.length === 0 && !gsDismissed
+  const activePeers = useMemo(() => peers.filter((p) => !p.revoked_at), [peers])
+  const ownerDataReady = !usersLoading && !usersError
+  const ownerByPeerID = useMemo(() => {
+    const byPeer = new Map<string, DeviceOwner[]>()
+    for (const user of users) {
+      for (const peer of user.peers ?? []) {
+        const owners = byPeer.get(peer.peer_id) ?? []
+        owners.push({
+          user_id: user.user_id,
+          display_name: user.display_name,
+          is_self: user.is_self,
+        })
+        byPeer.set(peer.peer_id, owners)
+      }
+    }
+    return byPeer
+  }, [users])
+  const ownerChoices = useMemo<DeviceOwner[]>(() => users.map((user) => ({
+    user_id: user.user_id,
+    display_name: user.display_name,
+    is_self: user.is_self,
+  })), [users])
+  const linkedActiveDeviceCount = ownerDataReady
+    ? activePeers.filter((p) => (ownerByPeerID.get(p.peer_id)?.length ?? 0) > 0).length
+    : 0
+  const unlinkedActivePeers = ownerDataReady
+    ? activePeers.filter((p) => (ownerByPeerID.get(p.peer_id)?.length ?? 0) === 0)
+    : []
+  const refreshPeopleAndDevices = useCallback(() => {
+    void refresh()
+    void refreshUsers()
+  }, [refresh, refreshUsers])
 
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Paired devices</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">People & devices</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Link other MCPlexer devices with a 6-digit code. No ports, IPs, or
-          peer IDs to manage.
+          Human identities own work. Devices are paired peers that can connect, run sessions, and sync for those people.
         </p>
+      </div>
+      <div className="grid gap-3 sm:grid-cols-3">
+        <div className="border border-border bg-card/40 px-3 py-2">
+          <div className="flex items-center gap-2 text-xs uppercase tracking-wider text-muted-foreground">
+            <UsersRound className="h-3.5 w-3.5" />
+            People
+          </div>
+          <div className="mt-1 text-xl font-semibold">{users.length}</div>
+        </div>
+        <div className="border border-border bg-card/40 px-3 py-2">
+          <div className="flex items-center gap-2 text-xs uppercase tracking-wider text-muted-foreground">
+            <Laptop className="h-3.5 w-3.5" />
+            Devices
+          </div>
+          <div className="mt-1 text-xl font-semibold">{activePeers.length}</div>
+        </div>
+        <div className="border border-border bg-card/40 px-3 py-2">
+          <div className="flex items-center gap-2 text-xs uppercase tracking-wider text-muted-foreground">
+            <Link2 className="h-3.5 w-3.5" />
+            Linked
+          </div>
+          <div className="mt-1 text-xl font-semibold">{ownerDataReady ? `${linkedActiveDeviceCount}/${activePeers.length}` : '...'}</div>
+        </div>
       </div>
       {showGettingStarted && (
         <GettingStartedCard onDismiss={dismissGettingStarted} />
       )}
       <div className="flex gap-2">
-        <ShowCodeModal onComplete={() => { void refresh() }} />
+        <ShowCodeModal onComplete={refreshPeopleAndDevices} />
         <EnterCodeModal
-          onComplete={() => { void refresh() }}
+          onComplete={refreshPeopleAndDevices}
           initialPayload={pastePayload}
           autoOpen={!!pastePayload}
         />
       </div>
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Trusted peers</CardTitle>
+          <CardTitle className="text-base">Devices</CardTitle>
         </CardHeader>
         <CardContent>
           {loading && (
@@ -420,6 +574,11 @@ export function PairingPage() {
               No paired devices yet. Tap "Pair this device" above to start.
             </p>
           )}
+          {!loading && !error && unlinkedActivePeers.length > 0 && (
+            <div className="mb-3 border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+              {unlinkedActivePeers.length} paired device{unlinkedActivePeers.length === 1 ? '' : 's'} are not linked to a human identity yet.
+            </div>
+          )}
           {!loading && (() => {
             // Names that appear more than once across the active peer list
             // get a short peer suffix appended so users can tell them apart.
@@ -434,6 +593,11 @@ export function PairingPage() {
                 key={p.peer_id}
                 peer={p}
                 collides={(counts[p.display_name] ?? 0) > 1}
+                owners={ownerByPeerID.get(p.peer_id) ?? []}
+                ownerChoices={ownerChoices}
+                ownersReady={ownerDataReady}
+                ownerUpdating={updatingOwnerPeerID === p.peer_id}
+                onOwnerChange={(userID) => { void changeDeviceOwner(p.peer_id, userID) }}
                 onRevoke={() => revoke(p.peer_id)}
               />
             ))
@@ -466,20 +630,43 @@ export function PairingPage() {
             <div className="divide-y divide-border/40">
               {users.map((user) => (
                 <div key={user.user_id} className="py-3" data-testid={`user-row-${user.user_id}`}>
-                  <div className="flex items-center gap-2 text-sm font-medium">
-                    <UserRound className="h-4 w-4 text-muted-foreground" />
-                    <span>{user.display_name || user.user_id}</span>
-                    {user.is_self && (
-                      <span className="rounded border border-primary/30 bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">
-                        this device
-                      </span>
-                    )}
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex min-w-0 items-center gap-2 text-sm font-medium">
+                      <UserRound className="h-4 w-4 shrink-0 text-muted-foreground" />
+                      <span className="truncate">{user.display_name || user.user_id}</span>
+                      {user.is_self && (
+                        <Badge variant="outline" tone="success" className="text-[10px]">you</Badge>
+                      )}
+                    </div>
+                    {!user.is_self && user.peers.length === 0 ? (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => { void removeStaleIdentity(user) }}
+                        disabled={deletingUserID === user.user_id}
+                        className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+                      >
+                        {deletingUserID === user.user_id ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <Trash2 className="h-3.5 w-3.5" />
+                        )}
+                        Remove
+                      </Button>
+                    ) : null}
                   </div>
-                  <div className="mt-1 text-xs text-muted-foreground">
-                    {user.peers.length === 0
-                      ? 'No linked devices'
-                      : user.peers.map((p) => p.display_name || `peer-${shortPeerSuffix(p.peer_id)}`).join(', ')}
-                  </div>
+                  {user.peers.length === 0 ? (
+                    <div className="mt-1 text-xs text-muted-foreground">No linked devices</div>
+                  ) : (
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {user.peers.map((peer) => (
+                        <Badge key={peer.peer_id} variant="outline" tone="muted" className="text-[10px]">
+                          <Laptop className="h-3 w-3" />
+                          {peer.display_name || `peer-${shortPeerSuffix(peer.peer_id)}`}
+                        </Badge>
+                      ))}
+                    </div>
+                  )}
                   <div className="mt-0.5 font-mono text-[10px] text-muted-foreground/70">
                     {user.user_id}
                   </div>

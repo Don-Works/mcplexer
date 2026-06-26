@@ -104,6 +104,20 @@ func (d *DB) UpdateUserDisplayName(ctx context.Context, userID, displayName stri
 	return checkRowsAffected(res)
 }
 
+// DeleteUser removes one user row. peer_users links cascade by schema; callers
+// that expose this to humans should guard against deleting self or users that
+// still own devices.
+func (d *DB) DeleteUser(ctx context.Context, userID string) error {
+	if userID == "" {
+		return errors.New("DeleteUser: user_id required")
+	}
+	res, err := d.q.ExecContext(ctx, `DELETE FROM users WHERE user_id = ?`, userID)
+	if err != nil {
+		return fmt.Errorf("delete user: %w", err)
+	}
+	return checkRowsAffected(res)
+}
+
 // UpsertUser inserts a user with displayName, or updates the display_name
 // if the row already exists. is_self defaults to 0 — this method is for
 // remote users (the bootstrap path uses CreateUser directly to set
@@ -135,6 +149,51 @@ func (d *DB) LinkPeerToUser(ctx context.Context, peerID, userID string) error {
 		VALUES (?, ?)`, peerID, userID)
 	if err != nil {
 		return fmt.Errorf("link peer to user: %w", err)
+	}
+	return nil
+}
+
+// UnlinkPeerFromUsers clears every human-owner link for a peer. It is
+// intentionally idempotent so callers can recover partially-linked rows.
+func (d *DB) UnlinkPeerFromUsers(ctx context.Context, peerID string) error {
+	if peerID == "" {
+		return errors.New("UnlinkPeerFromUsers: peer_id required")
+	}
+	_, err := d.q.ExecContext(ctx, `DELETE FROM peer_users WHERE peer_id = ?`, peerID)
+	if err != nil {
+		return fmt.Errorf("unlink peer from users: %w", err)
+	}
+	return nil
+}
+
+// RelinkPeerToUser replaces every existing owner link for a peer with exactly
+// one user. The replacement is atomic so a device never briefly disappears
+// from all human identities during a normal reassignment.
+func (d *DB) RelinkPeerToUser(ctx context.Context, peerID, userID string) error {
+	if peerID == "" || userID == "" {
+		return errors.New("RelinkPeerToUser: peer_id + user_id required")
+	}
+	if _, ok := d.q.(*sql.Tx); ok {
+		return d.relinkPeerToUser(ctx, peerID, userID)
+	}
+	return d.Tx(ctx, func(st store.Store) error {
+		txDB, ok := st.(*DB)
+		if !ok {
+			return errors.New("RelinkPeerToUser: unexpected transaction store")
+		}
+		return txDB.relinkPeerToUser(ctx, peerID, userID)
+	})
+}
+
+func (d *DB) relinkPeerToUser(ctx context.Context, peerID, userID string) error {
+	if _, err := d.q.ExecContext(ctx, `DELETE FROM peer_users WHERE peer_id = ?`, peerID); err != nil {
+		return fmt.Errorf("clear peer users: %w", err)
+	}
+	_, err := d.q.ExecContext(ctx, `
+		INSERT INTO peer_users (peer_id, user_id)
+		VALUES (?, ?)`, peerID, userID)
+	if err != nil {
+		return fmt.Errorf("link peer to replacement user: %w", mapConstraintError(err))
 	}
 	return nil
 }

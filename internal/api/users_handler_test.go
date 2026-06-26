@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -65,6 +66,56 @@ func (f *fakeUserStore) UpdateUserDisplayName(_ context.Context, id, name string
 	}
 	u.DisplayName = name
 	f.users[id] = u
+	return nil
+}
+
+func (f *fakeUserStore) DeleteUser(_ context.Context, id string) error {
+	if _, ok := f.users[id]; !ok {
+		return store.ErrNotFound
+	}
+	delete(f.users, id)
+	delete(f.peerUsers, id)
+	return nil
+}
+
+func (f *fakeUserStore) GetPeer(_ context.Context, id string) (*store.P2PPeer, error) {
+	p, ok := f.peers[id]
+	if !ok {
+		return nil, store.ErrNotFound
+	}
+	return &p, nil
+}
+
+func (f *fakeUserStore) RelinkPeerToUser(_ context.Context, peerID, userID string) error {
+	if _, ok := f.peers[peerID]; !ok {
+		return store.ErrNotFound
+	}
+	if _, ok := f.users[userID]; !ok {
+		return store.ErrNotFound
+	}
+	for uid, peers := range f.peerUsers {
+		filtered := peers[:0]
+		for _, p := range peers {
+			if p != peerID {
+				filtered = append(filtered, p)
+			}
+		}
+		f.peerUsers[uid] = filtered
+	}
+	f.peerUsers[userID] = append(f.peerUsers[userID], peerID)
+	return nil
+}
+
+func (f *fakeUserStore) UnlinkPeerFromUsers(_ context.Context, peerID string) error {
+	for uid, peers := range f.peerUsers {
+		filtered := peers[:0]
+		for _, p := range peers {
+			if p != peerID {
+				filtered = append(filtered, p)
+			}
+		}
+		f.peerUsers[uid] = filtered
+	}
 	return nil
 }
 
@@ -171,6 +222,102 @@ func TestUsersGetNotFound(t *testing.T) {
 	h.get(rr, req)
 	if rr.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404", rr.Code)
+	}
+}
+
+func TestUsersDeleteStaleNonSelfIdentity(t *testing.T) {
+	t.Parallel()
+	st := newFakeUserStore()
+	st.users["u-stale"] = store.User{UserID: "u-stale", DisplayName: "ai-gateway"}
+
+	h := &usersHandler{store: st}
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/users/u-stale", nil)
+	req.SetPathValue("id", "u-stale")
+	rr := httptest.NewRecorder()
+	h.delete(rr, req)
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204; body=%s", rr.Code, rr.Body.String())
+	}
+	if _, ok := st.users["u-stale"]; ok {
+		t.Fatal("stale user still present after delete")
+	}
+}
+
+func TestUsersDeleteRefusesSelf(t *testing.T) {
+	t.Parallel()
+	st := newFakeUserStore()
+	st.users["u-self"] = store.User{UserID: "u-self", DisplayName: "Max", IsSelf: true}
+
+	h := &usersHandler{store: st}
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/users/u-self", nil)
+	req.SetPathValue("id", "u-self")
+	rr := httptest.NewRecorder()
+	h.delete(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rr.Code)
+	}
+}
+
+func TestUsersDeleteRefusesLinkedDevices(t *testing.T) {
+	t.Parallel()
+	st := newFakeUserStore()
+	st.users["u-remote"] = store.User{UserID: "u-remote", DisplayName: "Remote"}
+	st.peers["peer-1"] = store.P2PPeer{PeerID: "peer-1", DisplayName: "laptop"}
+	st.peerUsers["u-remote"] = []string{"peer-1"}
+
+	h := &usersHandler{store: st}
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/users/u-remote", nil)
+	req.SetPathValue("id", "u-remote")
+	rr := httptest.NewRecorder()
+	h.delete(rr, req)
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409", rr.Code)
+	}
+}
+
+func TestUsersUpdateDeviceOwnerRelinksPeer(t *testing.T) {
+	t.Parallel()
+	st := newFakeUserStore()
+	st.users["u-old"] = store.User{UserID: "u-old", DisplayName: "Old"}
+	st.users["u-new"] = store.User{UserID: "u-new", DisplayName: "New", IsSelf: true}
+	st.peers["peer-1"] = store.P2PPeer{PeerID: "peer-1", DisplayName: "laptop"}
+	st.peerUsers["u-old"] = []string{"peer-1"}
+
+	h := &usersHandler{store: st}
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/users/devices/peer-1",
+		strings.NewReader(`{"user_id":"u-new"}`))
+	req.SetPathValue("peer_id", "peer-1")
+	rr := httptest.NewRecorder()
+	h.updateDeviceOwner(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+	if len(st.peerUsers["u-old"]) != 0 {
+		t.Fatalf("old owner still has peer: %+v", st.peerUsers["u-old"])
+	}
+	if got := st.peerUsers["u-new"]; len(got) != 1 || got[0] != "peer-1" {
+		t.Fatalf("new owner peers = %+v, want peer-1", got)
+	}
+}
+
+func TestUsersUpdateDeviceOwnerUnlinksPeer(t *testing.T) {
+	t.Parallel()
+	st := newFakeUserStore()
+	st.users["u-old"] = store.User{UserID: "u-old", DisplayName: "Old"}
+	st.peers["peer-1"] = store.P2PPeer{PeerID: "peer-1", DisplayName: "laptop"}
+	st.peerUsers["u-old"] = []string{"peer-1"}
+
+	h := &usersHandler{store: st}
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/users/devices/peer-1",
+		strings.NewReader(`{"user_id":null}`))
+	req.SetPathValue("peer_id", "peer-1")
+	rr := httptest.NewRecorder()
+	h.updateDeviceOwner(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+	if len(st.peerUsers["u-old"]) != 0 {
+		t.Fatalf("old owner still has peer: %+v", st.peerUsers["u-old"])
 	}
 }
 

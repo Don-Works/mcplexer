@@ -48,6 +48,7 @@ import { deleteTask, listMilestones, listTasks, readMetaList, updateTask, type T
 import { cn } from '@/lib/utils'
 import {
   assigneeLabel,
+  buildTaskChildParentIds,
   dueState,
   formatAbsolute,
   formatDuration,
@@ -55,9 +56,11 @@ import {
   isHumanAssigned,
   isWorkingStatus,
   leaseStaleness,
+  matchesTaskCompositionFilter,
   priorityVisual,
   shortTaskId,
   statusVisual,
+  type TaskCompositionFilter,
   timeInCurrentState,
   useNow,
 } from './task-utils'
@@ -79,6 +82,17 @@ type PriorityFilter = 'all' | 'low' | 'normal' | 'high' | 'critical'
 const SEARCH_DEBOUNCE_MS = 200
 const COLLAPSED_KEY = 'mcplexer.tasksList.collapsed'
 const VIEW_MODE_KEY = 'mcplexer.tasksList.view'
+
+function parseCompositionFilter(v: string | null): TaskCompositionFilter {
+  switch (v) {
+    case 'epics':
+    case 'children':
+    case 'standalone':
+      return v
+    default:
+      return 'all'
+  }
+}
 
 function readCollapsed(): Set<string> {
   if (typeof window === 'undefined') return new Set()
@@ -114,6 +128,7 @@ export function TasksListPage() {
   const stateFilter = (params.get('state') as StateFilter) || 'open'
   const statusFilter = params.get('status') ?? ''
   const priorityFilter = (params.get('priority') as PriorityFilter) || 'all'
+  const compositionFilter = parseCompositionFilter(params.get('composition'))
   const assigneeFilter = params.get('assignee') ?? ''
   // `human=1` is the dedicated filter for tasks owned by a human user
   // (migration 105). It composes with `assignee=<id>`: setting both
@@ -255,9 +270,14 @@ export function TasksListPage() {
     return m
   }, [workspaces])
 
+  const childParentIds = useMemo(() => buildTaskChildParentIds(tasks ?? []), [tasks])
+
   const filtered = useMemo(() => {
     let xs = tasks ?? []
     if (priorityFilter !== 'all') xs = xs.filter((t) => t.priority === priorityFilter)
+    if (compositionFilter !== 'all') {
+      xs = xs.filter((t) => matchesTaskCompositionFilter(t, compositionFilter, childParentIds))
+    }
     if (assigneeFilter === 'unassigned') {
       // "unassigned" means none of the three identity columns is set —
       // session, peer, OR human user. Client-side filter only because
@@ -266,7 +286,7 @@ export function TasksListPage() {
       xs = xs.filter((t) => !t.assignee_session_id && !t.assignee_peer_id && !t.assignee_user_id)
     }
     return xs
-  }, [tasks, priorityFilter, assigneeFilter])
+  }, [tasks, priorityFilter, compositionFilter, assigneeFilter, childParentIds])
 
   // Derive a vocabulary for autocomplete from the currently-loaded rows.
   // Client-side dedupe by name; drops the empty-string sessions that
@@ -343,6 +363,7 @@ export function TasksListPage() {
     workspaceFilter ||
     priorityFilter !== 'all' ||
     assigneeFilter ||
+    compositionFilter !== 'all' ||
     humanFilter ||
     tagFilter ||
     searchQuery ||
@@ -410,7 +431,7 @@ export function TasksListPage() {
             <ListTodo className="h-6 w-6" /> Tasks
           </h1>
           <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-            Every task across your workspaces. Filter by state, priority, assignee, or tag — agents create and claim, you triage what needs your eye.
+            Every task across your workspaces. Filter by state, epic, priority, assignee, or tag; agents create and claim, you triage what needs your eye.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -435,6 +456,10 @@ export function TasksListPage() {
           <PriorityFilterSelect
             value={priorityFilter}
             onChange={(v) => setFilter('priority', v === 'all' ? null : v)}
+          />
+          <CompositionFilterSelect
+            value={compositionFilter}
+            onChange={(v) => setFilter('composition', v === 'all' ? null : v)}
           />
           {workspaces && workspaces.length > 1 ? (
             <WorkspaceFilterSelect
@@ -747,6 +772,28 @@ function PriorityFilterSelect({
   )
 }
 
+function CompositionFilterSelect({
+  value,
+  onChange,
+}: {
+  value: TaskCompositionFilter
+  onChange: (v: TaskCompositionFilter) => void
+}) {
+  return (
+    <Select value={value} onValueChange={(v) => onChange(v as TaskCompositionFilter)}>
+      <SelectTrigger size="sm" className="h-8 text-xs">
+        <SelectValue placeholder="All composition" />
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value="all">All composition</SelectItem>
+        <SelectItem value="epics">Epics</SelectItem>
+        <SelectItem value="children">Children</SelectItem>
+        <SelectItem value="standalone">Standalone</SelectItem>
+      </SelectContent>
+    </Select>
+  )
+}
+
 function WorkspaceFilterSelect({
   value,
   workspaces,
@@ -1045,7 +1092,14 @@ function TaskRow({
   // Human owners have no lease concept (migration 105) — the lease
   // state is always `idle` for them; the visual cue is the HumanDot
   // glyph rendered instead of the lease dot.
-  const stale = leaseStaleness(task.status, task.assignee_session_id, task.closed_at, activeAgents.ready ? activeAgents.sessionIds : null, statusVocab)
+  const stale = leaseStaleness(
+    task.status,
+    task.assignee_session_id,
+    task.closed_at,
+    activeAgents.ready ? activeAgents.sessionIds : null,
+    statusVocab,
+    task.assignee_user_id,
+  )
   const inState = isWorkingStatus(task.status, statusVocab) ? timeInCurrentState(task.status_history ?? null, now) : 0
   const leaseState: 'live' | 'abandoned' | 'unassigned' | 'idle' = (() => {
     if (!hasAssignee) return 'unassigned'

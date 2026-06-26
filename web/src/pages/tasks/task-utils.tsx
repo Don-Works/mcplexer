@@ -7,7 +7,7 @@ import { Link } from 'react-router-dom'
 import { ListTodo } from 'lucide-react'
 import { useEffect, useState, type ReactNode } from 'react'
 import { cn } from '@/lib/utils'
-import type { StatusKind, TaskStatusHistoryEntry } from '@/api/tasks'
+import { readMetaList, type StatusKind, type Task, type TaskStatusHistoryEntry } from '@/api/tasks'
 
 // StatusKindMap — what useStatusVocab returns: status_text → kind.
 // Passed into isWorkingStatus / kindOfStatus / cumulativeTimeWorked so
@@ -118,6 +118,50 @@ export function shortTaskId(id: string): string {
   if (!id) return ''
   if (id.length <= 8) return id
   return id.slice(-6)
+}
+
+export type TaskCompositionFilter = 'all' | 'epics' | 'children' | 'standalone'
+
+export interface TaskCompositionFlags {
+  isEpic: boolean
+  isChild: boolean
+}
+
+export function buildTaskChildParentIds(rows: Pick<Task, 'meta'>[]): Set<string> {
+  const parentIds = new Set<string>()
+  for (const task of rows) {
+    for (const parentId of readMetaList(task.meta, 'composed_by')) {
+      parentIds.add(parentId)
+    }
+  }
+  return parentIds
+}
+
+export function taskCompositionFlags(
+  task: Pick<Task, 'id' | 'meta'>,
+  childParentIds: ReadonlySet<string> = new Set(),
+): TaskCompositionFlags {
+  return {
+    isEpic: readMetaList(task.meta, 'composes').length > 0 || childParentIds.has(task.id),
+    isChild: readMetaList(task.meta, 'composed_by').length > 0,
+  }
+}
+
+export function matchesTaskCompositionFilter(
+  task: Pick<Task, 'id' | 'meta'>,
+  filter: TaskCompositionFilter,
+  childParentIds: ReadonlySet<string> = new Set(),
+): boolean {
+  if (filter === 'all') return true
+  const flags = taskCompositionFlags(task, childParentIds)
+  switch (filter) {
+    case 'epics':
+      return flags.isEpic
+    case 'children':
+      return flags.isChild
+    case 'standalone':
+      return !flags.isEpic && !flags.isChild
+  }
 }
 
 // priorityClass returns a tone for the Badge + a hard color for the
@@ -374,8 +418,10 @@ export function leaseStaleness(
   closedAt: string | null | undefined,
   activeSessions: Set<string> | null,
   vocab?: StatusKindMap,
+  assigneeUserID?: string | null,
 ): { state: 'live' | 'abandoned' | 'idle' } {
   if (closedAt) return { state: 'idle' }
+  if (assigneeUserID?.trim()) return { state: 'idle' }
   if (!isWorkingStatus(status, vocab)) return { state: 'idle' }
   if (!assigneeSessionID) return { state: 'idle' }
   // Initial load — keep silent, don't flash abandoned chips.

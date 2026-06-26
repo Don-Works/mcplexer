@@ -706,7 +706,9 @@ func NewRouter(deps RouterDeps) http.Handler {
 	// so the Go 1.22 mux picks the most-specific match first (mirrors the
 	// tasks handler ordering for /tasks/stream vs /tasks/{id}).
 	mux.HandleFunc("GET /api/v1/users/self", uh.self)
+	mux.HandleFunc("PATCH /api/v1/users/devices/{peer_id}", uh.updateDeviceOwner)
 	mux.HandleFunc("GET /api/v1/users/{id}", uh.get)
+	mux.HandleFunc("DELETE /api/v1/users/{id}", uh.delete)
 
 	// Peer-scope registry — read-only catalog of scope strings the UI's
 	// grant picker can offer. Wired statically; no dependencies needed.
