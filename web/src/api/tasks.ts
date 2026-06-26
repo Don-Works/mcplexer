@@ -220,6 +220,19 @@ export function countTasksByStatus(workspaceId: string): Promise<Record<string, 
   return request<Record<string, number>>(`/tasks/count${qs({ workspace_id: workspaceId })}`)
 }
 
+export interface TaskStatusCount {
+  status: string
+  count: number
+}
+
+export function listTaskStatuses(
+  f: Pick<TaskListFilter, 'workspace_id' | 'state'> = {},
+): Promise<{ statuses: TaskStatusCount[] }> {
+  return request<{ statuses: TaskStatusCount[] }>(
+    `/tasks/statuses${qs({ workspace_id: f.workspace_id, state: f.state })}`,
+  )
+}
+
 // MilestoneBurndown mirrors the Go store.MilestoneBurndown shape. A
 // "milestone" is a task with tag=milestone + due_at set. The aggregate
 // view rolls up its composed children + a per-day burndown series.

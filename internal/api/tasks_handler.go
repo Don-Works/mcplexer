@@ -7,6 +7,7 @@
 //
 //	GET    /api/v1/tasks                            → list (querystring filters)
 //	GET    /api/v1/tasks/count                      → counts by status for one workspace
+//	GET    /api/v1/tasks/statuses                   → distinct status counts for filter UI
 //	POST   /api/v1/tasks                            → create
 //	GET    /api/v1/tasks/{id}                       → fetch one
 //	POST   /api/v1/tasks/{id}/update                → patch (single-row form of task__update)
@@ -20,10 +21,12 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -35,6 +38,10 @@ import (
 type tasksHandler struct {
 	svc   *tasks.Service
 	store store.TaskStore
+}
+
+type taskStatusCounter interface {
+	CountTaskStatuses(ctx context.Context, workspaceID, state string) (map[string]int, error)
 }
 
 func newTasksHandler(svc *tasks.Service, s store.TaskStore) *tasksHandler {
@@ -96,6 +103,44 @@ func (h *tasksHandler) handleCount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, counts)
+}
+
+type taskStatusCountResponseRow struct {
+	Status string `json:"status"`
+	Count  int    `json:"count"`
+}
+
+// GET /api/v1/tasks/statuses?workspace_id=&state=open|closed|all
+func (h *tasksHandler) handleListStatuses(w http.ResponseWriter, r *http.Request) {
+	counter, ok := h.store.(taskStatusCounter)
+	if !ok {
+		writeError(w, http.StatusNotImplemented, "task status counts are not supported by this store")
+		return
+	}
+	state := strings.TrimSpace(r.URL.Query().Get("state"))
+	if state == "" {
+		state = "open"
+	}
+	counts, err := counter.CountTaskStatuses(
+		r.Context(),
+		r.URL.Query().Get("workspace_id"),
+		state,
+	)
+	if err != nil {
+		writeErrorDetail(w, http.StatusBadRequest, "status count failed", err.Error())
+		return
+	}
+	rows := make([]taskStatusCountResponseRow, 0, len(counts))
+	for status, count := range counts {
+		rows = append(rows, taskStatusCountResponseRow{Status: status, Count: count})
+	}
+	sort.SliceStable(rows, func(i, j int) bool {
+		if rows[i].Count != rows[j].Count {
+			return rows[i].Count > rows[j].Count
+		}
+		return rows[i].Status < rows[j].Status
+	})
+	writeJSON(w, http.StatusOK, map[string]any{"statuses": rows})
 }
 
 // POST /api/v1/tasks

@@ -150,6 +150,74 @@ func TestListMilestonesEndpointShape(t *testing.T) {
 	}
 }
 
+func TestListTaskStatusesEndpointScopesStateAndWorkspace(t *testing.T) {
+	srv, db, _ := newTasksTestServer(t)
+	ctx := context.Background()
+
+	wsA := &store.Workspace{Name: "ws-status-a", RootPath: "/tmp/ws-status-a", Tags: json.RawMessage("[]")}
+	wsB := &store.Workspace{Name: "ws-status-b", RootPath: "/tmp/ws-status-b", Tags: json.RawMessage("[]")}
+	if err := db.CreateWorkspace(ctx, wsA); err != nil {
+		t.Fatalf("create wsA: %v", err)
+	}
+	if err := db.CreateWorkspace(ctx, wsB); err != nil {
+		t.Fatalf("create wsB: %v", err)
+	}
+	closedAt := time.Now().UTC()
+	for _, row := range []*store.Task{
+		{WorkspaceID: wsA.ID, Title: "a1", Status: "triage"},
+		{WorkspaceID: wsA.ID, Title: "a2", Status: "triage"},
+		{WorkspaceID: wsA.ID, Title: "a3", Status: "coding"},
+		{WorkspaceID: wsA.ID, Title: "a4", Status: "done", ClosedAt: &closedAt},
+		{WorkspaceID: wsB.ID, Title: "b1", Status: "other"},
+	} {
+		if err := db.CreateTask(ctx, row); err != nil {
+			t.Fatalf("create task %s: %v", row.Title, err)
+		}
+	}
+
+	resp, err := http.Get(srv.URL + "/api/v1/tasks/statuses?workspace_id=" + wsA.ID + "&state=open")
+	if err != nil {
+		t.Fatalf("get statuses: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status = %d, body=%s", resp.StatusCode, body)
+	}
+	var out struct {
+		Statuses []taskStatusCountResponseRow `json:"statuses"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	got := map[string]int{}
+	for _, row := range out.Statuses {
+		got[row.Status] = row.Count
+	}
+	if got["triage"] != 2 || got["coding"] != 1 || got["done"] != 0 || got["other"] != 0 {
+		t.Fatalf("open workspace statuses = %v", got)
+	}
+
+	respAll, err := http.Get(srv.URL + "/api/v1/tasks/statuses?state=all")
+	if err != nil {
+		t.Fatalf("get all statuses: %v", err)
+	}
+	defer func() { _ = respAll.Body.Close() }()
+	var all struct {
+		Statuses []taskStatusCountResponseRow `json:"statuses"`
+	}
+	if err := json.NewDecoder(respAll.Body).Decode(&all); err != nil {
+		t.Fatalf("decode all: %v", err)
+	}
+	allGot := map[string]int{}
+	for _, row := range all.Statuses {
+		allGot[row.Status] = row.Count
+	}
+	if allGot["done"] != 1 || allGot["other"] != 1 {
+		t.Fatalf("all-workspace statuses = %v, want done and other included", allGot)
+	}
+}
+
 // TestHumanAssigneeRESTCreateFilter exercises the REST surface for
 // human-assigned tasks end-to-end. Mirrors the service-level coverage
 // in internal/tasks/service_test.go (migration 105) so the dashboard's

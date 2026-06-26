@@ -731,6 +731,7 @@ func NewRouter(deps RouterDeps) http.Handler {
 		mux.HandleFunc("GET /api/v1/tasks", th.handleList)
 		mux.HandleFunc("GET /api/v1/tasks/stream", th.handleStream)
 		mux.HandleFunc("GET /api/v1/tasks/count", th.handleCount)
+		mux.HandleFunc("GET /api/v1/tasks/statuses", th.handleListStatuses)
 		mux.HandleFunc("GET /api/v1/tasks/milestones", th.handleListMilestones)
 		mux.HandleFunc("GET /api/v1/tasks/offers", th.handleListOffers)
 		mux.HandleFunc("POST /api/v1/tasks/offers", th.handleCreateOffer)
