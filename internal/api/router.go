@@ -747,6 +747,8 @@ func NewRouter(deps RouterDeps) http.Handler {
 		mux.HandleFunc("POST /api/v1/tasks/{id}/work_context", th.handleSetWorkContext)
 		mux.HandleFunc("POST /api/v1/tasks/{id}/notes", th.handleAppendNote)
 		mux.HandleFunc("GET /api/v1/tasks/{id}/notes", th.handleListNotes)
+		mux.HandleFunc("GET /api/v1/tasks/{id}/history", th.handleListHistory)
+		mux.HandleFunc("POST /api/v1/tasks/{id}/rollback", th.handleRollback)
 		mux.HandleFunc("DELETE /api/v1/tasks/{id}", th.handleDelete)
 		mux.HandleFunc("GET /api/v1/task-status-vocabulary", th.handleListVocab)
 		mux.HandleFunc("POST /api/v1/task-status-vocabulary", th.handleUpsertVocab)

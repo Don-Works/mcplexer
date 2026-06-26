@@ -16,6 +16,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -342,6 +343,16 @@ func (s *Service) Create(ctx context.Context, opts CreateOptions) (*store.Task, 
 	if err != nil {
 		return nil, err
 	}
+	if err := s.recordTaskHistory(ctx, "create", nil, final, taskHistoryMeta{
+		ActorKind:        firstNonEmpty(opts.ActorKind, opts.SourceKind, store.TaskSourceAgent),
+		SessionID:        firstNonEmpty(opts.CreatedBySessionID, opts.SourceSessionID),
+		SourceKind:       opts.SourceKind,
+		SourceSessionID:  opts.SourceSessionID,
+		SourceToolCallID: opts.SourceToolCallID,
+		WorkspacePath:    opts.WorkspacePath,
+	}); err != nil {
+		return nil, err
+	}
 	s.publish(Event{Kind: EventTaskCreated, WorkspaceID: final.WorkspaceID, Task: final, At: now})
 	ec := EmitContext{
 		Triggering:    opts.Triggering,
@@ -389,6 +400,116 @@ func (s *Service) CountByStatus(ctx context.Context, workspaceID string) (map[st
 	return s.store.CountTasksByStatus(ctx, workspaceID)
 }
 
+// ListHistory returns full edit/action history for one task, newest
+// revision first. workspaceID gates access even for soft-deleted tasks.
+func (s *Service) ListHistory(ctx context.Context, workspaceID, id string, limit int) ([]store.TaskHistoryEntry, error) {
+	hs, ok := s.taskHistoryStore()
+	if !ok {
+		return nil, errors.New("task history is not supported by this store")
+	}
+	t, err := hs.GetTaskIncludingDeleted(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if workspaceID != "" && t.WorkspaceID != workspaceID {
+		return nil, store.ErrNotFound
+	}
+	rows, err := hs.ListTaskHistory(ctx, id, limit)
+	if err != nil {
+		return nil, err
+	}
+	if rows == nil {
+		rows = []store.TaskHistoryEntry{}
+	}
+	return rows, nil
+}
+
+// Rollback restores a task to the after-snapshot captured at the given
+// history revision. The rollback itself is recorded as a new history
+// row, so it can be undone by rolling back to the revision immediately
+// before it.
+func (s *Service) Rollback(ctx context.Context, workspaceID, id string, opts RollbackOptions) (*store.Task, error) {
+	if opts.Revision <= 0 {
+		return nil, errors.New("revision is required")
+	}
+	hs, ok := s.taskHistoryStore()
+	if !ok {
+		return nil, errors.New("task history is not supported by this store")
+	}
+	current, err := hs.GetTaskIncludingDeleted(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if workspaceID != "" && current.WorkspaceID != workspaceID {
+		return nil, store.ErrNotFound
+	}
+	h, err := hs.GetTaskHistoryRevision(ctx, id, opts.Revision)
+	if err != nil {
+		return nil, err
+	}
+	if h.WorkspaceID != current.WorkspaceID {
+		return nil, store.ErrNotFound
+	}
+	raw := h.AfterJSON
+	if len(raw) == 0 {
+		raw = h.BeforeJSON
+	}
+	if len(raw) == 0 {
+		return nil, fmt.Errorf("history revision %d has no task snapshot", opts.Revision)
+	}
+	var target store.Task
+	if err := json.Unmarshal(raw, &target); err != nil {
+		return nil, fmt.Errorf("decode history snapshot: %w", err)
+	}
+	if target.ID != id || target.WorkspaceID != current.WorkspaceID {
+		return nil, fmt.Errorf("history snapshot does not match task")
+	}
+	before := cloneTask(current)
+	now := time.Now().UTC()
+	history := readHistory(target.StatusHistoryJSON)
+	history = append(history, store.TaskStatusHistoryEntry{
+		At:        now,
+		BySession: opts.SessionID,
+		ByPeer:    opts.PeerID,
+		Evt:       "rollback",
+		To:        fmt.Sprintf("revision:%d", opts.Revision),
+		Note:      opts.Note,
+	})
+	target.StatusHistoryJSON, _ = json.Marshal(history)
+	target.UpdatedBySessionID = opts.SessionID
+	target.HlcAt = ""
+	if err := hs.RestoreTask(ctx, &target); err != nil {
+		return nil, err
+	}
+	after, err := hs.GetTaskIncludingDeleted(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.recordTaskHistory(ctx, "rollback", before, after, taskHistoryMeta{
+		ActorKind:       opts.ActorKind,
+		SessionID:       opts.SessionID,
+		PeerID:          opts.PeerID,
+		UserID:          opts.UserID,
+		WorkspacePath:   opts.WorkspacePath,
+		Note:            opts.Note,
+		RelatedRevision: opts.Revision,
+	}); err != nil {
+		return nil, err
+	}
+	kind := EventTaskUpdated
+	if after.DeletedAt != nil {
+		kind = EventTaskDeleted
+	}
+	s.publish(Event{Kind: kind, WorkspaceID: after.WorkspaceID, Task: after, At: now})
+	ec := EmitContext{ActorKind: opts.ActorKind, SessionID: opts.SessionID, WorkspacePath: opts.WorkspacePath}
+	if after.DeletedAt != nil {
+		s.emitter.EmitDeleted(ctx, after, ec)
+	} else {
+		s.emitter.EmitUpdated(ctx, after, ec)
+	}
+	return after, nil
+}
+
 // UpdatePatch describes the patch to apply in a single Update call. Nil
 // pointer fields mean "leave unchanged"; explicit string fields in the
 // Clear slice mean "clear to zero value" (resolves the null-vs-omit
@@ -427,6 +548,20 @@ type UpdateSignals struct {
 	ReviewSkippedHint string `json:"review_skipped_hint,omitempty"`
 }
 
+// RollbackOptions describes an explicit restore to a task history
+// revision. Revision means "restore the task to the after-snapshot of
+// that revision"; the rollback operation records its own history row.
+type RollbackOptions struct {
+	Revision int
+
+	ActorKind     string
+	SessionID     string
+	PeerID        string
+	UserID        string
+	WorkspacePath string
+	Note          string
+}
+
 // reviewSkippedHint is the one-liner attached when ReviewSkipped fires.
 const reviewSkippedHint = "This task went from a working status straight to a terminal status without ever visiting a review-kind status. Verify the work end-to-end (build/tests/behavior observed) — next time pause at status:'review' before closing."
 
@@ -459,6 +594,7 @@ func (s *Service) updateWithSignals(ctx context.Context, workspaceID, id string,
 	// distinguish status_changed from closed (terminal entry) and
 	// detect assignee transitions. Single-event-per-call contract per
 	// PLAN.md.
+	before := cloneTask(t)
 	preStatus := t.Status
 	preAssignee := assigneeDisplay(&Assignee{
 		SessionID: t.AssigneeSessionID,
@@ -679,6 +815,13 @@ func (s *Service) updateWithSignals(ctx context.Context, workspaceID, id string,
 	if err != nil {
 		return nil, nil, err
 	}
+	if err := s.recordTaskHistory(ctx, "update", before, updated, taskHistoryMeta{
+		ActorKind:     p.ActorKind,
+		SessionID:     p.UpdatedBySessionID,
+		WorkspacePath: p.WorkspacePath,
+	}); err != nil {
+		return nil, nil, err
+	}
 	s.publish(Event{Kind: EventTaskUpdated, WorkspaceID: updated.WorkspaceID, Task: updated, At: now})
 	s.emitUpdate(ctx, updated, p, preStatus, preAssignee, preClosed)
 	// Epic rollup: when a child task ENTERS terminal state on this patch,
@@ -821,6 +964,7 @@ func (s *Service) SweepExpiredLeases(ctx context.Context) (int, error) {
 		if gerr != nil {
 			continue
 		}
+		before := cloneTask(t)
 		history := readHistory(t.StatusHistoryJSON)
 		preStatus := t.Status
 		if s.isWorkingStatus(ctx, t.WorkspaceID, t.Status) {
@@ -837,6 +981,14 @@ func (s *Service) SweepExpiredLeases(ctx context.Context) (int, error) {
 		if uerr := s.store.UpdateTask(ctx, t); uerr != nil {
 			continue
 		}
+		after := t
+		if fresh, ferr := s.store.GetTask(ctx, id); ferr == nil {
+			after = fresh
+		}
+		_ = s.recordTaskHistory(ctx, "lease_expired", before, after, taskHistoryMeta{
+			ActorKind: "system",
+			Note:      "lease expired",
+		})
 		s.publish(Event{Kind: EventTaskUpdated, WorkspaceID: t.WorkspaceID, Task: t, At: now})
 		s.emitter.EmitStatusChanged(ctx, t, preStatus, "open", EmitContext{ActorKind: "system"})
 	}
@@ -873,6 +1025,7 @@ func (s *Service) ReleaseSessionTasksWithReason(ctx context.Context, sessionID, 
 		if gerr != nil {
 			continue
 		}
+		before := cloneTask(t)
 		history := readHistory(t.StatusHistoryJSON)
 		preStatus := t.Status
 		if s.isWorkingStatus(ctx, t.WorkspaceID, t.Status) {
@@ -890,6 +1043,15 @@ func (s *Service) ReleaseSessionTasksWithReason(ctx context.Context, sessionID, 
 		if uerr := s.store.UpdateTask(ctx, t); uerr != nil {
 			continue
 		}
+		after := t
+		if fresh, ferr := s.store.GetTask(ctx, id); ferr == nil {
+			after = fresh
+		}
+		_ = s.recordTaskHistory(ctx, "release", before, after, taskHistoryMeta{
+			ActorKind: "system",
+			SessionID: sessionID,
+			Note:      releaseNote,
+		})
 		s.publish(Event{Kind: EventTaskUpdated, WorkspaceID: t.WorkspaceID, Task: t, At: now})
 		s.emitter.EmitStatusChanged(ctx, t, preStatus, t.Status, EmitContext{ActorKind: "system", SessionID: sessionID})
 	}
@@ -940,13 +1102,27 @@ func (s *Service) Delete(ctx context.Context, workspaceID, id string, mc ...Muta
 	if workspaceID != "" && t.WorkspaceID != workspaceID {
 		return store.ErrNotFound
 	}
+	before := cloneTask(t)
 	if err := s.store.SoftDeleteTask(ctx, id); err != nil {
 		return err
 	}
 	now := time.Now().UTC()
 	t.DeletedAt = &now
-	s.publish(Event{Kind: EventTaskDeleted, WorkspaceID: t.WorkspaceID, Task: t, At: now})
+	after := cloneTask(t)
+	if hs, ok := s.taskHistoryStore(); ok {
+		if fresh, err := hs.GetTaskIncludingDeleted(ctx, id); err == nil {
+			after = fresh
+		}
+	}
 	ec := mutationEmitContext(mc, "")
+	if err := s.recordTaskHistory(ctx, "delete", before, after, taskHistoryMeta{
+		ActorKind:     ec.ActorKind,
+		SessionID:     ec.SessionID,
+		WorkspacePath: ec.WorkspacePath,
+	}); err != nil {
+		return err
+	}
+	s.publish(Event{Kind: EventTaskDeleted, WorkspaceID: t.WorkspaceID, Task: t, At: now})
 	s.emitter.EmitDeleted(ctx, t, ec)
 	return nil
 }
@@ -961,6 +1137,8 @@ type MutationContext struct {
 	Triggering    *store.MeshMessage
 	ActorKind     string
 	SessionID     string
+	PeerID        string
+	UserID        string
 	WorkspacePath string
 }
 
@@ -977,7 +1155,12 @@ func mutationEmitContext(mc []MutationContext, fallbackSession string) EmitConte
 	if c.SessionID == "" {
 		c.SessionID = fallbackSession
 	}
-	return EmitContext(c)
+	return EmitContext{
+		Triggering:    c.Triggering,
+		ActorKind:     c.ActorKind,
+		SessionID:     c.SessionID,
+		WorkspacePath: c.WorkspacePath,
+	}
 }
 
 // Claim atomically assigns the task to the calling session AND moves
@@ -990,7 +1173,7 @@ func mutationEmitContext(mc []MutationContext, fallbackSession string) EmitConte
 // guard (WHERE assignee_session_id IS NULL/empty/self) so only one
 // claimant wins when two sessions race for the same unassigned row.
 // The loser receives ErrTaskAlreadyClaimed.
-func (s *Service) Claim(ctx context.Context, workspaceID, id, statusText, claimantSession, note string) (*store.Task, error) {
+func (s *Service) Claim(ctx context.Context, workspaceID, id, statusText, claimantSession, note string, mc ...MutationContext) (*store.Task, error) {
 	if claimantSession == "" {
 		return nil, errors.New("claim requires an active session")
 	}
@@ -1001,6 +1184,8 @@ func (s *Service) Claim(ctx context.Context, workspaceID, id, statusText, claima
 	if workspaceID != "" && current.WorkspaceID != workspaceID {
 		return nil, store.ErrNotFound
 	}
+	before := cloneTask(current)
+	mctx := mutationContext(mc, claimantSession)
 	if statusText == "" {
 		statusText = "doing"
 	}
@@ -1069,17 +1254,29 @@ func (s *Service) Claim(ctx context.Context, workspaceID, id, statusText, claima
 	if err != nil {
 		return nil, err
 	}
+	if err := s.recordTaskHistory(ctx, "claim", before, t, taskHistoryMeta{
+		ActorKind:     mctx.ActorKind,
+		SessionID:     mctx.SessionID,
+		PeerID:        mctx.PeerID,
+		UserID:        mctx.UserID,
+		WorkspacePath: mctx.WorkspacePath,
+		Note:          note,
+	}); err != nil {
+		return nil, err
+	}
 	s.publish(Event{Kind: EventTaskUpdated, WorkspaceID: t.WorkspaceID, Task: t, At: now})
 	s.emitUpdate(ctx, t, UpdatePatch{
 		Status:             &statusText,
 		Assignee:           &Assignee{SessionID: claimantSession},
 		UpdatedBySessionID: claimantSession,
+		ActorKind:          mctx.ActorKind,
+		WorkspacePath:      mctx.WorkspacePath,
 	}, preStatus, "", preClosed)
 
 	// Emit task_claimed AFTER the underlying update event so consumers
 	// can distinguish "claimed" from a generic edit.
 	s.publish(Event{Kind: EventTaskClaimed, WorkspaceID: t.WorkspaceID, Task: t, At: now})
-	ec := EmitContext{SessionID: claimantSession}
+	ec := mutationEmitContext(mc, claimantSession)
 	s.emitter.EmitClaimed(ctx, t, previousAssigneeSession, ec)
 
 	// Epic rollup: if the claim moved the task into terminal state,
@@ -1136,7 +1333,7 @@ type BulkFailure struct {
 // ids surface as ErrNotFound.
 func (s *Service) SetWorkContext(
 	ctx context.Context, workspaceID, id string,
-	patch WorkContext, clears []string, updatedBy string,
+	patch WorkContext, clears []string, updatedBy string, mc ...MutationContext,
 ) (*store.Task, error) {
 	current, err := s.store.GetTask(ctx, id)
 	if err != nil {
@@ -1145,6 +1342,8 @@ func (s *Service) SetWorkContext(
 	if workspaceID != "" && current.WorkspaceID != workspaceID {
 		return nil, store.ErrNotFound
 	}
+	before := cloneTask(current)
+	mctx := mutationContext(mc, updatedBy)
 	newMeta, err := mergeWithClears(current.Meta, patch, clears)
 	if err != nil {
 		return nil, fmt.Errorf("merge work context: %w", err)
@@ -1165,8 +1364,18 @@ func (s *Service) SetWorkContext(
 	if err != nil {
 		return nil, err
 	}
+	if err := s.recordTaskHistory(ctx, "work_context", before, updated, taskHistoryMeta{
+		ActorKind:     mctx.ActorKind,
+		SessionID:     mctx.SessionID,
+		PeerID:        mctx.PeerID,
+		UserID:        mctx.UserID,
+		WorkspacePath: mctx.WorkspacePath,
+		Note:          workContextNote(patch, clears),
+	}); err != nil {
+		return nil, err
+	}
 	s.publish(Event{Kind: EventTaskUpdated, WorkspaceID: updated.WorkspaceID, Task: updated, At: now})
-	s.emitter.EmitUpdated(ctx, updated, EmitContext{SessionID: updatedBy})
+	s.emitter.EmitUpdated(ctx, updated, mutationEmitContext(mc, updatedBy))
 	return updated, nil
 }
 
@@ -1239,7 +1448,7 @@ func workContextNote(patch WorkContext, clears []string) string {
 
 // AppendNote adds an append-only note. workspaceID gates the parent
 // task so notes can't be appended across workspace boundaries.
-func (s *Service) AppendNote(ctx context.Context, workspaceID, taskID, body, authorSession, authorKind string) (*store.TaskNote, error) {
+func (s *Service) AppendNote(ctx context.Context, workspaceID, taskID, body, authorSession, authorKind string, mc ...MutationContext) (*store.TaskNote, error) {
 	if strings.TrimSpace(body) == "" {
 		return nil, errors.New("body is required")
 	}
@@ -1253,6 +1462,8 @@ func (s *Service) AppendNote(ctx context.Context, workspaceID, taskID, body, aut
 	if workspaceID != "" && parent.WorkspaceID != workspaceID {
 		return nil, store.ErrNotFound
 	}
+	before := cloneTask(parent)
+	mctx := mutationContext(mc, authorSession)
 	n := &store.TaskNote{
 		TaskID:          taskID,
 		AuthorSessionID: authorSession,
@@ -1262,14 +1473,25 @@ func (s *Service) AppendNote(ctx context.Context, workspaceID, taskID, body, aut
 	if err := s.store.AppendTaskNote(ctx, n); err != nil {
 		return nil, err
 	}
+	if err := s.recordTaskHistory(ctx, "note", before, parent, taskHistoryMeta{
+		ActorKind:     firstNonEmpty(mctx.ActorKind, authorKind),
+		SessionID:     mctx.SessionID,
+		PeerID:        mctx.PeerID,
+		UserID:        mctx.UserID,
+		WorkspacePath: mctx.WorkspacePath,
+		Note:          truncateForHistory(body, 240),
+	}); err != nil {
+		return nil, err
+	}
 	// Include the parent Task so the brain hook re-serializes the task
 	// body with the appended note folded in (Appendix B #4 — notes inline).
 	s.publish(Event{Kind: EventTaskNoteAppended, WorkspaceID: parent.WorkspaceID, Task: parent, Note: n, At: time.Now().UTC()})
 	// Mesh task_event:note_appended — quiet by default (notes fan
 	// out via SSE to the page the user is already on).
 	ec := EmitContext{
-		SessionID: authorSession,
-		ActorKind: firstNonEmpty(authorKind, store.TaskSourceAgent),
+		SessionID:     mctx.SessionID,
+		ActorKind:     firstNonEmpty(mctx.ActorKind, authorKind, store.TaskSourceAgent),
+		WorkspacePath: mctx.WorkspacePath,
 	}
 	s.emitter.EmitNote(ctx, parent, n, ec)
 	return n, nil
@@ -1374,6 +1596,7 @@ func (s *Service) Decompose(ctx context.Context, workspaceID, parentID, childID,
 	if workspaceID != "" && parent.WorkspaceID != workspaceID {
 		return store.ErrNotFound
 	}
+	parentBefore := cloneTask(parent)
 	newMeta := removeMetaListLine(parent.Meta, "composes", childID)
 	if newMeta != parent.Meta {
 		parent.Meta = newMeta
@@ -1385,6 +1608,17 @@ func (s *Service) Decompose(ctx context.Context, workspaceID, parentID, childID,
 		parent.StatusHistoryJSON, _ = json.Marshal(history)
 		parent.UpdatedBySessionID = bySession
 		if err := s.store.UpdateTask(ctx, parent); err != nil {
+			return err
+		}
+		parentAfter, gerr := s.store.GetTask(ctx, parent.ID)
+		if gerr != nil {
+			parentAfter = parent
+		}
+		if err := s.recordTaskHistory(ctx, "decompose", parentBefore, parentAfter, taskHistoryMeta{
+			ActorKind: "agent",
+			SessionID: bySession,
+			Note:      "child:" + childID,
+		}); err != nil {
 			return err
 		}
 		s.serializeBrain(ctx, parent)
@@ -1404,9 +1638,21 @@ func (s *Service) Decompose(ctx context.Context, workspaceID, parentID, childID,
 	if newChildMeta == child.Meta {
 		return nil
 	}
+	childBefore := cloneTask(child)
 	child.Meta = newChildMeta
 	child.UpdatedBySessionID = bySession
 	if err := s.store.UpdateTask(ctx, child); err != nil {
+		return err
+	}
+	childAfter, gerr := s.store.GetTask(ctx, child.ID)
+	if gerr != nil {
+		childAfter = child
+	}
+	if err := s.recordTaskHistory(ctx, "decompose", childBefore, childAfter, taskHistoryMeta{
+		ActorKind: "agent",
+		SessionID: bySession,
+		Note:      "parent:" + parentID,
+	}); err != nil {
 		return err
 	}
 	s.serializeBrain(ctx, child)
@@ -1447,6 +1693,7 @@ func (s *Service) composeAppend(ctx context.Context, workspaceID, parentID, chil
 	}
 
 	// Forward edge: parent.meta.composes += childID
+	parentBefore := cloneTask(parent)
 	newMeta := appendMetaListLine(parent.Meta, "composes", childID)
 	if newMeta != parent.Meta {
 		parent.Meta = newMeta
@@ -1463,6 +1710,17 @@ func (s *Service) composeAppend(ctx context.Context, workspaceID, parentID, chil
 		if err := s.store.UpdateTask(ctx, parent); err != nil {
 			return err
 		}
+		parentAfter, gerr := s.store.GetTask(ctx, parent.ID)
+		if gerr != nil {
+			parentAfter = parent
+		}
+		if err := s.recordTaskHistory(ctx, "compose", parentBefore, parentAfter, taskHistoryMeta{
+			ActorKind: "agent",
+			SessionID: bySession,
+			Note:      "child:" + childID,
+		}); err != nil {
+			return err
+		}
 		s.serializeBrain(ctx, parent)
 	}
 	// Reverse edge: child.meta.composed_by += parentID
@@ -1470,14 +1728,209 @@ func (s *Service) composeAppend(ctx context.Context, workspaceID, parentID, chil
 	if newChildMeta == child.Meta {
 		return nil
 	}
+	childBefore := cloneTask(child)
 	child.Meta = newChildMeta
 	child.UpdatedBySessionID = bySession
 	child.HlcAt = ""
 	if err := s.store.UpdateTask(ctx, child); err != nil {
 		return err
 	}
+	childAfter, gerr := s.store.GetTask(ctx, child.ID)
+	if gerr != nil {
+		childAfter = child
+	}
+	if err := s.recordTaskHistory(ctx, "compose", childBefore, childAfter, taskHistoryMeta{
+		ActorKind: "agent",
+		SessionID: bySession,
+		Note:      "parent:" + parentID,
+	}); err != nil {
+		return err
+	}
 	s.serializeBrain(ctx, child)
 	return nil
+}
+
+type taskHistoryMeta struct {
+	ActorKind        string
+	SessionID        string
+	PeerID           string
+	UserID           string
+	SourceKind       string
+	SourceSessionID  string
+	SourceToolCallID string
+	WorkspacePath    string
+	OriginPeerID     string
+	RelatedRevision  int
+	Note             string
+}
+
+func (s *Service) taskHistoryStore() (store.TaskHistoryStore, bool) {
+	hs, ok := s.store.(store.TaskHistoryStore)
+	return hs, ok
+}
+
+func (s *Service) recordTaskHistory(ctx context.Context, action string, before, after *store.Task, meta taskHistoryMeta) error {
+	hs, ok := s.taskHistoryStore()
+	if !ok {
+		return nil
+	}
+	t := after
+	if t == nil {
+		t = before
+	}
+	if t == nil {
+		return nil
+	}
+	beforeJSON, err := marshalTaskSnapshot(before)
+	if err != nil {
+		return fmt.Errorf("task history before snapshot: %w", err)
+	}
+	afterJSON, err := marshalTaskSnapshot(after)
+	if err != nil {
+		return fmt.Errorf("task history after snapshot: %w", err)
+	}
+	changedJSON, err := changedTaskFieldsJSON(before, after)
+	if err != nil {
+		return fmt.Errorf("task history changed fields: %w", err)
+	}
+	if meta.ActorKind == "" {
+		meta.ActorKind = firstNonEmpty(t.SourceKind, store.TaskSourceAgent)
+	}
+	if meta.SessionID == "" {
+		meta.SessionID = firstNonEmpty(t.UpdatedBySessionID, t.CreatedBySessionID, t.SourceSessionID)
+	}
+	if meta.SourceKind == "" {
+		meta.SourceKind = t.SourceKind
+	}
+	if meta.SourceSessionID == "" {
+		meta.SourceSessionID = t.SourceSessionID
+	}
+	if meta.SourceToolCallID == "" {
+		meta.SourceToolCallID = t.SourceToolCallID
+	}
+	if meta.OriginPeerID == "" {
+		meta.OriginPeerID = t.OriginPeerID
+	}
+	return hs.AppendTaskHistory(ctx, &store.TaskHistoryEntry{
+		TaskID:            t.ID,
+		WorkspaceID:       t.WorkspaceID,
+		Action:            action,
+		ActorKind:         meta.ActorKind,
+		ActorSessionID:    meta.SessionID,
+		ActorPeerID:       meta.PeerID,
+		ActorUserID:       meta.UserID,
+		SourceKind:        meta.SourceKind,
+		SourceSessionID:   meta.SourceSessionID,
+		SourceToolCallID:  meta.SourceToolCallID,
+		WorkspacePath:     meta.WorkspacePath,
+		OriginPeerID:      meta.OriginPeerID,
+		RelatedRevision:   meta.RelatedRevision,
+		ChangedFieldsJSON: changedJSON,
+		Note:              meta.Note,
+		BeforeJSON:        beforeJSON,
+		AfterJSON:         afterJSON,
+	})
+}
+
+func marshalTaskSnapshot(t *store.Task) (json.RawMessage, error) {
+	if t == nil {
+		return nil, nil
+	}
+	b, err := json.Marshal(t)
+	if err != nil {
+		return nil, err
+	}
+	return json.RawMessage(b), nil
+}
+
+func changedTaskFieldsJSON(before, after *store.Task) (json.RawMessage, error) {
+	var beforeMap, afterMap map[string]json.RawMessage
+	if before != nil {
+		b, err := json.Marshal(before)
+		if err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(b, &beforeMap); err != nil {
+			return nil, err
+		}
+	}
+	if after != nil {
+		b, err := json.Marshal(after)
+		if err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(b, &afterMap); err != nil {
+			return nil, err
+		}
+	}
+	fields := []string{}
+	seen := map[string]bool{}
+	for k := range beforeMap {
+		seen[k] = true
+	}
+	for k := range afterMap {
+		seen[k] = true
+	}
+	for k := range seen {
+		if string(beforeMap[k]) != string(afterMap[k]) {
+			fields = append(fields, k)
+		}
+	}
+	sort.Strings(fields)
+	b, err := json.Marshal(fields)
+	if err != nil {
+		return nil, err
+	}
+	return b, nil
+}
+
+func cloneTask(t *store.Task) *store.Task {
+	if t == nil {
+		return nil
+	}
+	out := *t
+	out.TagsJSON = append(json.RawMessage(nil), t.TagsJSON...)
+	out.StatusHistoryJSON = append(json.RawMessage(nil), t.StatusHistoryJSON...)
+	if t.ClosedAt != nil {
+		v := *t.ClosedAt
+		out.ClosedAt = &v
+	}
+	if t.DueAt != nil {
+		v := *t.DueAt
+		out.DueAt = &v
+	}
+	if t.AssignedAt != nil {
+		v := *t.AssignedAt
+		out.AssignedAt = &v
+	}
+	if t.LeaseExpiresAt != nil {
+		v := *t.LeaseExpiresAt
+		out.LeaseExpiresAt = &v
+	}
+	if t.DeletedAt != nil {
+		v := *t.DeletedAt
+		out.DeletedAt = &v
+	}
+	return &out
+}
+
+func mutationContext(mc []MutationContext, fallbackSession string) MutationContext {
+	if len(mc) == 0 {
+		return MutationContext{SessionID: fallbackSession}
+	}
+	c := mc[0]
+	if c.SessionID == "" {
+		c.SessionID = fallbackSession
+	}
+	return c
+}
+
+func truncateForHistory(s string, limit int) string {
+	s = strings.TrimSpace(s)
+	if limit <= 0 || len(s) <= limit {
+		return s
+	}
+	return s[:limit] + "..."
 }
 
 func readHistory(raw json.RawMessage) []store.TaskStatusHistoryEntry {

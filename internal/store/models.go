@@ -1017,7 +1017,6 @@ type EntityCoLink struct {
 	LastSeenAt  time.Time `json:"last_seen_at"`
 }
 
-
 // ChatTurnSignal is one row of chat_turn_signals (migration 080). Each
 // row is the concierge's read of the user's reaction to a previous turn:
 // did they confirm, correct, get frustrated, redirect, escalate, or stay
@@ -1145,7 +1144,7 @@ type MemoryConflict struct {
 	CandidateID      string     `json:"candidate_id"`
 	CandidateName    string     `json:"candidate_name"`
 	CandidatePreview string     `json:"candidate_preview"`
-	Kind             string     `json:"kind"`   // "duplicate" | "related"
+	Kind             string     `json:"kind"` // "duplicate" | "related"
 	Reason           string     `json:"reason"`
 	WorkspaceID      string     `json:"workspace_id,omitempty"`
 	CreatedAt        time.Time  `json:"created_at"`
@@ -1770,6 +1769,35 @@ type TaskNote struct {
 	AuthorKind      string    `json:"author_kind"`
 	Body            string    `json:"body"`
 	CreatedAt       time.Time `json:"created_at"`
+}
+
+// TaskHistoryEntry is one immutable audit row for a task mutation or
+// action. It stores full before/after task snapshots so callers can
+// inspect what changed and restore a prior revision without relying on
+// lossy tool-call audit params.
+type TaskHistoryEntry struct {
+	ID          string `json:"id"`
+	TaskID      string `json:"task_id"`
+	WorkspaceID string `json:"workspace_id"`
+	Revision    int    `json:"revision"`
+	Action      string `json:"action"`
+
+	ActorKind      string `json:"actor_kind,omitempty"`
+	ActorSessionID string `json:"actor_session_id,omitempty"`
+	ActorPeerID    string `json:"actor_peer_id,omitempty"`
+	ActorUserID    string `json:"actor_user_id,omitempty"`
+
+	SourceKind        string          `json:"source_kind,omitempty"`
+	SourceSessionID   string          `json:"source_session_id,omitempty"`
+	SourceToolCallID  string          `json:"source_tool_call_id,omitempty"`
+	WorkspacePath     string          `json:"workspace_path,omitempty"`
+	OriginPeerID      string          `json:"origin_peer_id,omitempty"`
+	RelatedRevision   int             `json:"related_revision,omitempty"`
+	ChangedFieldsJSON json.RawMessage `json:"changed_fields,omitempty"`
+	Note              string          `json:"note,omitempty"`
+	BeforeJSON        json.RawMessage `json:"before,omitempty"`
+	AfterJSON         json.RawMessage `json:"after,omitempty"`
+	CreatedAt         time.Time       `json:"created_at"`
 }
 
 // TaskAttachment is one row in task_attachments (migration 079). The row

@@ -287,6 +287,25 @@ type TaskStore interface {
 	ClaimTask(ctx context.Context, t *Task, claimantSession string) error
 }
 
+// TaskHistoryStore is an optional extension implemented by stores that
+// retain full task edit/action snapshots. It is intentionally separate
+// from TaskStore so narrow test doubles and read-only callers do not
+// need to implement rollback support.
+type TaskHistoryStore interface {
+	AppendTaskHistory(ctx context.Context, h *TaskHistoryEntry) error
+	ListTaskHistory(ctx context.Context, taskID string, limit int) ([]TaskHistoryEntry, error)
+	GetTaskHistoryRevision(ctx context.Context, taskID string, revision int) (*TaskHistoryEntry, error)
+
+	// GetTaskIncludingDeleted returns a row regardless of deleted_at so
+	// history/rollback can inspect and restore soft-deleted tasks.
+	GetTaskIncludingDeleted(ctx context.Context, id string) (*Task, error)
+
+	// RestoreTask replaces a task row from a previously captured
+	// snapshot, including deleted_at. The store stamps a fresh updated_at
+	// and HLC for the restore write.
+	RestoreTask(ctx context.Context, t *Task) error
+}
+
 // InstalledSkillStore manages the registry of installed .mcskill bundles
 // (M2.2). The on-disk skill directory is the source of truth for content;
 // this table is the index used by `mcplexer skill list/show/remove` and

@@ -371,3 +371,93 @@ func TestHumanAssigneeRESTCreateFilter(t *testing.T) {
 		t.Errorf("expected origin_kind=local after clear, got %q", cleared.AssigneeOriginKind)
 	}
 }
+
+func TestTaskHistoryAndRollbackEndpoints(t *testing.T) {
+	srv, db, _ := newTasksTestServer(t)
+	ctx := context.Background()
+	ws := &store.Workspace{Name: "ws-history-rest", RootPath: "/tmp/ws-history-rest", Tags: json.RawMessage("[]")}
+	if err := db.CreateWorkspace(ctx, ws); err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+
+	createBody, _ := json.Marshal(map[string]any{
+		"workspace_id": ws.ID,
+		"title":        "Original REST title",
+	})
+	resp, err := http.Post(srv.URL+"/api/v1/tasks", "application/json", bytes.NewReader(createBody))
+	if err != nil {
+		t.Fatalf("POST /tasks: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 201, got %d: %s", resp.StatusCode, string(body))
+	}
+	var created store.Task
+	if err := json.NewDecoder(resp.Body).Decode(&created); err != nil {
+		t.Fatalf("decode created: %v", err)
+	}
+
+	updateBody, _ := json.Marshal(map[string]any{"title": "Clobbered REST title"})
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/api/v1/tasks/"+created.ID+"/update?workspace_id="+ws.ID, bytes.NewReader(updateBody))
+	req.Header.Set("Content-Type", "application/json")
+	resp2, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("POST update: %v", err)
+	}
+	defer func() { _ = resp2.Body.Close() }()
+	if resp2.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp2.Body)
+		t.Fatalf("expected 200 update, got %d: %s", resp2.StatusCode, string(body))
+	}
+
+	resp3, err := http.Get(srv.URL + "/api/v1/tasks/" + created.ID + "/history?workspace_id=" + ws.ID)
+	if err != nil {
+		t.Fatalf("GET history: %v", err)
+	}
+	defer func() { _ = resp3.Body.Close() }()
+	if resp3.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp3.Body)
+		t.Fatalf("expected 200 history, got %d: %s", resp3.StatusCode, string(body))
+	}
+	var histResp struct {
+		History []store.TaskHistoryEntry `json:"history"`
+	}
+	if err := json.NewDecoder(resp3.Body).Decode(&histResp); err != nil {
+		t.Fatalf("decode history: %v", err)
+	}
+	if len(histResp.History) != 2 || histResp.History[0].Action != "update" || histResp.History[1].Action != "create" {
+		t.Fatalf("unexpected history response: %+v", histResp.History)
+	}
+
+	rollbackBody, _ := json.Marshal(map[string]any{
+		"revision":   1,
+		"session_id": "rest-session",
+		"note":       "undo REST clobber",
+	})
+	req2, _ := http.NewRequest(http.MethodPost, srv.URL+"/api/v1/tasks/"+created.ID+"/rollback?workspace_id="+ws.ID, bytes.NewReader(rollbackBody))
+	req2.Header.Set("Content-Type", "application/json")
+	resp4, err := http.DefaultClient.Do(req2)
+	if err != nil {
+		t.Fatalf("POST rollback: %v", err)
+	}
+	defer func() { _ = resp4.Body.Close() }()
+	if resp4.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp4.Body)
+		t.Fatalf("expected 200 rollback, got %d: %s", resp4.StatusCode, string(body))
+	}
+	var restored store.Task
+	if err := json.NewDecoder(resp4.Body).Decode(&restored); err != nil {
+		t.Fatalf("decode rollback: %v", err)
+	}
+	if restored.Title != "Original REST title" {
+		t.Fatalf("expected original title after rollback, got %q", restored.Title)
+	}
+	rows, err := db.ListTaskHistory(ctx, created.ID, 10)
+	if err != nil {
+		t.Fatalf("ListTaskHistory: %v", err)
+	}
+	if rows[0].Action != "rollback" || rows[0].ActorKind != "user" || rows[0].RelatedRevision != 1 {
+		t.Fatalf("rollback history row missing REST attribution: %+v", rows[0])
+	}
+}

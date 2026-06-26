@@ -1237,3 +1237,83 @@ func TestEscapeFTS5Query(t *testing.T) {
 		}
 	}
 }
+
+func TestTaskHistoryAppendListAndRestore(t *testing.T) {
+	ctx := context.Background()
+	d := newMemDB(t)
+	wsID := seedWorkspace(t, d, "ws-history")
+
+	task := &store.Task{WorkspaceID: wsID, Title: "Original", Status: "open"}
+	if err := d.CreateTask(ctx, task); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	before, err := json.Marshal(task)
+	if err != nil {
+		t.Fatalf("marshal before: %v", err)
+	}
+
+	task.Title = "Changed"
+	if err := d.UpdateTask(ctx, task); err != nil {
+		t.Fatalf("UpdateTask: %v", err)
+	}
+	after, err := d.GetTask(ctx, task.ID)
+	if err != nil {
+		t.Fatalf("GetTask after update: %v", err)
+	}
+	afterJSON, err := json.Marshal(after)
+	if err != nil {
+		t.Fatalf("marshal after: %v", err)
+	}
+	if err := d.AppendTaskHistory(ctx, &store.TaskHistoryEntry{
+		TaskID:            task.ID,
+		WorkspaceID:       wsID,
+		Action:            "update",
+		ActorKind:         "agent",
+		ActorSessionID:    "session-a",
+		WorkspacePath:     "/work/repo",
+		ChangedFieldsJSON: json.RawMessage(`["title"]`),
+		BeforeJSON:        before,
+		AfterJSON:         afterJSON,
+	}); err != nil {
+		t.Fatalf("AppendTaskHistory: %v", err)
+	}
+
+	rows, err := d.ListTaskHistory(ctx, task.ID, 10)
+	if err != nil {
+		t.Fatalf("ListTaskHistory: %v", err)
+	}
+	if len(rows) != 1 || rows[0].Revision != 1 || rows[0].Action != "update" {
+		t.Fatalf("unexpected history rows: %+v", rows)
+	}
+	rev, err := d.GetTaskHistoryRevision(ctx, task.ID, 1)
+	if err != nil {
+		t.Fatalf("GetTaskHistoryRevision: %v", err)
+	}
+	if rev.ActorSessionID != "session-a" || rev.WorkspacePath != "/work/repo" {
+		t.Fatalf("history attribution not persisted: %+v", rev)
+	}
+
+	if err := d.SoftDeleteTask(ctx, task.ID); err != nil {
+		t.Fatalf("SoftDeleteTask: %v", err)
+	}
+	deleted, err := d.GetTaskIncludingDeleted(ctx, task.ID)
+	if err != nil {
+		t.Fatalf("GetTaskIncludingDeleted: %v", err)
+	}
+	if deleted.DeletedAt == nil {
+		t.Fatal("expected deleted_at on including-deleted row")
+	}
+	deleted.Title = "Restored"
+	deleted.DeletedAt = nil
+	deleted.HlcAt = ""
+	if err := d.RestoreTask(ctx, deleted); err != nil {
+		t.Fatalf("RestoreTask: %v", err)
+	}
+	restored, err := d.GetTask(ctx, task.ID)
+	if err != nil {
+		t.Fatalf("GetTask after restore: %v", err)
+	}
+	if restored.Title != "Restored" || restored.DeletedAt != nil {
+		t.Fatalf("restore did not make task live with new title: %+v", restored)
+	}
+}
