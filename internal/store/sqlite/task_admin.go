@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 )
 
 // SelectDistinctTaskStatuses returns status_text → count of live
@@ -24,6 +25,51 @@ func (d *DB) SelectDistinctTaskStatuses(ctx context.Context, workspaceID string)
 		ORDER BY n DESC, status ASC`, workspaceID)
 	if err != nil {
 		return nil, fmt.Errorf("select distinct task statuses: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	out := map[string]int{}
+	for rows.Next() {
+		var s string
+		var n int
+		if err := rows.Scan(&s, &n); err != nil {
+			return nil, err
+		}
+		out[s] = n
+	}
+	return out, rows.Err()
+}
+
+// CountTaskStatuses returns status_text → count for non-deleted tasks,
+// optionally scoped to one workspace and open/closed/all task state. It backs
+// the dashboard status filter, where the dropdown should reflect statuses
+// actually present in the active task population rather than the configured
+// vocabulary.
+func (d *DB) CountTaskStatuses(ctx context.Context, workspaceID, state string) (map[string]int, error) {
+	conds := []string{"deleted_at IS NULL"}
+	args := []any{}
+	if workspaceID != "" {
+		conds = append(conds, "workspace_id = ?")
+		args = append(args, workspaceID)
+	}
+	switch strings.ToLower(strings.TrimSpace(state)) {
+	case "", "open":
+		conds = append(conds, "closed_at IS NULL")
+	case "closed":
+		conds = append(conds, "closed_at IS NOT NULL")
+	case "all", "any":
+		// non-deleted only
+	default:
+		return nil, fmt.Errorf("CountTaskStatuses: unknown state %q", state)
+	}
+	rows, err := d.q.QueryContext(ctx, `
+		SELECT status, COUNT(*) AS n
+		FROM tasks
+		WHERE `+strings.Join(conds, " AND ")+`
+		GROUP BY status
+		ORDER BY n DESC, status ASC`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("count task statuses: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 

@@ -44,7 +44,16 @@ import { useTasksStream } from '@/hooks/use-tasks-stream'
 import { useStatusVocab } from '@/hooks/use-status-vocab'
 import { useActiveMeshAgents } from '@/hooks/use-active-mesh-agents'
 import { listWorkspaces } from '@/api/client'
-import { deleteTask, listMilestones, listTasks, readMetaList, updateTask, type Task } from '@/api/tasks'
+import {
+  deleteTask,
+  listMilestones,
+  listTasks,
+  listTaskStatuses,
+  readMetaList,
+  updateTask,
+  type Task,
+  type TaskStatusCount,
+} from '@/api/tasks'
 import { cn } from '@/lib/utils'
 import {
   assigneeLabel,
@@ -226,6 +235,14 @@ export function TasksListPage() {
     [workspaceFilter, stateFilter, statusFilter, tagFilter, assigneeFilter, humanFilter, searchQuery],
   )
   const { data: tasks, loading, error, refetch } = useApi(tasksFetcher)
+  const statusOptionsFetcher = useCallback(
+    () => listTaskStatuses({
+      workspace_id: workspaceFilter || undefined,
+      state: stateFilter === 'all' ? 'all' : stateFilter,
+    }),
+    [workspaceFilter, stateFilter],
+  )
+  const { data: taskStatusOptions } = useApi(statusOptionsFetcher)
   // Per-workspace vocab — fetched when the operator has filtered to a
   // single workspace. In the cross-workspace "all" view we fall back
   // to the hardcoded WORKING_STATUSES heuristic inside isWorkingStatus
@@ -450,7 +467,7 @@ export function TasksListPage() {
           <StateToggle value={stateFilter} onChange={(v) => setFilter('state', v)} />
           <StatusFilterSelect
             value={statusFilter}
-            vocab={statusVocab}
+            statuses={taskStatusOptions?.statuses}
             onChange={(v) => setFilter('status', v)}
           />
           <PriorityFilterSelect
@@ -721,19 +738,15 @@ function StateToggle({ value, onChange }: { value: StateFilter; onChange: (v: St
 
 function StatusFilterSelect({
   value,
-  vocab,
+  statuses,
   onChange,
 }: {
   value: string
-  vocab?: import('./task-utils').StatusKindMap
+  statuses?: TaskStatusCount[]
   onChange: (v: string | null) => void
 }) {
-  // Defaults cover the canonical statuses used by most workspaces. When
-  // the workspace's vocab is known (single-workspace view), merge in any
-  // custom statuses so the dropdown reflects what's actually in use.
-  const defaults = ['open', 'doing', 'blocked', 'review', 'done', 'cancelled']
-  const fromVocab = vocab ? Object.keys(vocab) : []
-  const all = Array.from(new Set([...defaults, ...fromVocab, ...(value ? [value] : [])]))
+  const counts = new Map((statuses ?? []).map((row) => [row.status, row.count] as const))
+  const all = Array.from(new Set([...(statuses ?? []).map((row) => row.status), ...(value ? [value] : [])]))
   return (
     <Select value={value || 'all'} onValueChange={(v) => onChange(v === 'all' ? null : v)}>
       <SelectTrigger size="sm" className="h-8 text-xs">
@@ -742,7 +755,9 @@ function StatusFilterSelect({
       <SelectContent>
         <SelectItem value="all">All status</SelectItem>
         {all.map((s) => (
-          <SelectItem key={s} value={s}>{s}</SelectItem>
+          <SelectItem key={s} value={s}>
+            {s}{counts.has(s) ? ` (${counts.get(s)})` : ''}
+          </SelectItem>
         ))}
       </SelectContent>
     </Select>

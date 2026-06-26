@@ -7,6 +7,7 @@ package sqlite
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/don-works/mcplexer/internal/store"
 )
@@ -91,6 +92,56 @@ func TestSelectDistinctTaskStatuses_ScopesToWorkspace(t *testing.T) {
 	counts2, _ := d.SelectDistinctTaskStatuses(ctx, ws2)
 	if counts2["review"] != 1 || counts2["blocked"] != 1 || len(counts2) != 2 {
 		t.Errorf("ws2 expected {review:1, blocked:1}, got %v", counts2)
+	}
+}
+
+func TestCountTaskStatusesFiltersStateAndWorkspace(t *testing.T) {
+	ctx := context.Background()
+	d := newMemDB(t)
+	ws1 := seedWorkspace(t, d, "ws-status-state-1")
+	ws2 := seedWorkspace(t, d, "ws-status-state-2")
+	now := time.Now().UTC()
+
+	rows := []*store.Task{
+		{WorkspaceID: ws1, Title: "open a", Status: "triage"},
+		{WorkspaceID: ws1, Title: "open b", Status: "triage"},
+		{WorkspaceID: ws1, Title: "working", Status: "coding"},
+		{WorkspaceID: ws1, Title: "closed", Status: "done", ClosedAt: &now},
+		{WorkspaceID: ws2, Title: "other", Status: "remote"},
+	}
+	for _, row := range rows {
+		if err := d.CreateTask(ctx, row); err != nil {
+			t.Fatalf("CreateTask %s: %v", row.Title, err)
+		}
+	}
+	deleted := &store.Task{WorkspaceID: ws1, Title: "deleted", Status: "ghost"}
+	if err := d.CreateTask(ctx, deleted); err != nil {
+		t.Fatalf("CreateTask deleted: %v", err)
+	}
+	if err := d.SoftDeleteTask(ctx, deleted.ID); err != nil {
+		t.Fatalf("SoftDeleteTask: %v", err)
+	}
+
+	openCounts, err := d.CountTaskStatuses(ctx, ws1, "open")
+	if err != nil {
+		t.Fatalf("CountTaskStatuses open: %v", err)
+	}
+	if openCounts["triage"] != 2 || openCounts["coding"] != 1 || openCounts["done"] != 0 || openCounts["ghost"] != 0 {
+		t.Fatalf("open counts = %v, want triage/coding only", openCounts)
+	}
+	closedCounts, err := d.CountTaskStatuses(ctx, ws1, "closed")
+	if err != nil {
+		t.Fatalf("CountTaskStatuses closed: %v", err)
+	}
+	if len(closedCounts) != 1 || closedCounts["done"] != 1 {
+		t.Fatalf("closed counts = %v, want {done:1}", closedCounts)
+	}
+	allCounts, err := d.CountTaskStatuses(ctx, "", "all")
+	if err != nil {
+		t.Fatalf("CountTaskStatuses all: %v", err)
+	}
+	if allCounts["remote"] != 1 || allCounts["done"] != 1 || allCounts["ghost"] != 0 {
+		t.Fatalf("all counts = %v, want remote and done but not ghost", allCounts)
 	}
 }
 
