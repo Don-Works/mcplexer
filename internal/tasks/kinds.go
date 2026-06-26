@@ -20,33 +20,22 @@ import (
 	"context"
 
 	"github.com/don-works/mcplexer/internal/store"
+	"github.com/don-works/mcplexer/internal/taskstatus"
 )
 
 // Canonical vocabulary kinds (task_status_vocabulary.kind).
 const (
-	KindOpen      = "open"
-	KindWorking   = "working"
-	KindBlocked   = "blocked"
-	KindReview    = "review"
-	KindDone      = "done"
-	KindCancelled = "cancelled"
+	KindOpen      = taskstatus.KindOpen
+	KindWorking   = taskstatus.KindWorking
+	KindBlocked   = taskstatus.KindBlocked
+	KindReview    = taskstatus.KindReview
+	KindDone      = taskstatus.KindDone
+	KindCancelled = taskstatus.KindCancelled
 )
-
-// fallbackStatusKinds maps the six suggested default statuses to their
-// canonical kinds for workspaces that never declared a vocabulary.
-// Mirrors the migration 070/099 seeds + ensureTaskStatusVocabKind.
-var fallbackStatusKinds = map[string]string{
-	"open":      KindOpen,
-	"doing":     KindWorking,
-	"blocked":   KindBlocked,
-	"review":    KindReview,
-	"done":      KindDone,
-	"cancelled": KindCancelled,
-}
 
 // kindTerminal reports whether a kind is a terminal bucket.
 func kindTerminal(kind string) bool {
-	return kind == KindDone || kind == KindCancelled
+	return taskstatus.IsTerminalKind(kind)
 }
 
 // workspaceStatusKinds returns the status_text → kind map for a
@@ -55,10 +44,7 @@ func kindTerminal(kind string) bool {
 // answers) — kind classification is advisory, never load-bearing for
 // the mutation itself.
 func (s *Service) workspaceStatusKinds(ctx context.Context, workspaceID string) map[string]string {
-	out := make(map[string]string, len(fallbackStatusKinds))
-	for k, v := range fallbackStatusKinds {
-		out[k] = v
-	}
+	out := taskstatus.DefaultKindMap()
 	if vocab, err := s.store.ListTaskStatusVocab(ctx, workspaceID); err == nil {
 		for _, v := range vocab {
 			if v.StatusText != "" && v.Kind != "" {

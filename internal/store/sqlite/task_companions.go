@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/don-works/mcplexer/internal/store"
+	"github.com/don-works/mcplexer/internal/taskstatus"
 	"github.com/oklog/ulid/v2"
 )
 
@@ -191,19 +192,20 @@ func (d *DB) DeleteTaskStatusVocab(ctx context.Context, workspaceID, statusText 
 
 func (d *DB) IsTerminalStatus(ctx context.Context, workspaceID, status string) (bool, error) {
 	var n int
+	var kind string
 	err := d.q.QueryRowContext(ctx,
-		`SELECT is_terminal FROM task_status_vocabulary WHERE workspace_id = ? AND status_text = ?`,
+		`SELECT is_terminal, COALESCE(kind, 'open')
+		FROM task_status_vocabulary WHERE workspace_id = ? AND status_text = ?`,
 		workspaceID, status,
-	).Scan(&n)
+	).Scan(&n, &kind)
 	if errors.Is(err, sql.ErrNoRows) {
-		// No vocab entry yet — non-terminal by default. The cleanup skill
-		// or the user will mark terminal statuses as they emerge.
-		return false, nil
+		kind, ok := taskstatus.DefaultKind(status)
+		return ok && taskstatus.IsTerminalKind(kind), nil
 	}
 	if err != nil {
 		return false, fmt.Errorf("is terminal status: %w", err)
 	}
-	return n != 0, nil
+	return n != 0 || taskstatus.IsTerminalKind(kind), nil
 }
 
 // ----------------------------------------------------------------------

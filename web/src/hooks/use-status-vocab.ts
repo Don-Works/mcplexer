@@ -1,7 +1,7 @@
 // use-status-vocab — fetches /api/v1/task-status-vocabulary?workspace_id=
 // and returns a Map<status_text, kind> the rest of the tasks UI uses
 // to classify freeform statuses into one of the canonical buckets
-// (open|working|blocked|done|cancelled). See migration 070 +
+// (open|working|blocked|review|done|cancelled). See migration 070 +
 // task-utils.tsx kindOfStatus / isWorkingStatus.
 //
 // Caching strategy: useApi already provides per-component

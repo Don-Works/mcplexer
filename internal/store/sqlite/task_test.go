@@ -454,6 +454,17 @@ func TestUpsertVocabAndIsTerminal(t *testing.T) {
 	if got, _ := d.IsTerminalStatus(ctx, wsID, "anything"); got {
 		t.Fatalf("expected false default for missing vocab entry")
 	}
+	if got, _ := d.IsTerminalStatus(ctx, wsID, "completed"); !got {
+		t.Fatalf("expected completed to default terminal")
+	}
+	if err := d.UpsertTaskStatusVocab(ctx, &store.TaskStatusVocab{
+		WorkspaceID: wsID, StatusText: "completed", Kind: "open",
+	}); err != nil {
+		t.Fatalf("UpsertTaskStatusVocab completed: %v", err)
+	}
+	if got, _ := d.IsTerminalStatus(ctx, wsID, "completed"); got {
+		t.Fatalf("explicit completed/open vocab should override terminal fallback")
+	}
 	if err := d.UpsertTaskStatusVocab(ctx, &store.TaskStatusVocab{
 		WorkspaceID: wsID, StatusText: "shipped", IsTerminal: true,
 	}); err != nil {

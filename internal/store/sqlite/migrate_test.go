@@ -98,6 +98,9 @@ func TestMigrate028UsersCleanInstall(t *testing.T) {
 			t.Fatalf("peer_users.%s missing", col)
 		}
 	}
+	if !indexExists(t, db, "idx_peer_users_one_owner") {
+		t.Fatal("peer_users one-owner unique index missing")
+	}
 
 	// Insert two is_self=1 rows must fail thanks to the partial unique
 	// index — guards the bootstrap invariant.
