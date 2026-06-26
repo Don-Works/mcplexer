@@ -144,6 +144,7 @@ func (s *Service) applyToExisting(
 		return nil
 	}
 	now := time.Now().UTC()
+	before := cloneTask(existing)
 	mergeFields(existing, patch)
 	applyClears(existing, patch)
 	existing.HlcAt = evt.HLC
@@ -152,6 +153,18 @@ func (s *Service) applyToExisting(
 	appendGossipHistory(existing, evt, byPeer, now)
 	if err := s.store.UpdateTask(ctx, existing); err != nil {
 		return fmt.Errorf("gossip apply: update: %w", err)
+	}
+	after := existing
+	if fresh, err := s.store.GetTask(ctx, existing.ID); err == nil {
+		after = fresh
+	}
+	if err := s.recordTaskHistory(ctx, "gossip_update", before, after, taskHistoryMeta{
+		ActorKind:    "peer-import",
+		SessionID:    evt.BySession,
+		PeerID:       byPeer,
+		OriginPeerID: byPeer,
+	}); err != nil {
+		return fmt.Errorf("gossip apply: history: %w", err)
 	}
 	s.publish(Event{
 		Kind: EventTaskUpdated, WorkspaceID: existing.WorkspaceID,
@@ -210,6 +223,14 @@ func (s *Service) applyMaterialize(
 	t.StatusHistoryJSON, _ = json.Marshal(history)
 	if err := s.store.CreateTask(ctx, t); err != nil {
 		return fmt.Errorf("gossip apply: materialize: %w", err)
+	}
+	if err := s.recordTaskHistory(ctx, "gossip_create", nil, t, taskHistoryMeta{
+		ActorKind:    "peer-import",
+		SessionID:    evt.BySession,
+		PeerID:       byPeer,
+		OriginPeerID: byPeer,
+	}); err != nil {
+		return fmt.Errorf("gossip apply: history: %w", err)
 	}
 	s.publish(Event{
 		Kind: EventTaskCreated, WorkspaceID: t.WorkspaceID,

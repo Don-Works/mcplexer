@@ -235,6 +235,49 @@ func taskToolDefinitions() []Tool {
 			}),
 		},
 		{
+			Name:        "task__history",
+			Description: "List the append-only edit/action history for a task. Default response is compact: revision, action, actor/session, workspace_path, changed_fields, note, and created_at. Pass `full:true` to include before/after task snapshots for forensic inspection. Use the `revision` value with task__rollback to restore a previous state.",
+			InputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"id": {"type": "string", "description": "Task id."},
+					"limit": {"type": "integer", "description": "Default 100, max 500."},
+					"full": {"type": "boolean", "description": "Include before/after snapshots. Default false."},
+					"workspace_id": {"type": "string", "description": "Override session-bound workspace; useful for concierge-style routing across workspaces. Omit to use the session's CWD-bound workspace."}
+				},
+				"required": ["id"]
+			}`),
+			Extras: withAnnotations(ToolAnnotations{
+				Title:           "Task History",
+				ReadOnlyHint:    boolPtr(true),
+				DestructiveHint: boolPtr(false),
+				IdempotentHint:  boolPtr(true),
+				OpenWorldHint:   boolPtr(false),
+			}),
+		},
+		{
+			Name:        "task__rollback",
+			Description: "Restore a task to the after-snapshot of a specific history revision. This intentionally overwrites the current task row and then records a new rollback history entry, so the rollback itself can be undone by restoring the prior revision. Run task__history first and pass the chosen `revision`.",
+			InputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"id": {"type": "string", "description": "Task id."},
+					"revision": {"type": "integer", "description": "History revision to restore to."},
+					"note": {"type": "string", "description": "Optional reason recorded on the rollback history entry."},
+					"full": {"type": "boolean", "description": "Return the historical full envelope. Default false."},
+					"workspace_id": {"type": "string", "description": "Override session-bound workspace; useful for concierge-style routing across workspaces. Omit to use the session's CWD-bound workspace."}
+				},
+				"required": ["id", "revision"]
+			}`),
+			Extras: withAnnotations(ToolAnnotations{
+				Title:           "Rollback Task",
+				ReadOnlyHint:    boolPtr(false),
+				DestructiveHint: boolPtr(true),
+				IdempotentHint:  boolPtr(false),
+				OpenWorldHint:   boolPtr(false),
+			}),
+		},
+		{
 			Name:        "task__set_work_context",
 			Description: "Annotate a task with structured work-context pointers — git worktree, branch, PR url, commit range, peer id, session, linear ticket, mesh thread root. Stored as frontmatter on the task's `meta` column so non-work-context lines (composes, composed_by, custom keys) are preserved. Each field is optional; an empty string clears that key. Use this so agents coordinating on parallel branches can find each other's work without grepping mesh chatter.",
 			InputSchema: json.RawMessage(`{

@@ -1661,3 +1661,70 @@ func TestClaim_IdempotentReclaim(t *testing.T) {
 		t.Fatalf("expected assignee=owner, got %q", reclaimed.AssigneeSessionID)
 	}
 }
+
+func TestTaskHistoryRollbackRestoresRevision(t *testing.T) {
+	ctx := context.Background()
+	svc, db, wsID := newSvc(t)
+
+	created, err := svc.Create(ctx, tasks.CreateOptions{
+		WorkspaceID:        wsID,
+		Title:              "Original title",
+		CreatedBySessionID: "creator-session",
+		ActorKind:          "agent",
+		WorkspacePath:      "/tmp/ws1",
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	changedTitle := "Clobbered title"
+	if _, err := svc.Update(ctx, wsID, created.ID, tasks.UpdatePatch{
+		Title:              &changedTitle,
+		UpdatedBySessionID: "editor-session",
+		ActorKind:          "agent",
+		WorkspacePath:      "/tmp/ws1",
+	}); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+
+	rows, err := db.ListTaskHistory(ctx, created.ID, 10)
+	if err != nil {
+		t.Fatalf("ListTaskHistory: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("expected create+update history rows, got %d: %+v", len(rows), rows)
+	}
+	if rows[0].Revision != 2 || rows[0].Action != "update" {
+		t.Fatalf("newest row should be update revision 2, got %+v", rows[0])
+	}
+	if rows[1].Revision != 1 || rows[1].Action != "create" {
+		t.Fatalf("oldest row should be create revision 1, got %+v", rows[1])
+	}
+
+	restored, err := svc.Rollback(ctx, wsID, created.ID, tasks.RollbackOptions{
+		Revision:      1,
+		ActorKind:     "agent",
+		SessionID:     "rollback-session",
+		WorkspacePath: "/tmp/ws1",
+		Note:          "undo clobber",
+	})
+	if err != nil {
+		t.Fatalf("Rollback: %v", err)
+	}
+	if restored.Title != "Original title" {
+		t.Fatalf("expected original title after rollback, got %q", restored.Title)
+	}
+	var statusHistory []store.TaskStatusHistoryEntry
+	if err := json.Unmarshal(restored.StatusHistoryJSON, &statusHistory); err != nil {
+		t.Fatalf("status history: %v", err)
+	}
+	if got := statusHistory[len(statusHistory)-1]; got.Evt != "rollback" || got.To != "revision:1" {
+		t.Fatalf("expected rollback status-history entry, got %+v", got)
+	}
+	rows, err = db.ListTaskHistory(ctx, created.ID, 10)
+	if err != nil {
+		t.Fatalf("ListTaskHistory after rollback: %v", err)
+	}
+	if rows[0].Action != "rollback" || rows[0].RelatedRevision != 1 || rows[0].ActorSessionID != "rollback-session" {
+		t.Fatalf("rollback history row missing attribution: %+v", rows[0])
+	}
+}

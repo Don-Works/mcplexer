@@ -13,6 +13,7 @@ import {
   ChevronRight,
   Circle,
   Hand,
+  History,
   Loader2,
   Pencil,
   Pin,
@@ -39,10 +40,13 @@ import {
   deleteTask,
   getTask,
   heartbeatTask,
+  listTaskHistory,
   listTaskNotes,
   readMetaList,
+  rollbackTask,
   updateTask,
   type Task,
+  type TaskHistoryEntry,
   type TaskNote,
   type TaskStatusHistoryEntry,
 } from '@/api/tasks'
@@ -148,6 +152,12 @@ export function TaskDetailPage() {
   }, [workspaceId, id])
   const { data: notes, refetch: refetchNotes } = useApi(notesFetcher)
 
+  const editHistoryFetcher = useCallback(() => {
+    if (!workspaceId || !id) return Promise.resolve({ history: [] as TaskHistoryEntry[] })
+    return listTaskHistory(workspaceId, id, 100)
+  }, [workspaceId, id])
+  const { data: editHistoryResponse, refetch: refetchEditHistory } = useApi(editHistoryFetcher)
+
   // Live updates via SSE — replaces the previous 6s polling. Filter
   // server-side by workspace and then locally by task id so we ignore
   // sibling-task chatter in the same workspace.
@@ -159,10 +169,12 @@ export function TaskDetailPage() {
       if (tid !== id) return
       if (evt.kind === 'task_note_appended') {
         refetchNotes()
+        refetchEditHistory()
         return
       }
       refetch()
       refetchNotes()
+      refetchEditHistory()
     },
   })
 
@@ -204,6 +216,7 @@ export function TaskDetailPage() {
   const [busy, setBusy] = useState<string | null>(null)
   const [editOpen, setEditOpen] = useState(false)
   const [deleteOpen, setDeleteOpen] = useState(false)
+  const [rollbackRevision, setRollbackRevision] = useState<number | null>(null)
   const [noteInput, setNoteInput] = useState('')
   const claimInFlightRef = useRef(false)
 
@@ -227,13 +240,14 @@ export function TaskDetailPage() {
         toast.success('Claimed')
       }
       refetch()
+      refetchEditHistory()
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Claim failed')
     } finally {
       claimInFlightRef.current = false
       setBusy(null)
     }
-  }, [task, usersResponse, statusVocab, refetch])
+  }, [task, usersResponse, statusVocab, refetch, refetchEditHistory])
 
   const handleTogglePin = useCallback(async () => {
     if (!task) return
@@ -241,12 +255,13 @@ export function TaskDetailPage() {
     try {
       await updateTask(task.workspace_id, task.id, { pinned: !task.pinned })
       refetch()
+      refetchEditHistory()
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Pin failed')
     } finally {
       setBusy(null)
     }
-  }, [task, refetch])
+  }, [task, refetch, refetchEditHistory])
 
   const handleToggleTerminal = useCallback(async () => {
     if (!task) return
@@ -255,12 +270,13 @@ export function TaskDetailPage() {
       await updateTask(task.workspace_id, task.id, { terminal: !task.closed_at })
       toast.success(task.closed_at ? 'Reopened' : 'Closed')
       refetch()
+      refetchEditHistory()
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Update failed')
     } finally {
       setBusy(null)
     }
-  }, [task, refetch])
+  }, [task, refetch, refetchEditHistory])
 
   const handleDelete = useCallback(async () => {
     if (!task) return
@@ -285,12 +301,35 @@ export function TaskDetailPage() {
       })
       setNoteInput('')
       refetchNotes()
+      refetchEditHistory()
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Append failed')
     } finally {
       setBusy(null)
     }
-  }, [task, noteInput, refetchNotes])
+  }, [task, noteInput, refetchNotes, refetchEditHistory])
+
+  const handleRollback = useCallback(async () => {
+    if (!task || rollbackRevision == null) return
+    setBusy('rollback')
+    try {
+      await rollbackTask(task.workspace_id, task.id, {
+        revision: rollbackRevision,
+        session_id: dashboardSessionId(),
+        actor_kind: 'user',
+        note: `dashboard rollback to revision ${rollbackRevision}`,
+      })
+      toast.success(`Rolled back to revision ${rollbackRevision}`)
+      setRollbackRevision(null)
+      refetch()
+      refetchNotes()
+      refetchEditHistory()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Rollback failed')
+    } finally {
+      setBusy(null)
+    }
+  }, [task, rollbackRevision, refetch, refetchNotes, refetchEditHistory])
 
   if (!workspaceId) {
     return (
@@ -331,6 +370,10 @@ export function TaskDetailPage() {
   const composes = readMetaList(task.meta, 'composes')
   const composedBy = readMetaList(task.meta, 'composed_by')
   const history: TaskStatusHistoryEntry[] = task.status_history ?? []
+  const editHistory = editHistoryResponse?.history ?? []
+  const rollbackTarget = rollbackRevision == null
+    ? null
+    : editHistory.find((row) => row.revision === rollbackRevision) ?? null
   const workspaceName = workspaces?.find((w) => w.id === task.workspace_id)?.name ?? shortTaskId(task.workspace_id)
   const inStateMs = timeInCurrentState(history, now)
   const workedMs = cumulativeTimeWorked(history, now)
@@ -605,6 +648,84 @@ export function TaskDetailPage() {
             </ol>
           </section>
 
+          <section>
+            <SectionLabel>
+              <span className="inline-flex items-center gap-1.5">
+                <History className="h-3 w-3" />
+                Edit history
+                <span className="font-mono text-[10px] text-muted-foreground/60">({editHistory.length})</span>
+              </span>
+            </SectionLabel>
+            {editHistory.length === 0 ? (
+              <div className="border border-border bg-card/40 p-3 text-[11px] text-muted-foreground/60">
+                No edit history yet.
+              </div>
+            ) : (
+              <div className="divide-y divide-border border border-border bg-card/40">
+                {editHistory.slice(0, 12).map((row, index) => (
+                  <div key={row.id} className="space-y-2 p-3">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-1.5 text-xs">
+                          <span className="font-mono text-muted-foreground">r{row.revision}</span>
+                          <span className="font-mono uppercase tracking-wider text-foreground">{row.action}</span>
+                          {row.related_revision ? (
+                            <span className="font-mono text-[10px] text-muted-foreground">
+                              → r{row.related_revision}
+                            </span>
+                          ) : null}
+                        </div>
+                        <div className="mt-0.5 text-[10px] text-muted-foreground/70" title={formatAbsolute(row.created_at)}>
+                          {formatRelative(row.created_at)}
+                          {row.actor_kind ? <span className="ml-1 font-mono">· {row.actor_kind}</span> : null}
+                          {row.actor_session_id ? (
+                            <span className="ml-1 font-mono">· {row.actor_session_id.slice(0, 8)}</span>
+                          ) : null}
+                        </div>
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 shrink-0 px-2 text-[11px]"
+                        disabled={index === 0 || busy === 'rollback'}
+                        onClick={() => setRollbackRevision(row.revision)}
+                        title={index === 0 ? 'Current revision' : `Rollback to revision ${row.revision}`}
+                      >
+                        <Undo2 className="h-3.5 w-3.5" />
+                        Rollback
+                      </Button>
+                    </div>
+                    {row.changed_fields?.length ? (
+                      <div className="flex flex-wrap gap-1">
+                        {row.changed_fields.slice(0, 6).map((field) => (
+                          <span
+                            key={field}
+                            className="border border-border bg-muted/30 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground"
+                          >
+                            {field}
+                          </span>
+                        ))}
+                        {row.changed_fields.length > 6 ? (
+                          <span className="font-mono text-[10px] text-muted-foreground/60">
+                            +{row.changed_fields.length - 6}
+                          </span>
+                        ) : null}
+                      </div>
+                    ) : null}
+                    {row.workspace_path ? (
+                      <div className="truncate font-mono text-[10px] text-muted-foreground/60" title={row.workspace_path}>
+                        {row.workspace_path}
+                      </div>
+                    ) : null}
+                    {row.note ? (
+                      <div className="line-clamp-2 text-[11px] text-muted-foreground/80">{row.note}</div>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+
           {/* Work context — branch / PR / worktree / peer / linear / etc. */}
           <WorkContextCard task={task} onUpdate={refetch} />
 
@@ -663,6 +784,7 @@ export function TaskDetailPage() {
         onSaved={(t) => {
           toast.success('Saved')
           refetch()
+          refetchEditHistory()
           // If workspace changes (shouldn't happen here) keep URL in sync.
           if (t.workspace_id !== workspaceId) {
             navigate(`/tasks/${encodeURIComponent(t.id)}?workspace=${encodeURIComponent(t.workspace_id)}`, { replace: true })
@@ -671,10 +793,26 @@ export function TaskDetailPage() {
       />
 
       <ConfirmDialog
+        open={rollbackRevision !== null}
+        onOpenChange={(open) => {
+          if (!open) setRollbackRevision(null)
+        }}
+        title={rollbackTarget ? `Rollback to revision ${rollbackTarget.revision}?` : 'Rollback task?'}
+        description={
+          rollbackTarget
+            ? `Restore ${shortTaskId(task.id)} to the ${rollbackTarget.action} snapshot from ${formatRelative(rollbackTarget.created_at)}.`
+            : `Restore ${shortTaskId(task.id)} to the selected history revision.`
+        }
+        confirmLabel="Rollback"
+        variant="destructive"
+        onConfirm={handleRollback}
+      />
+
+      <ConfirmDialog
         open={deleteOpen}
         onOpenChange={setDeleteOpen}
         title="Delete this task?"
-        description={`Soft-delete ${shortTaskId(task.id)}. The row stays in the DB with deleted_at set so the audit trail survives; this is reversible (an admin can call task__update with deleted_at=null via the gateway's admin MCP tools).`}
+        description={`Soft-delete ${shortTaskId(task.id)}. The row stays in the DB with deleted_at set, and history rollback can restore an earlier live revision.`}
         confirmLabel="Delete"
         variant="destructive"
         onConfirm={handleDelete}

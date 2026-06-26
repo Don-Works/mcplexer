@@ -75,6 +75,29 @@ export interface TaskNote {
   created_at: string
 }
 
+export interface TaskHistoryEntry {
+  id: string
+  task_id: string
+  workspace_id: string
+  revision: number
+  action: string
+  actor_kind?: string
+  actor_session_id?: string
+  actor_peer_id?: string
+  actor_user_id?: string
+  source_kind?: string
+  source_session_id?: string
+  source_tool_call_id?: string
+  workspace_path?: string
+  origin_peer_id?: string
+  related_revision?: number
+  changed_fields?: string[] | null
+  note?: string
+  before?: Task | null
+  after?: Task | null
+  created_at: string
+}
+
 // StatusKind — the canonical bucket a freeform status word maps to.
 // Drives UI working-state chips + the service-layer auto-claim path.
 // See migration 070 + internal/store/models.go TaskStatusVocab.
@@ -211,6 +234,27 @@ export function appendTaskNote(
   body: { body: string; author_session_id?: string; author_kind?: string },
 ): Promise<TaskNote> {
   return request<TaskNote>(`/tasks/${encodeURIComponent(id)}/notes${qs({ workspace_id: workspaceId })}`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+}
+
+export function listTaskHistory(
+  workspaceId: string,
+  id: string,
+  limit = 100,
+): Promise<{ history: TaskHistoryEntry[] }> {
+  return request<{ history: TaskHistoryEntry[] }>(
+    `/tasks/${encodeURIComponent(id)}/history${qs({ workspace_id: workspaceId, limit })}`,
+  )
+}
+
+export function rollbackTask(
+  workspaceId: string,
+  id: string,
+  body: { revision: number; session_id?: string; actor_kind?: string; note?: string },
+): Promise<Task> {
+  return request<Task>(`/tasks/${encodeURIComponent(id)}/rollback${qs({ workspace_id: workspaceId })}`, {
     method: 'POST',
     body: JSON.stringify(body),
   })

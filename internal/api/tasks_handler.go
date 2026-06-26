@@ -15,6 +15,8 @@
 //	POST   /api/v1/tasks/{id}/heartbeat             → bump lease window (assignee only)
 //	POST   /api/v1/tasks/{id}/notes                 → append note
 //	GET    /api/v1/tasks/{id}/notes                 → list notes for one task
+//	GET    /api/v1/tasks/{id}/history               → full edit/action history
+//	POST   /api/v1/tasks/{id}/rollback              → restore to a history revision
 //	DELETE /api/v1/tasks/{id}                       → soft-delete
 //	GET    /api/v1/task-status-vocabulary           → list per-workspace status vocab
 //	POST   /api/v1/task-status-vocabulary           → upsert one vocab entry
@@ -285,7 +287,8 @@ func (h *tasksHandler) handleUpdate(w http.ResponseWriter, r *http.Request) {
 		Title: body.Title, Description: body.Description, Status: body.Status,
 		Priority: body.Priority, DueAt: body.DueAt, Tags: body.Tags,
 		Meta: body.Meta, Terminal: body.Terminal, Pinned: body.Pinned,
-		Clear: body.Clear,
+		Clear:     body.Clear,
+		ActorKind: "user",
 	}
 	if body.Assignee != nil {
 		patch.Assignee = &tasks.Assignee{
@@ -333,7 +336,10 @@ func (h *tasksHandler) handleClaim(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "session_id is required")
 		return
 	}
-	t, err := h.svc.Claim(r.Context(), wsID, id, body.Status, body.SessionID, body.Note)
+	t, err := h.svc.Claim(r.Context(), wsID, id, body.Status, body.SessionID, body.Note, tasks.MutationContext{
+		ActorKind: "user",
+		SessionID: body.SessionID,
+	})
 	if errors.Is(err, tasks.ErrTaskAlreadyClaimed) {
 		writeError(w, http.StatusConflict, "task already claimed")
 		return
@@ -429,7 +435,14 @@ func (h *tasksHandler) handleAppendNote(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "body is required")
 		return
 	}
-	n, err := h.svc.AppendNote(r.Context(), wsID, id, body.Body, body.AuthorSessionID, body.AuthorKind)
+	actorKind := body.AuthorKind
+	if actorKind == "" {
+		actorKind = "user"
+	}
+	n, err := h.svc.AppendNote(r.Context(), wsID, id, body.Body, body.AuthorSessionID, body.AuthorKind, tasks.MutationContext{
+		ActorKind: actorKind,
+		SessionID: body.AuthorSessionID,
+	})
 	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "task not found")
 		return
@@ -469,6 +482,80 @@ func (h *tasksHandler) handleListNotes(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, notes)
 }
 
+// GET /api/v1/tasks/{id}/history?workspace_id=&limit=
+func (h *tasksHandler) handleListHistory(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "id is required")
+		return
+	}
+	wsID := r.URL.Query().Get("workspace_id")
+	if wsID == "" {
+		writeError(w, http.StatusBadRequest, "workspace_id is required")
+		return
+	}
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	rows, err := h.svc.ListHistory(r.Context(), wsID, id, limit)
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "task not found")
+		return
+	}
+	if err != nil {
+		writeErrorDetail(w, http.StatusInternalServerError, "list history failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"history": rows})
+}
+
+// POST /api/v1/tasks/{id}/rollback
+type rollbackTaskRequest struct {
+	Revision  int    `json:"revision"`
+	SessionID string `json:"session_id"`
+	ActorKind string `json:"actor_kind"`
+	Note      string `json:"note"`
+}
+
+func (h *tasksHandler) handleRollback(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "id is required")
+		return
+	}
+	wsID := r.URL.Query().Get("workspace_id")
+	if wsID == "" {
+		writeError(w, http.StatusBadRequest, "workspace_id is required")
+		return
+	}
+	var body rollbackTaskRequest
+	if err := decodeJSON(r, &body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if body.Revision <= 0 {
+		writeError(w, http.StatusBadRequest, "revision is required")
+		return
+	}
+	actorKind := body.ActorKind
+	if actorKind == "" {
+		actorKind = "user"
+	}
+	t, err := h.svc.Rollback(r.Context(), wsID, id, tasks.RollbackOptions{
+		Revision:  body.Revision,
+		ActorKind: actorKind,
+		SessionID: body.SessionID,
+		Note:      body.Note,
+	})
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "task not found")
+		return
+	}
+	if err != nil {
+		writeErrorDetail(w, http.StatusBadRequest, "rollback failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, t)
+}
+
 // DELETE /api/v1/tasks/{id}?workspace_id=
 func (h *tasksHandler) handleDelete(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
@@ -481,7 +568,7 @@ func (h *tasksHandler) handleDelete(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "workspace_id is required")
 		return
 	}
-	if err := h.svc.Delete(r.Context(), wsID, id); err != nil {
+	if err := h.svc.Delete(r.Context(), wsID, id, tasks.MutationContext{ActorKind: "user"}); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "task not found")
 			return
@@ -546,7 +633,10 @@ func (h *tasksHandler) handleSetWorkContext(w http.ResponseWriter, r *http.Reque
 	apply("session", body.Session, &patch.Session)
 	apply("linear", body.Linear, &patch.Linear)
 	apply("mesh_thread", body.MeshThread, &patch.MeshThread)
-	t, err := h.svc.SetWorkContext(r.Context(), wsID, id, patch, clears, body.SessionID)
+	t, err := h.svc.SetWorkContext(r.Context(), wsID, id, patch, clears, body.SessionID, tasks.MutationContext{
+		ActorKind: "user",
+		SessionID: body.SessionID,
+	})
 	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "task not found")
 		return

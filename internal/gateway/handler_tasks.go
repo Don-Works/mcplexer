@@ -52,6 +52,7 @@ func (h *handler) dispatchTaskTool(
 		case "task__create", "task__list", "task__get",
 			"task__update", "task__assign", "task__delete",
 			"task__append_note", "task__claim",
+			"task__history", "task__rollback",
 			"task__compose", "task__decompose",
 			"task__set_work_context",
 			"task__recent_activity",
@@ -99,6 +100,12 @@ func (h *handler) dispatchTaskTool(
 		return resp, err, true
 	case "task__append_note":
 		resp, err := h.handleTaskAppendNote(ctx, raw)
+		return resp, err, true
+	case "task__history":
+		resp, err := h.handleTaskHistory(ctx, raw)
+		return resp, err, true
+	case "task__rollback":
+		resp, err := h.handleTaskRollback(ctx, raw)
 		return resp, err, true
 	case "task__set_work_context":
 		resp, err := h.handleTaskSetWorkContext(ctx, raw)
@@ -496,7 +503,8 @@ func (h *handler) handleTaskCreate(
 		// too — for now they share the "agent" tag; PLAN.md "Phase 2"
 		// notes the worker→actor_kind split is a follow-up once the
 		// handler can distinguish them via session metadata.
-		ActorKind: "agent",
+		ActorKind:     "agent",
+		WorkspacePath: h.routingClientRoot(ctx),
 	})
 	if err != nil {
 		return marshalErrorResult(fmt.Sprintf("Create failed: %v", err)), nil
@@ -1457,7 +1465,11 @@ func (h *handler) marshalTaskWithCoordination(ctx context.Context, t *store.Task
 // buildUpdatePatch translates a raw JSON object into an UpdatePatch,
 // honouring explicit null = clear vs key-absent = no-change.
 func (h *handler) buildUpdatePatch(ctx context.Context, args map[string]json.RawMessage) (tasks.UpdatePatch, *RPCError) {
-	patch := tasks.UpdatePatch{UpdatedBySessionID: h.sessions.sessionID()}
+	patch := tasks.UpdatePatch{
+		UpdatedBySessionID: h.sessions.sessionID(),
+		ActorKind:          "agent",
+		WorkspacePath:      h.routingClientRoot(ctx),
+	}
 	if v, ok := args["title"]; ok {
 		var s string
 		if err := json.Unmarshal(v, &s); err != nil {
@@ -1585,7 +1597,11 @@ func (h *handler) handleTaskAssign(
 	if rpc := h.requireWorkspaceWrite(ctx, wsID); rpc != nil {
 		return nil, rpc
 	}
-	patch := tasks.UpdatePatch{UpdatedBySessionID: h.sessions.sessionID()}
+	patch := tasks.UpdatePatch{
+		UpdatedBySessionID: h.sessions.sessionID(),
+		ActorKind:          "agent",
+		WorkspacePath:      h.routingClientRoot(ctx),
+	}
 	if v, ok := args["assignee"]; ok {
 		if string(v) == "null" {
 			patch.Clear = []string{"assignee"}
@@ -1637,7 +1653,11 @@ func (h *handler) handleTaskClaim(
 	}
 	status, _ := stringField(args, "status")
 	note, _ := stringField(args, "note")
-	t, err := h.tasksSvc.Claim(ctx, wsID, id, status, h.sessions.sessionID(), note)
+	t, err := h.tasksSvc.Claim(ctx, wsID, id, status, h.sessions.sessionID(), note, tasks.MutationContext{
+		ActorKind:     "agent",
+		SessionID:     h.sessions.sessionID(),
+		WorkspacePath: h.routingClientRoot(ctx),
+	})
 	if err != nil {
 		if errors.Is(err, tasks.ErrTaskAlreadyClaimed) {
 			return marshalErrorResult("Task already claimed by another session."), nil
@@ -1714,7 +1734,11 @@ func (h *handler) handleTaskDelete(
 	if rpc := h.requireWorkspaceWrite(ctx, wsID); rpc != nil {
 		return nil, rpc
 	}
-	if err := h.tasksSvc.Delete(ctx, wsID, id); err != nil {
+	if err := h.tasksSvc.Delete(ctx, wsID, id, tasks.MutationContext{
+		ActorKind:     "agent",
+		SessionID:     h.sessions.sessionID(),
+		WorkspacePath: h.routingClientRoot(ctx),
+	}); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			return marshalErrorResult("Task not found or already deleted."), nil
 		}
@@ -1751,7 +1775,11 @@ func (h *handler) handleTaskAppendNote(
 	if rpc := h.requireWorkspaceWrite(ctx, wsID); rpc != nil {
 		return nil, rpc
 	}
-	n, err := h.tasksSvc.AppendNote(ctx, wsID, args.ID, args.Body, h.sessions.sessionID(), store.TaskSourceAgent)
+	n, err := h.tasksSvc.AppendNote(ctx, wsID, args.ID, args.Body, h.sessions.sessionID(), store.TaskSourceAgent, tasks.MutationContext{
+		ActorKind:     "agent",
+		SessionID:     h.sessions.sessionID(),
+		WorkspacePath: h.routingClientRoot(ctx),
+	})
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			return marshalErrorResult("Task not found."), nil
@@ -1759,6 +1787,106 @@ func (h *handler) handleTaskAppendNote(
 		return marshalErrorResult(fmt.Sprintf("Append note failed: %v", err)), nil
 	}
 	return marshalJSONResult(n)
+}
+
+func (h *handler) handleTaskHistory(
+	ctx context.Context, raw json.RawMessage,
+) (json.RawMessage, *RPCError) {
+	args, err := unmarshalRawObject(raw)
+	if err != nil {
+		return nil, &RPCError{Code: CodeInvalidParams, Message: err.Error()}
+	}
+	id, _ := stringField(args, "id")
+	if id == "" {
+		return nil, &RPCError{Code: CodeInvalidParams, Message: "id is required"}
+	}
+	wsID := h.resolveWorkspace(ctx, args)
+	if wsID == "" {
+		return marshalErrorResult("No workspace bound to this session — open a terminal in a project directory, or pass workspace_id."), nil
+	}
+	limit := 100
+	if v, ok := args["limit"]; ok {
+		_ = json.Unmarshal(v, &limit)
+	}
+	full := false
+	if v, ok := args["full"]; ok {
+		_ = json.Unmarshal(v, &full)
+	}
+	rows, err := h.tasksSvc.ListHistory(ctx, wsID, id, limit)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return marshalErrorResult("Task not found."), nil
+		}
+		return marshalErrorResult(fmt.Sprintf("History failed: %v", err)), nil
+	}
+	if full {
+		return marshalJSONResult(map[string]any{"count": len(rows), "history": rows})
+	}
+	compactRows := make([]map[string]any, 0, len(rows))
+	for _, row := range rows {
+		changedFields := []string{}
+		if len(row.ChangedFieldsJSON) > 0 {
+			_ = json.Unmarshal(row.ChangedFieldsJSON, &changedFields)
+		}
+		compactRows = append(compactRows, map[string]any{
+			"id":               row.ID,
+			"task_id":          row.TaskID,
+			"revision":         row.Revision,
+			"action":           row.Action,
+			"actor_kind":       row.ActorKind,
+			"actor_session_id": row.ActorSessionID,
+			"actor_peer_id":    row.ActorPeerID,
+			"actor_user_id":    row.ActorUserID,
+			"workspace_path":   row.WorkspacePath,
+			"changed_fields":   changedFields,
+			"related_revision": row.RelatedRevision,
+			"note":             row.Note,
+			"created_at":       row.CreatedAt,
+		})
+	}
+	return marshalJSONResult(map[string]any{"count": len(compactRows), "history": compactRows})
+}
+
+func (h *handler) handleTaskRollback(
+	ctx context.Context, raw json.RawMessage,
+) (json.RawMessage, *RPCError) {
+	args, err := unmarshalRawObject(raw)
+	if err != nil {
+		return nil, &RPCError{Code: CodeInvalidParams, Message: err.Error()}
+	}
+	id, _ := stringField(args, "id")
+	if id == "" {
+		return nil, &RPCError{Code: CodeInvalidParams, Message: "id is required"}
+	}
+	var revision int
+	if v, ok := args["revision"]; ok {
+		_ = json.Unmarshal(v, &revision)
+	}
+	if revision <= 0 {
+		return nil, &RPCError{Code: CodeInvalidParams, Message: "revision is required"}
+	}
+	note, _ := stringField(args, "note")
+	wsID := h.resolveWorkspace(ctx, args)
+	if wsID == "" {
+		return marshalErrorResult("No workspace bound to this session — open a terminal in a project directory, or pass workspace_id."), nil
+	}
+	if rpc := h.requireWorkspaceWrite(ctx, wsID); rpc != nil {
+		return nil, rpc
+	}
+	t, err := h.tasksSvc.Rollback(ctx, wsID, id, tasks.RollbackOptions{
+		Revision:      revision,
+		ActorKind:     "agent",
+		SessionID:     h.sessions.sessionID(),
+		WorkspacePath: h.routingClientRoot(ctx),
+		Note:          note,
+	})
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return marshalErrorResult("Task not found."), nil
+		}
+		return marshalErrorResult(fmt.Sprintf("Rollback failed: %v", err)), nil
+	}
+	return h.marshalTaskWriteResponse(ctx, t, t.WorkspaceID, envelopeModeNone, pickResponseShape(args), nil, nil)
 }
 
 // ----------------------------------------------------------------------
@@ -1789,7 +1917,11 @@ func (h *handler) handleTaskSetWorkContext(
 		return nil, rpc
 	}
 	patch, clears := buildWorkContextPatch(args)
-	t, err := h.tasksSvc.SetWorkContext(ctx, wsID, id, patch, clears, h.sessions.sessionID())
+	t, err := h.tasksSvc.SetWorkContext(ctx, wsID, id, patch, clears, h.sessions.sessionID(), tasks.MutationContext{
+		ActorKind:     "agent",
+		SessionID:     h.sessions.sessionID(),
+		WorkspacePath: h.routingClientRoot(ctx),
+	})
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			return marshalErrorResult("Task not found."), nil
