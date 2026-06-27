@@ -1506,7 +1506,7 @@ func runServer(ctx context.Context, cfg *Config, db *sqlite.DB, cfgSvc *config.S
 
 	var socketLn net.Listener
 	if withSocket {
-		socketLn, err = listenUnixWithHandoff(ctx, cfg.SocketPath, listenHandoffConfig{})
+		socketLn, err = listenLocalIPCWithHandoff(ctx, cfg.SocketPath, listenHandoffConfig{})
 		if err != nil {
 			cancel()
 			_ = g.Wait()

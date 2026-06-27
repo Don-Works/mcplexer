@@ -80,6 +80,11 @@ tasks:
       - task: go-build
       - task: go-build-p2p
 
+  release-artifacts:
+    desc: Build installable GitHub Release archives for macOS, Linux, and Windows
+    cmds:
+      - bash scripts/build-release.sh
+
   install:
     desc: Build, install, run setup, harden data dir, and sync agent rules
     deps: [preflight, build-p2p]

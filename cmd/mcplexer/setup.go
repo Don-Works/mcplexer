@@ -335,6 +335,9 @@ func openBrowser(url string) {
 		cmd = "open"
 	case "linux":
 		cmd = "xdg-open"
+	case "windows":
+		exec.Command("rundll32", "url.dll,FileProtocolHandler", url).Start() //nolint:errcheck
+		return
 	default:
 		return
 	}

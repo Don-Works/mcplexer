@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 )
 
 // stableBinPath returns the stable binary path: ~/.mcplexer/bin/mcplexer
@@ -12,7 +13,11 @@ func stableBinPath() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("get home dir: %w", err)
 	}
-	return filepath.Join(home, ".mcplexer", "bin", "mcplexer"), nil
+	name := "mcplexer"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	return filepath.Join(home, ".mcplexer", "bin", name), nil
 }
 
 // installBinary copies srcPath to the stable binary location, creating

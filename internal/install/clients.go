@@ -90,7 +90,11 @@ func New() (*Manager, error) {
 		exe = "mcplexer"
 	}
 	// Prefer stable installed binary path if it exists.
-	stablePath := filepath.Join(home, ".mcplexer", "bin", "mcplexer")
+	stableName := "mcplexer"
+	if runtime.GOOS == "windows" {
+		stableName += ".exe"
+	}
+	stablePath := filepath.Join(home, ".mcplexer", "bin", stableName)
 	if _, err := os.Stat(stablePath); err == nil {
 		exe = stablePath
 	}
@@ -351,6 +355,9 @@ func DefaultSocketPath() string {
 	if v := os.Getenv("MCPLEXER_SOCKET_PATH"); v != "" {
 		return v
 	}
+	if runtime.GOOS == "windows" {
+		return `\\.\pipe\mcplexer`
+	}
 	if runtime.GOOS == "linux" {
 		if runtimeDir := os.Getenv("XDG_RUNTIME_DIR"); runtimeDir != "" {
 			return filepath.Join(runtimeDir, "mcplexer.sock")
@@ -393,6 +400,11 @@ func claudeDesktopPath(home string) string {
 		return filepath.Join(home, "Library", "Application Support", "Claude", "claude_desktop_config.json")
 	case "linux":
 		return filepath.Join(home, ".config", "Claude", "claude_desktop_config.json")
+	case "windows":
+		if appData := os.Getenv("APPDATA"); appData != "" {
+			return filepath.Join(appData, "Claude", "claude_desktop_config.json")
+		}
+		return filepath.Join(home, "AppData", "Roaming", "Claude", "claude_desktop_config.json")
 	default:
 		return ""
 	}

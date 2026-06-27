@@ -31,7 +31,43 @@ Your working directory determines which policies apply — tamper-proof in stdio
 
 ## Quick Start
 
-**Prerequisites:** Go 1.25+, Node 20+. macOS or Linux.
+### Install from a release
+
+```bash
+# macOS / Linux
+curl -fsSL https://raw.githubusercontent.com/Don-Works/mcplexer/main/scripts/install-release.sh | bash
+```
+
+```powershell
+# Windows PowerShell
+irm https://raw.githubusercontent.com/Don-Works/mcplexer/main/scripts/install-release.ps1 | iex
+```
+
+The installer downloads the latest GitHub Release archive for your OS/arch,
+verifies `checksums.txt`, installs the binary into `~/.mcplexer/bin`, and runs
+`mcplexer setup`.
+
+Release archives are available for:
+
+| OS | Architectures | Format |
+| --- | --- | --- |
+| macOS | amd64, arm64 | `.tar.gz` |
+| Linux | amd64, arm64 | `.tar.gz` |
+| Windows | amd64, arm64 | `.zip` |
+
+Install a specific version:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Don-Works/mcplexer/main/scripts/install-release.sh | bash -s -- --version v0.1.3
+```
+
+```powershell
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/Don-Works/mcplexer/main/scripts/install-release.ps1))) -Version v0.1.3
+```
+
+### Build from source
+
+**Prerequisites:** Go 1.25+, Node 20.19+ or Node 22.12+.
 
 ```bash
 git clone https://github.com/don-works/mcplexer.git
@@ -39,7 +75,7 @@ cd mcplexer
 task install
 ```
 
-`task install` builds the daemon, installs the launchd agent (`com.mcplexer.daemon`, with `KeepAlive=true` for crash-restart), configures any detected MCP clients (Claude Desktop, Claude Code, Cursor, Windsurf, Codex, OpenCode, Gemini CLI), and opens the dashboard at <http://localhost:3333>.
+`task install` builds the daemon, installs the launchd agent on macOS (`com.mcplexer.daemon`, with `KeepAlive=true` for crash-restart), configures any detected MCP clients (Claude Desktop, Claude Code, Cursor, Windsurf, Codex, OpenCode, Gemini CLI), and opens the dashboard at <http://localhost:3333>.
 
 **Install the dashboard as a desktop app:** in Chrome / Edge / Arc, click the install icon in the address bar (or "Install MCPlexer…" from the menu). The PWA runs in a standalone window with its own Dock icon, and fires OS notifications for approvals and high-priority mesh signals while open.
 
@@ -127,10 +163,11 @@ YAML-sourced items are auto-pruned when removed from the config file. Items crea
 
 ```
 mcplexer serve          Run MCP server (default: stdio mode)
-mcplexer connect        Bridge stdio to daemon's Unix socket
+mcplexer connect        Bridge stdio to the daemon's local IPC endpoint
 mcplexer setup          One-command Claude Desktop / Claude Code integration
 mcplexer init           Initialize database and default config
 mcplexer status         Show workspaces, servers, auth scopes, sessions
+mcplexer version        Show build version, or JSON with --json
 mcplexer dry-run        Test routing rules without execution
 mcplexer secret         Manage encrypted secrets (put/get/list/delete)
 mcplexer daemon         Background process management (start/stop/status/logs/uninstall)
@@ -186,6 +223,7 @@ cd web && npm run dev # web UI dev server with hot reload
 # Build / test / verify
 task build            # slim Go binary + web UI
 task build-p2p        # p2p-enabled Go binary + web UI
+task release-artifacts # macOS/Linux/Windows release archives + checksums
 task test             # run Go tests
 task lint             # go vet + golangci-lint
 ```
