@@ -23,11 +23,12 @@ type Config struct {
 	// (default for stdio mode, dev runs, tests), slog writes to stderr.
 	// Daemon mode populates this so the on-disk log rotates instead of
 	// growing unboundedly.
-	LogPath      string
-	SocketPath   string // unix socket path for multi-client mode
-	ExternalURL  string // external URL for OAuth callbacks
-	PublicURL    string // canonical browser URL for HTTPS/PWA installs
-	APITokenPath string // path to HTTP API auth token (~/.mcplexer/api-key)
+	LogPath        string
+	SocketPath     string // unix socket path for multi-client mode
+	ExternalURL    string // external URL for OAuth callbacks
+	PublicURL      string // canonical browser URL for HTTPS/PWA installs
+	WebPushSubject string // VAPID subject used for browser Web Push
+	APITokenPath   string // path to HTTP API auth token (~/.mcplexer/api-key)
 	// ServerProfile reshapes the daemon for appliance-style deployments.
 	// "full" preserves the local workstation UI. "skills", "tasks", and
 	// "skills+tasks" keep the shared server surfaces prominent.
@@ -64,19 +65,20 @@ func loadConfig() (*Config, error) {
 		return nil, err
 	}
 	cfg := &Config{
-		Mode:          envOr("MCPLEXER_MODE", "stdio"),
-		HTTPAddr:      envOr("MCPLEXER_HTTP_ADDR", "127.0.0.1:3333"),
-		DBDriver:      envOr("MCPLEXER_DB_DRIVER", "sqlite"),
-		DBDSN:         envOr("MCPLEXER_DB_DSN", defaultDataPath("mcplexer.db")),
-		AgeKeyPath:    envOr("MCPLEXER_AGE_KEY", ""),
-		ConfigFile:    envOr("MCPLEXER_CONFIG", defaultDataPath("mcplexer.yaml")),
-		LogLevel:      parseLogLevel(envOr("MCPLEXER_LOG_LEVEL", "info")),
-		LogPath:       envOr("MCPLEXER_LOG_PATH", ""),
-		SocketPath:    envOr("MCPLEXER_SOCKET_PATH", ""),
-		ExternalURL:   envOr("MCPLEXER_EXTERNAL_URL", ""),
-		PublicURL:     envOr("MCPLEXER_PUBLIC_URL", envOr("MCPLEXER_EXTERNAL_URL", "")),
-		APITokenPath:  envOr("MCPLEXER_API_TOKEN_PATH", defaultDataPath("api-key")),
-		ServerProfile: profile,
+		Mode:           envOr("MCPLEXER_MODE", "stdio"),
+		HTTPAddr:       envOr("MCPLEXER_HTTP_ADDR", "127.0.0.1:3333"),
+		DBDriver:       envOr("MCPLEXER_DB_DRIVER", "sqlite"),
+		DBDSN:          envOr("MCPLEXER_DB_DSN", defaultDataPath("mcplexer.db")),
+		AgeKeyPath:     envOr("MCPLEXER_AGE_KEY", ""),
+		ConfigFile:     envOr("MCPLEXER_CONFIG", defaultDataPath("mcplexer.yaml")),
+		LogLevel:       parseLogLevel(envOr("MCPLEXER_LOG_LEVEL", "info")),
+		LogPath:        envOr("MCPLEXER_LOG_PATH", ""),
+		SocketPath:     envOr("MCPLEXER_SOCKET_PATH", ""),
+		ExternalURL:    envOr("MCPLEXER_EXTERNAL_URL", ""),
+		PublicURL:      envOr("MCPLEXER_PUBLIC_URL", envOr("MCPLEXER_EXTERNAL_URL", "")),
+		WebPushSubject: envOr("MCPLEXER_WEB_PUSH_SUBJECT", ""),
+		APITokenPath:   envOr("MCPLEXER_API_TOKEN_PATH", defaultDataPath("api-key")),
+		ServerProfile:  profile,
 
 		TrustedHosts: mergeTrustedHosts(
 			parseTrustedHosts(envOr("MCPLEXER_TRUSTED_HOSTS", "")),

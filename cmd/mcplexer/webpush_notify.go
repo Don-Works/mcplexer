@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 	"time"
@@ -17,16 +18,17 @@ import (
 )
 
 type webPushDispatcher struct {
-	store notify.PushStore
+	store      notify.PushStore
+	subscriber string
 }
 
 var webPushTopicUnsafe = regexp.MustCompile(`[^A-Za-z0-9_-]+`)
 
-func newWebPushDispatcher(store notify.PushStore) *webPushDispatcher {
+func newWebPushDispatcher(store notify.PushStore, subscriber string) *webPushDispatcher {
 	if store == nil {
 		return nil
 	}
-	return &webPushDispatcher{store: store}
+	return &webPushDispatcher{store: store, subscriber: normalizeWebPushSubscriber(subscriber)}
 }
 
 func (d *webPushDispatcher) Dispatch(ctx context.Context, evt notify.Event) {
@@ -78,7 +80,7 @@ func (d *webPushDispatcher) sendOne(
 			},
 		},
 		&webpush.Options{
-			Subscriber:      "mailto:notifications@mcplexer.local",
+			Subscriber:      d.subscriber,
 			TTL:             webPushTTL(evt),
 			Topic:           webPushTopic(evt),
 			Urgency:         webPushUrgency(evt),
@@ -105,7 +107,61 @@ func (d *webPushDispatcher) sendOne(
 		slog.Info("web push: disabled expired subscription", "endpoint", endpointHost(sub.Endpoint), "status", resp.StatusCode)
 		return
 	}
-	slog.Warn("web push: send rejected", "endpoint", endpointHost(sub.Endpoint), "status", resp.StatusCode)
+	slog.Warn("web push: send rejected", "endpoint", endpointHost(sub.Endpoint), "status", resp.StatusCode, "error", msg)
+}
+
+func webPushSubscriber(explicit, publicURL string) string {
+	if sub, ok := normalizeWebPushSubscriberCandidate(explicit); ok {
+		return sub
+	}
+	if sub, ok := normalizeWebPushSubscriberCandidate(publicURL); ok {
+		return sub
+	}
+	return defaultWebPushSubscriber
+}
+
+const defaultWebPushSubscriber = "https://github.com/Don-Works/mcplexer"
+
+func normalizeWebPushSubscriber(raw string) string {
+	if sub, ok := normalizeWebPushSubscriberCandidate(raw); ok {
+		return sub
+	}
+	return defaultWebPushSubscriber
+}
+
+func normalizeWebPushSubscriberCandidate(raw string) (string, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", false
+	}
+	if strings.HasPrefix(raw, "mailto:") || strings.HasPrefix(raw, "https://") {
+		if validWebPushSubscriber(raw) {
+			return raw, true
+		}
+		return "", false
+	}
+	if !strings.Contains(raw, "://") {
+		candidate := "https://" + raw
+		if validWebPushSubscriber(candidate) {
+			return candidate, true
+		}
+	}
+	return "", false
+}
+
+func validWebPushSubscriber(raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
+	switch u.Scheme {
+	case "mailto":
+		return strings.TrimSpace(u.Opaque) != "" || strings.TrimSpace(u.Path) != ""
+	case "https":
+		return strings.TrimSpace(u.Hostname()) != ""
+	default:
+		return false
+	}
 }
 
 func webPushEligible(evt notify.Event) bool {
