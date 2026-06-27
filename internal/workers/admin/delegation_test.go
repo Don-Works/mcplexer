@@ -319,6 +319,54 @@ func TestServiceDelegationDefaultsToOneHourWallClock(t *testing.T) {
 	}
 }
 
+func TestServiceDelegationMissingModelSelectionGivesSetupGuidance(t *testing.T) {
+	svc, _, wsID, _ := newTestService(t)
+	ctx := context.Background()
+
+	_, err := svc.Delegate(ctx, admin.DelegationInput{
+		WorkspaceID: wsID,
+		Objective:   "Summarise recent repository changes.",
+	})
+	if err == nil {
+		t.Fatal("expected missing delegation model error")
+	}
+	for _, want := range []string{
+		"delegation model required",
+		"model_profile_id",
+		"model_provider and model_id",
+		`model_selection_mode:"capacity"`,
+		"mcpx__list_delegation_model_capacity",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error %q does not contain %q", err, want)
+		}
+	}
+}
+
+func TestServiceDelegationCapacityModeWithoutRegisteredModelsGivesSetupGuidance(t *testing.T) {
+	svc, _, wsID, _ := newTestService(t)
+	ctx := context.Background()
+
+	_, err := svc.Delegate(ctx, admin.DelegationInput{
+		WorkspaceID:        wsID,
+		Objective:          "Pick the best registered coding model.",
+		ModelSelectionMode: "capacity",
+	})
+	if err == nil {
+		t.Fatal("expected no registered capacity models error")
+	}
+	for _, want := range []string{
+		"no registered delegation model candidates",
+		"Workers > Model Profiles",
+		"model_provider and model_id",
+		"mcpx__list_delegation_model_capacity",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error %q does not contain %q", err, want)
+		}
+	}
+}
+
 func TestServiceDelegationParallelCreateFailureRollsBack(t *testing.T) {
 	db, err := sqlite.New(context.Background(), t.TempDir()+"/delegation-rollback.db")
 	if err != nil {

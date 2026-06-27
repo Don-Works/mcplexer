@@ -85,8 +85,21 @@ func (s *Service) resolveDelegationModelCandidates(
 		if err != nil {
 			return nil, err
 		}
+		if len(raw) == 0 {
+			return nil, errors.New("no registered delegation model candidates; " +
+				"create a worker model profile in Workers > Model Profiles, " +
+				"create an enabled worker with a model provider/model id, " +
+				"or pass model_provider and model_id explicitly. " +
+				"use mcpx__list_delegation_model_capacity to verify candidates before using model_selection_mode:\"capacity\"")
+		}
 	}
 	if len(raw) == 0 {
+		if delegationModelSelectionMissing(in) {
+			return nil, errors.New("delegation model required; " +
+				"pass model_profile_id, pass model_provider and model_id explicitly, " +
+				"or register a worker model profile and set model_selection_mode:\"capacity\". " +
+				"use mcpx__list_delegation_model_capacity to see whether this workspace has selectable models")
+		}
 		raw = []DelegationModelCandidate{{
 			ModelProfileID:   in.ModelProfileID,
 			ModelProvider:    in.ModelProvider,
@@ -149,6 +162,17 @@ func (s *Service) resolveDelegationModelCandidates(
 		resolved = []delegationResolvedModelCandidate{resolved[idx]}
 	}
 	return resolved, nil
+}
+
+func delegationModelSelectionMissing(in *DelegationInput) bool {
+	if in == nil {
+		return true
+	}
+	return strings.TrimSpace(in.ModelProfileID) == "" &&
+		strings.TrimSpace(in.ModelProvider) == "" &&
+		strings.TrimSpace(in.ModelID) == "" &&
+		strings.TrimSpace(in.ModelEndpointURL) == "" &&
+		strings.TrimSpace(in.SecretScopeID) == ""
 }
 
 func (s *Service) registeredDelegationModelCandidates(

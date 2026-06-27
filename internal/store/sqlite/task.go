@@ -892,39 +892,6 @@ outer:
 	return out
 }
 
-func (d *DB) filterTasksByTerminality(ctx context.Context, in []store.Task, wantTerminal bool) []store.Task {
-	if len(in) == 0 {
-		return in
-	}
-	// Build a per-workspace terminal-status set lazily. Explicit vocabulary
-	// rows win over fallback status-name classification.
-	wsTerminals := map[string]map[string]bool{}
-	out := in[:0]
-	for _, t := range in {
-		set, ok := wsTerminals[t.WorkspaceID]
-		if !ok {
-			set = map[string]bool{}
-			for status, kind := range taskstatus.DefaultKinds {
-				if taskstatus.IsTerminalKind(kind) {
-					set[status] = true
-				}
-			}
-			vocab, err := d.ListTaskStatusVocab(ctx, t.WorkspaceID)
-			if err == nil {
-				for _, v := range vocab {
-					set[v.StatusText] = v.IsTerminal || taskstatus.IsTerminalKind(v.Kind)
-				}
-			}
-			wsTerminals[t.WorkspaceID] = set
-		}
-		isTerm := set[t.Status] || set[taskstatus.Normalize(t.Status)] || t.ClosedAt != nil
-		if isTerm == wantTerminal {
-			out = append(out, t)
-		}
-	}
-	return out
-}
-
 func scanTasks(rows *sql.Rows) ([]store.Task, error) {
 	var out []store.Task
 	for rows.Next() {
