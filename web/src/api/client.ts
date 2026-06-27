@@ -694,6 +694,7 @@ export interface SystemInfo {
   addons_dir?: string
   p2p_enabled: boolean
   server_profile?: string
+  trusted_hosts?: string[]
   capabilities?: Record<string, boolean>
 }
 

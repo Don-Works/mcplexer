@@ -224,6 +224,7 @@ func cmdServe(args []string) error {
 		AddonsDir:     filepath.Join(dataDir, "addons"),
 		P2PEnabled:    cfg.P2PEnabled,
 		ServerProfile: cfg.ServerProfile,
+		TrustedHosts:  cfg.TrustedHosts,
 		Capabilities:  serverCapabilities(cfg.ServerProfile),
 	})
 

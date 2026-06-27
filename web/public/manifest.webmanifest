@@ -1,9 +1,9 @@
 {
   "name": "MCPlexer",
   "short_name": "MCPlexer",
-  "description": "MCP Gateway — manage MCP tool servers, routes, and credentials.",
+  "description": "MCP Gateway: approvals, human tasks, routes, and credentials.",
   "id": "/?source=pwa",
-  "start_url": "/?source=pwa",
+  "start_url": "/app?source=pwa",
   "scope": "/",
   "display": "standalone",
   "display_override": ["window-controls-overlay", "standalone"],
@@ -45,19 +45,19 @@
   ],
   "shortcuts": [
     {
+      "name": "Human inbox",
+      "url": "/app",
+      "description": "Approvals and human tasks"
+    },
+    {
       "name": "Approvals",
       "url": "/approvals",
       "description": "Pending tool approvals"
     },
     {
-      "name": "Mesh",
-      "url": "/mesh",
-      "description": "Agent mesh"
-    },
-    {
-      "name": "Servers",
-      "url": "/config?tab=servers",
-      "description": "Configure MCP servers"
+      "name": "Human tasks",
+      "url": "/tasks/all?human=1",
+      "description": "Tasks assigned to human users"
     }
   ]
 }

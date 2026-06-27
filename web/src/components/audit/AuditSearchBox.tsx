@@ -13,8 +13,8 @@ const MODE_LABEL: Record<AuditSearchMode, string> = {
 }
 
 function bestMode(caps?: AuditCapabilities): AuditSearchMode {
-  if (caps?.search.vector) return 'vector'
-  if (caps?.search.tfidf) return 'tfidf'
+  if (caps?.search?.vector) return 'vector'
+  if (caps?.search?.tfidf) return 'tfidf'
   return 'fts'
 }
 

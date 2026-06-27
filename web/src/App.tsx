@@ -27,6 +27,7 @@ const DryRunPage = lazy(() => import('@/pages/DryRunPage').then(m => ({ default:
 const CreateMCPPage = lazy(() => import('@/pages/CreateMCP').then(m => ({ default: m.CreateMCPPage })))
 const ConnectionsPage = lazy(() => import('@/pages/ConnectionsPage').then(m => ({ default: m.ConnectionsPage })))
 const ApprovalsPage = lazy(() => import('@/pages/ApprovalsPage').then(m => ({ default: m.ApprovalsPage })))
+const MobileAppPage = lazy(() => import('@/pages/MobileAppPage').then(m => ({ default: m.MobileAppPage })))
 const SettingsPage = lazy(() => import('@/pages/SettingsPage').then(m => ({ default: m.SettingsPage })))
 const MeshPage = lazy(() => import('@/pages/MeshPage').then(m => ({ default: m.MeshPage })))
 const PairingPage = lazy(() => import('@/pages/Pairing').then(m => ({ default: m.PairingPage })))
@@ -124,6 +125,7 @@ function App() {
             <Route path="/setup" element={<QuickSetupPage />} />
             <Route path="/connections" element={<RedirectWithSearch to="/workspaces" />} />
             <Route path="/audit" element={<AuditPage />} />
+            <Route path="/app" element={<MobileAppPage />} />
             <Route path="/approvals" element={<ApprovalsPage />} />
             <Route path="/mesh" element={<MeshPage />} />
             <Route path="/skills" element={<SkillRegistryPage />} />

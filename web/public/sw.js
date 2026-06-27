@@ -18,9 +18,10 @@
 //   v5 — second sweep for stragglers.
 //   v7 — template-based version from the build pipeline.
 //   v8 — evict v7 caches that blanked the dashboard on localhost.
+//   v9 — mobile PWA start_url shell + push notification display hook.
 // activate() prunes any cache name that isn't this one.
-const CACHE_NAME = 'mcplexer-shell-v8';
-const SHELL_URLS = ['/', '/icon.svg', '/icon-192.png', '/manifest.webmanifest'];
+const CACHE_NAME = 'mcplexer-shell-v9';
+const SHELL_URLS = ['/', '/app?source=pwa', '/icon.svg', '/icon-192.png', '/manifest.webmanifest'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil((async () => {
@@ -87,6 +88,33 @@ self.addEventListener('fetch', (event) => {
   // Non-navigation GETs (JS, CSS, icons, fonts): pass through unmodified.
   // Don't call respondWith — the browser uses its normal network + HTTP
   // cache path, which respects the Cache-Control headers the Go server sets.
+});
+
+self.addEventListener('push', (event) => {
+  event.waitUntil((async () => {
+    let payload = {};
+    try {
+      payload = event.data ? event.data.json() : {};
+    } catch {
+      payload = {
+        title: 'MCPlexer',
+        body: event.data ? event.data.text() : 'New notification',
+      };
+    }
+
+    const title = payload.title || 'MCPlexer';
+    const options = {
+      body: payload.body || payload.summary || 'New approval or task update',
+      tag: payload.tag || payload.id || 'mcplexer',
+      icon: payload.icon || '/icon-192.png',
+      badge: payload.badge || '/icon-192.png',
+      data: {
+        url: payload.url || payload.path || '/app',
+      },
+    };
+
+    await self.registration.showNotification(title, options);
+  })());
 });
 
 self.addEventListener('notificationclick', (event) => {
