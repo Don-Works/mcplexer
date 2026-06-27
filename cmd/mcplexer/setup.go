@@ -106,6 +106,19 @@ func cmdSetup() error {
 			fmt.Println("Launchd agent installed. MCPlexer will start automatically on boot.")
 		}
 	}
+	if runtime.GOOS == "linux" && systemdUserAvailable() && !systemdUserInstalled() {
+		fmt.Print("\nInstall as systemd user service (survives logouts/reboots when user services are enabled)? [Y/n] ")
+		answer, _ := reader.ReadString('\n')
+		answer = strings.TrimSpace(strings.ToLower(answer))
+		if answer == "" || answer == "y" || answer == "yes" {
+			daemonStop() //nolint:errcheck
+
+			if err := installSystemdUser(exe, "127.0.0.1:3333", install.DefaultSocketPath()); err != nil {
+				return fmt.Errorf("install systemd user service: %w", err)
+			}
+			fmt.Println("Systemd user service installed. MCPlexer will start automatically with your user session.")
+		}
+	}
 
 	// 4.5 Offer Shell Guard hook install for Claude Code (cooperative
 	// mode — adds the PreToolUse curl bridge to ~/.claude/settings.json
@@ -281,6 +294,9 @@ func setupHTTPBaseCandidates() []string {
 	if runtime.GOOS == "darwin" {
 		add(readLaunchdAddr())
 	}
+	if runtime.GOOS == "linux" {
+		add(readSystemdUserAddr())
+	}
 	add("127.0.0.1:3333")
 	add("127.0.0.1:13333")
 	return out
@@ -313,7 +329,11 @@ func readLaunchdAddr() string {
 	if err != nil {
 		return ""
 	}
-	for _, line := range strings.Split(string(b), "\n") {
+	return parseAddrArg(string(b))
+}
+
+func parseAddrArg(s string) string {
+	for _, line := range strings.Split(s, "\n") {
 		if _, after, ok := strings.Cut(line, "--addr="); ok {
 			after = strings.TrimSpace(after)
 			if strings.HasPrefix(after, "<") {

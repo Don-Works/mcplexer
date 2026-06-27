@@ -47,6 +47,11 @@ The installer downloads the latest GitHub Release archive for your OS/arch,
 verifies `checksums.txt`, installs the binary into `~/.mcplexer/bin`, and runs
 `mcplexer setup`.
 
+`mcplexer setup` configures detected MCP clients and starts the local daemon.
+On macOS it can install a `launchd` agent. On Linux with `systemctl --user` it
+can install `~/.config/systemd/user/mcplexer.service`. On other hosts it falls
+back to the built-in background daemon.
+
 Release archives are available for:
 
 | OS | Architectures | Format |
@@ -75,7 +80,7 @@ cd mcplexer
 task install
 ```
 
-`task install` builds the daemon, installs the launchd agent on macOS (`com.mcplexer.daemon`, with `KeepAlive=true` for crash-restart), configures any detected MCP clients (Claude Desktop, Claude Code, Cursor, Windsurf, Codex, OpenCode, Gemini CLI), and opens the dashboard at <http://localhost:3333>.
+`task install` builds the daemon, installs the service manager integration where available (`launchd` on macOS, systemd user service on Linux), configures any detected MCP clients (Claude Desktop, Claude Code, Cursor, Windsurf, Codex, OpenCode, Gemini CLI), and opens the dashboard at <http://localhost:3333>.
 
 **Install the dashboard as a desktop app:** in Chrome / Edge / Arc, click the install icon in the address bar (or "Install MCPlexer…" from the menu). The PWA runs in a standalone window with its own Dock icon, and fires OS notifications for approvals and high-priority mesh signals while open.
 
@@ -92,7 +97,7 @@ mcplexer setup
 task upgrade
 ```
 
-In-place atomic swap of the daemon binary, then `launchctl kickstart` to restart the agent. ~1-2s downtime. Reserve `task install` for first-time installs.
+In-place atomic swap of the daemon binary, then restart through the installed service manager (`launchd` or systemd user service) or the built-in daemon fallback. ~1-2s downtime. Reserve `task install` for first-time installs.
 
 ### Manual setup
 

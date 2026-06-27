@@ -55,6 +55,37 @@ func TestReadLaunchdAddr(t *testing.T) {
 	}
 }
 
+func TestParseAddrArg(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			name: "plist string",
+			in:   "<string>--addr=0.0.0.0:13333</string>",
+			want: "0.0.0.0:13333",
+		},
+		{
+			name: "systemd exec start",
+			in:   "ExecStart=/home/me/.mcplexer/bin/mcplexer serve --mode=http --addr=127.0.0.1:4444 --socket=/tmp/mcplexer.sock",
+			want: "127.0.0.1:4444",
+		},
+		{
+			name: "absent",
+			in:   "ExecStart=/home/me/.mcplexer/bin/mcplexer serve",
+			want: "",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := parseAddrArg(tt.in); got != tt.want {
+				t.Fatalf("parseAddrArg()=%q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestSetupHTTPBaseURLUsesRespondingEnvAddr(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/healthz" {
