@@ -687,6 +687,7 @@ export interface SystemInfo {
   mode: string
   version: string
   http_addr?: string
+  public_url?: string
   socket_path?: string
   data_dir?: string
   config_file?: string

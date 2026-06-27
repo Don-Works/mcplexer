@@ -23,7 +23,7 @@ func TestSPAFallback_CacheControl(t *testing.T) {
 		"assets/app.js":        &fstest.MapFile{Data: []byte("// app")},
 		"icon.svg":             &fstest.MapFile{Data: []byte("<svg/>")},
 	}
-	h := spaFallback(fsys, http.FileServerFS(fsys), "")
+	h := spaFallback(fsys, http.FileServerFS(fsys), "", "")
 
 	cases := []struct {
 		path             string
@@ -56,7 +56,7 @@ func TestSPAFallback_MissingAssetsReturn404(t *testing.T) {
 	fsys := fstest.MapFS{
 		"index.html": &fstest.MapFile{Data: []byte("<html>")},
 	}
-	h := spaFallback(fsys, http.FileServerFS(fsys), "")
+	h := spaFallback(fsys, http.FileServerFS(fsys), "", "")
 
 	cases := []string{"/assets/missing.js", "/sw.js", "/app.css"}
 	for _, path := range cases {
@@ -84,7 +84,40 @@ func TestSPAFallback_SWVersionBumped(t *testing.T) {
 	if strings.Contains(string(sw), "mcplexer-shell-v8'") || strings.Contains(string(sw), `mcplexer-shell-v8"`) {
 		t.Error("sw.js CACHE_NAME still uses old v8")
 	}
-	if !strings.Contains(string(sw), "mcplexer-shell-v10") {
-		t.Error("sw.js CACHE_NAME should use v10")
+	if !strings.Contains(string(sw), "mcplexer-shell-v11") {
+		t.Error("sw.js CACHE_NAME should use v11")
+	}
+}
+
+func TestSPAFallback_RedirectsNonLoopbackHTTPToPublicURL(t *testing.T) {
+	fsys := fstest.MapFS{
+		"index.html": &fstest.MapFile{Data: []byte("<html>")},
+	}
+	h := spaFallback(fsys, http.FileServerFS(fsys), "", "https://dev-laptop-a.example.ts.net")
+
+	req := httptest.NewRequest(http.MethodGet, "http://dev-laptop-a:13333/app?source=pwa", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusTemporaryRedirect {
+		t.Fatalf("status=%d want %d", rec.Code, http.StatusTemporaryRedirect)
+	}
+	if got, want := rec.Header().Get("Location"), "https://dev-laptop-a.example.ts.net/app?source=pwa"; got != want {
+		t.Fatalf("Location=%q want %q", got, want)
+	}
+}
+
+func TestSPAFallback_DoesNotRedirectLoopbackHTTP(t *testing.T) {
+	fsys := fstest.MapFS{
+		"index.html": &fstest.MapFile{Data: []byte("<html>")},
+	}
+	h := spaFallback(fsys, http.FileServerFS(fsys), "", "https://dev-laptop-a.example.ts.net")
+
+	req := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:13333/app", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d want 200", rec.Code)
 	}
 }

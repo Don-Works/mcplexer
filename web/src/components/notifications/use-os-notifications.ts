@@ -1,5 +1,3 @@
-import { useEffect } from 'react'
-
 // useOsNotifications wires browser-native OS notifications for approval +
 // mesh events. PWA replacement for the OS notifications the old Electron
 // shell fired via electron's Notification module.
@@ -12,33 +10,11 @@ import { useEffect } from 'react'
 // fetch — the "click-Dashboard-and-it-hangs" bug. Instead, this module
 // exposes two `fire*` functions that the canonical SSE hooks call.
 //
-// Mounted once at App root. Side-effect only.
+// Mounted once at App root. Kept as a no-op compatibility hook so App owns the
+// notification bridge lifecycle, but permission prompts now happen only from an
+// explicit user gesture in the PWA page.
 
-// granted is a module-level flag so the fire functions (called from
-// other hooks) can cheap-check it without re-querying Notification.permission
-// on every event.
-let granted = false
-
-export function useOsNotifications() {
-  useEffect(() => {
-    if (typeof window === 'undefined') return
-    if (!('Notification' in window)) return
-
-    granted = Notification.permission === 'granted'
-    if (Notification.permission === 'default') {
-      const t = setTimeout(() => {
-        Notification.requestPermission()
-          .then((p) => {
-            granted = p === 'granted'
-          })
-          .catch(() => {
-            // browsers throw if called outside a user gesture in some configs
-          })
-      }, 2_000)
-      return () => clearTimeout(t)
-    }
-  }, [])
-}
+export function useOsNotifications() {}
 
 interface ApprovalLike {
   id: string
@@ -49,7 +25,7 @@ interface ApprovalLike {
 // approval. Called by useApprovalStream when an event of type "pending"
 // arrives. Silently no-ops if permission isn't granted.
 export function fireApprovalPending(approval: ApprovalLike): void {
-  if (!granted) return
+  if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return
   try {
     const n = new Notification('MCPlexer: Approval Required', {
       body: approval.tool_name,
@@ -107,7 +83,7 @@ function destinationForSignal(evt: SignalLike): string {
 // banner earns its place only for high/critical; normal/low live in the
 // in-app Signal tray.
 export function fireSignalHighOrCritical(evt: SignalLike): void {
-  if (!granted) return
+  if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return
   if (evt.priority !== 'critical' && evt.priority !== 'high') return
   try {
     const url = destinationForSignal(evt)

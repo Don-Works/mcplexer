@@ -24,6 +24,7 @@ type SystemInfo struct {
 	Mode       string `json:"mode"` // "http" / "stdio" / "http+socket"
 	Version    string `json:"version"`
 	HTTPAddr   string `json:"http_addr,omitempty"`
+	PublicURL  string `json:"public_url,omitempty"`
 	SocketPath string `json:"socket_path,omitempty"`
 	DataDir    string `json:"data_dir,omitempty"`
 	ConfigFile string `json:"config_file,omitempty"`

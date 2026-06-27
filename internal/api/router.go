@@ -4,7 +4,10 @@ import (
 	"context"
 	"io/fs"
 	"mime"
+	"net"
 	"net/http"
+	"net/url"
+	"path"
 	"strings"
 	"time"
 
@@ -55,6 +58,7 @@ func init() {
 // RouterDeps holds the dependencies needed by the HTTP API router.
 type RouterDeps struct {
 	APIToken              string // required; token for HTTP API authentication
+	PublicURL             string // canonical browser URL for HTTPS/PWA installs
 	Store                 store.Store
 	ConfigSvc             *config.Service
 	SettingsSvc           *config.SettingsService // optional; enables settings API
@@ -1059,7 +1063,7 @@ func NewRouter(deps RouterDeps) http.Handler {
 		_, err = fs.Stat(distFS, "index.html")
 	}
 	if err == nil {
-		spaHandler := spaFallback(distFS, http.FileServerFS(distFS), deps.APIToken)
+		spaHandler := spaFallback(distFS, http.FileServerFS(distFS), deps.APIToken, deps.PublicURL)
 		mux.Handle("/", spaHandler)
 	}
 
@@ -1099,7 +1103,8 @@ func NewRouter(deps RouterDeps) http.Handler {
 //     `index-<hash>.js`), so they're safe to cache long. We set
 //     `public, max-age=31536000, immutable` to take them entirely out
 //     of the revalidation path.
-func spaFallback(staticFS fs.FS, fileServer http.Handler, apiToken string) http.Handler {
+func spaFallback(staticFS fs.FS, fileServer http.Handler, apiToken string, publicURL string) http.Handler {
+	publicBase := parsePublicBrowserURL(publicURL)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Clean the path and check if the file exists in the embedded FS.
 		p := strings.TrimPrefix(r.URL.Path, "/")
@@ -1108,6 +1113,10 @@ func spaFallback(staticFS fs.FS, fileServer http.Handler, apiToken string) http.
 		}
 		if _, err := fs.Stat(staticFS, p); err == nil {
 			if isHTMLPath(p) {
+				if redirectURL := canonicalBrowserRedirect(r, publicBase); redirectURL != "" {
+					http.Redirect(w, r, redirectURL, http.StatusTemporaryRedirect)
+					return
+				}
 				w.Header().Set("Cache-Control", "no-store, must-revalidate")
 				if apiToken != "" {
 					setSessionCookie(w, apiToken)
@@ -1147,6 +1156,10 @@ func spaFallback(staticFS fs.FS, fileServer http.Handler, apiToken string) http.
 			return
 		}
 		// Other unmatched paths are SPA client-side routes — serve index.html.
+		if redirectURL := canonicalBrowserRedirect(r, publicBase); redirectURL != "" {
+			http.Redirect(w, r, redirectURL, http.StatusTemporaryRedirect)
+			return
+		}
 		w.Header().Set("Cache-Control", "no-store, must-revalidate")
 		if apiToken != "" {
 			setSessionCookie(w, apiToken)
@@ -1161,4 +1174,76 @@ func isHTMLPath(p string) bool {
 		return true
 	}
 	return strings.HasSuffix(p, ".html")
+}
+
+func parsePublicBrowserURL(raw string) *url.URL {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	if !strings.Contains(raw, "://") {
+		raw = "https://" + raw
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return nil
+	}
+	if !strings.EqualFold(u.Scheme, "https") {
+		return nil
+	}
+	u.Path = strings.TrimRight(u.Path, "/")
+	u.RawQuery = ""
+	u.Fragment = ""
+	return u
+}
+
+func canonicalBrowserRedirect(r *http.Request, publicBase *url.URL) string {
+	if publicBase == nil || r == nil {
+		return ""
+	}
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		return ""
+	}
+	if supportsCrossOriginOpenerPolicy(r) {
+		return ""
+	}
+	reqHost := requestHostname(r)
+	publicHost := strings.ToLower(publicBase.Hostname())
+	if reqHost == "" || isLoopbackHostname(reqHost) || reqHost == publicHost {
+		return ""
+	}
+	target := *publicBase
+	target.Path = joinPublicPath(publicBase.Path, r.URL.EscapedPath())
+	target.RawQuery = r.URL.RawQuery
+	return target.String()
+}
+
+func requestHostname(r *http.Request) string {
+	host := r.Host
+	if host == "" {
+		host = r.URL.Host
+	}
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	return strings.ToLower(strings.Trim(strings.TrimSuffix(strings.TrimSpace(host), "."), "[]"))
+}
+
+func isLoopbackHostname(host string) bool {
+	host = strings.ToLower(strings.Trim(strings.TrimSuffix(strings.TrimSpace(host), "."), "[]"))
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+func joinPublicPath(basePath, requestPath string) string {
+	if requestPath == "" {
+		requestPath = "/"
+	}
+	if basePath == "" || basePath == "/" {
+		return requestPath
+	}
+	return path.Join("/", basePath, requestPath)
 }

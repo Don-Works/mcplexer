@@ -216,7 +216,7 @@ export function AuditPage() {
       <div
         className={cn(
           'grid grid-cols-1 gap-4 lg:grid-cols-[15rem_minmax(0,1fr)]',
-          showInlineInspector && '2xl:grid-cols-[15rem_minmax(0,1fr)_21rem]',
+          showInlineInspector && '2xl:grid-cols-[15rem_minmax(0,1fr)_24rem]',
         )}
       >
         {/* LEFT rail (desktop) */}
@@ -260,7 +260,7 @@ export function AuditPage() {
         {/* RIGHT inline inspector (desktop 2xl+) — replaces the modal drawer */}
         {showInlineInspector && selected && (
           <aside className="hidden 2xl:block">
-            <div className="sticky top-4 max-h-[calc(100vh-2rem)] overflow-y-auto border border-border bg-card">
+            <div className="sticky top-4 max-h-[calc(100vh-2rem)] min-w-0 overflow-y-auto border border-border bg-card p-4 [scrollbar-gutter:stable]">
               <AuditInspector
                 record={selected}
                 wsName={wsName}
