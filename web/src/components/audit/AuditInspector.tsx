@@ -377,11 +377,11 @@ export function AuditInspector({
             <CopyButton value={JSON.stringify(record.params_redacted, null, 2)} />
           }
         >
-          <pre className="max-h-[28rem] max-w-full overflow-auto whitespace-pre-wrap break-all rounded-none border border-border bg-background/60 p-3 font-mono text-xs leading-relaxed text-accent-foreground">
+          <pre className="max-h-[28rem] min-w-0 max-w-full overflow-auto whitespace-pre-wrap break-words rounded-none border border-border bg-background/60 p-3 font-mono text-xs leading-relaxed text-accent-foreground [overflow-wrap:anywhere]">
             <LinkifiedText
               text={JSON.stringify(record.params_redacted, null, 2)}
               workspaceId={record.workspace_id}
-              className="break-all"
+              className="break-words [overflow-wrap:anywhere]"
             />
           </pre>
         </Section>
@@ -445,12 +445,12 @@ function KV({
   icon?: React.ReactNode
 }) {
   return (
-    <div className="grid grid-cols-[7rem_minmax(0,1fr)] items-start gap-x-3 gap-y-1">
+    <div className="grid grid-cols-[6.5rem_minmax(0,1fr)] items-start gap-x-3 gap-y-1">
       <div className="flex min-w-0 items-center gap-1 pt-0.5 text-xs text-muted-foreground">
         {icon}
         <span className="truncate">{label}</span>
       </div>
-      <div className="flex min-w-0 items-start gap-2 overflow-hidden">{children}</div>
+      <div className="flex min-w-0 items-start gap-2">{children}</div>
     </div>
   )
 }
@@ -505,7 +505,7 @@ function UuidValue({
         {icon}
         {value}
       </span>
-      <CopyButton value={value} />
+      <CopyButton value={value} className="shrink-0" />
     </div>
   )
 }

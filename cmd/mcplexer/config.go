@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log/slog"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -25,6 +26,7 @@ type Config struct {
 	LogPath      string
 	SocketPath   string // unix socket path for multi-client mode
 	ExternalURL  string // external URL for OAuth callbacks
+	PublicURL    string // canonical browser URL for HTTPS/PWA installs
 	APITokenPath string // path to HTTP API auth token (~/.mcplexer/api-key)
 	// ServerProfile reshapes the daemon for appliance-style deployments.
 	// "full" preserves the local workstation UI. "skills", "tasks", and
@@ -72,15 +74,38 @@ func loadConfig() (*Config, error) {
 		LogPath:       envOr("MCPLEXER_LOG_PATH", ""),
 		SocketPath:    envOr("MCPLEXER_SOCKET_PATH", ""),
 		ExternalURL:   envOr("MCPLEXER_EXTERNAL_URL", ""),
+		PublicURL:     envOr("MCPLEXER_PUBLIC_URL", envOr("MCPLEXER_EXTERNAL_URL", "")),
 		APITokenPath:  envOr("MCPLEXER_API_TOKEN_PATH", defaultDataPath("api-key")),
 		ServerProfile: profile,
 
-		TrustedHosts: mergeTrustedHosts(parseTrustedHosts(envOr("MCPLEXER_TRUSTED_HOSTS", "")), localHostnames()),
+		TrustedHosts: mergeTrustedHosts(
+			parseTrustedHosts(envOr("MCPLEXER_TRUSTED_HOSTS", "")),
+			mergeTrustedHosts(localHostnames(), hostFromURL(envOr("MCPLEXER_PUBLIC_URL", envOr("MCPLEXER_EXTERNAL_URL", "")))),
+		),
 
 		P2PEnabled:      envBool("MCPLEXER_P2P_ENABLED", false),
 		P2PIdentityPath: envOr("MCPLEXER_P2P_IDENTITY", ""),
 	}
 	return cfg, nil
+}
+
+func hostFromURL(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	if !strings.Contains(raw, "://") {
+		raw = "https://" + raw
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return nil
+	}
+	h := strings.ToLower(strings.TrimSpace(u.Hostname()))
+	if h == "" {
+		return nil
+	}
+	return []string{h}
 }
 
 const (

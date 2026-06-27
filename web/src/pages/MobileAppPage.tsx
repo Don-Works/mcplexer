@@ -122,8 +122,15 @@ function secureOrigin(): boolean {
   return loopbackHost(window.location.hostname)
 }
 
-function installUrl(): string {
+function installUrl(publicURL?: string): string {
   if (typeof window === 'undefined') return '/app'
+  if (publicURL?.trim()) {
+    try {
+      return new URL('/app', publicURL).toString()
+    } catch {
+      // Fall back to the current origin below.
+    }
+  }
   return `${window.location.origin}/app`
 }
 
@@ -259,8 +266,10 @@ export function MobileAppPage() {
             Human inbox
           </h1>
           <div className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
-            <span className="truncate font-mono" title={installUrl()}>{installUrl()}</span>
-            <CopyButton value={installUrl()} className="shrink-0" />
+            <span className="truncate font-mono" title={installUrl(health?.system?.public_url)}>
+              {installUrl(health?.system?.public_url)}
+            </span>
+            <CopyButton value={installUrl(health?.system?.public_url)} className="shrink-0" />
           </div>
         </div>
         <div className="flex gap-2">

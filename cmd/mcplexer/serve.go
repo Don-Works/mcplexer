@@ -217,6 +217,7 @@ func cmdServe(args []string) error {
 		Mode:          cfg.Mode,
 		Version:       mcplexerVersion,
 		HTTPAddr:      cfg.HTTPAddr,
+		PublicURL:     cfg.PublicURL,
 		SocketPath:    cfg.SocketPath,
 		DataDir:       dataDir,
 		ConfigFile:    cfg.ConfigFile,
@@ -1536,6 +1537,7 @@ func runServer(ctx context.Context, cfg *Config, db *sqlite.DB, cfgSvc *config.S
 
 	router.Swap(api.NewRouter(api.RouterDeps{
 		APIToken:               d.apiToken,
+		PublicURL:              cfg.PublicURL,
 		Store:                  db,
 		ConfigSvc:              cfgSvc,
 		SettingsSvc:            settingsSvc,
