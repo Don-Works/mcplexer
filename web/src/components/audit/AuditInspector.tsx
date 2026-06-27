@@ -137,7 +137,7 @@ export function AuditInspector({
   }
 
   return (
-    <div className={cn('flex flex-col', className)}>
+    <div className={cn('flex min-w-0 flex-col text-sm', className)}>
       {secret && (
         <div
           className={cn(
@@ -348,7 +348,7 @@ export function AuditInspector({
       </Section>
 
       <Section label="Performance">
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-[repeat(auto-fit,minmax(8rem,1fr))] gap-2">
           <Stat
             icon={<Zap className="h-3 w-3" />}
             label="Latency"
@@ -377,8 +377,12 @@ export function AuditInspector({
             <CopyButton value={JSON.stringify(record.params_redacted, null, 2)} />
           }
         >
-          <pre className="max-h-[28rem] overflow-auto rounded-none border border-border bg-background/60 p-3 font-mono text-xs leading-relaxed text-accent-foreground">
-            <LinkifiedText text={JSON.stringify(record.params_redacted, null, 2)} workspaceId={record.workspace_id} />
+          <pre className="max-h-[28rem] max-w-full overflow-auto whitespace-pre-wrap break-all rounded-none border border-border bg-background/60 p-3 font-mono text-xs leading-relaxed text-accent-foreground">
+            <LinkifiedText
+              text={JSON.stringify(record.params_redacted, null, 2)}
+              workspaceId={record.workspace_id}
+              className="break-all"
+            />
           </pre>
         </Section>
       )}
@@ -419,14 +423,14 @@ function Section({
           ? 'text-muted-foreground/60'
           : 'text-muted-foreground'
   return (
-    <section className="border-b border-border/30 py-4 first:pt-1 last:border-b-0">
-      <div className="mb-2.5 flex items-center justify-between">
+    <section className="border-b border-border/30 py-3.5 first:pt-0 last:border-b-0 last:pb-0">
+      <div className="mb-2 flex min-w-0 items-center justify-between gap-3">
         <h3 className={cn('text-[10px] font-semibold uppercase tracking-[0.12em]', labelColor)}>
           {label}
         </h3>
         {action}
       </div>
-      <div className="space-y-2.5">{children}</div>
+      <div className="space-y-2">{children}</div>
     </section>
   )
 }
@@ -441,12 +445,12 @@ function KV({
   icon?: React.ReactNode
 }) {
   return (
-    <div className="flex items-start gap-3">
-      <div className="flex w-24 shrink-0 items-center gap-1 pt-0.5 text-xs text-muted-foreground">
+    <div className="grid grid-cols-[7rem_minmax(0,1fr)] items-start gap-x-3 gap-y-1">
+      <div className="flex min-w-0 items-center gap-1 pt-0.5 text-xs text-muted-foreground">
         {icon}
-        <span>{label}</span>
+        <span className="truncate">{label}</span>
       </div>
-      <div className="flex min-w-0 flex-1 items-start gap-2">{children}</div>
+      <div className="flex min-w-0 items-start gap-2 overflow-hidden">{children}</div>
     </div>
   )
 }
@@ -496,8 +500,8 @@ function UuidValue({
   const accentClass =
     accent === 'cyan' ? 'text-cyan-400' : 'text-violet-400'
   return (
-    <div className="flex min-w-0 flex-1 items-center gap-2">
-      <span className={cn('flex items-center gap-1 font-mono text-xs break-all', accentClass)}>
+    <div className="flex min-w-0 flex-1 items-start gap-2">
+      <span className={cn('flex min-w-0 items-start gap-1 break-all font-mono text-xs leading-relaxed', accentClass)}>
         {icon}
         {value}
       </span>
@@ -526,12 +530,12 @@ function Stat({
           ? 'text-destructive'
           : 'text-foreground'
   return (
-    <div className="flex flex-col gap-1 rounded-none border border-border/40 bg-background/40 px-3 py-2">
-      <div className="flex items-center gap-1 text-[10px] uppercase tracking-wider text-muted-foreground">
+    <div className="flex min-w-0 flex-col gap-1 rounded-none border border-border/40 bg-background/40 px-2.5 py-2">
+      <div className="flex min-w-0 items-center gap-1 text-[10px] uppercase tracking-wider text-muted-foreground">
         {icon}
-        {label}
+        <span className="truncate">{label}</span>
       </div>
-      <div className={cn('font-mono text-sm tabular-nums', toneClass)}>{value}</div>
+      <div className={cn('truncate font-mono text-sm tabular-nums', toneClass)}>{value}</div>
     </div>
   )
 }
