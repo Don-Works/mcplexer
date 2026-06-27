@@ -124,6 +124,21 @@ func networkingFields(cfg *Config) []configField {
 	}
 	fields = append(fields, configField{"external_url", cfg.ExternalURL, extSource})
 
+	publicSource := "default"
+	if cfg.PublicURL != "" {
+		publicSource = "env: MCPLEXER_PUBLIC_URL"
+		if cfg.PublicURL == cfg.ExternalURL && os.Getenv("MCPLEXER_PUBLIC_URL") == "" {
+			publicSource = "env: MCPLEXER_EXTERNAL_URL"
+		}
+	}
+	fields = append(fields, configField{"public_url", cfg.PublicURL, publicSource})
+
+	pushSubjectSource := "derived"
+	if cfg.WebPushSubject != "" {
+		pushSubjectSource = "env: MCPLEXER_WEB_PUSH_SUBJECT"
+	}
+	fields = append(fields, configField{"web_push_subject", webPushSubscriber(cfg.WebPushSubject, cfg.PublicURL), pushSubjectSource})
+
 	p2pSource := "default"
 	if os.Getenv("MCPLEXER_P2P_ENABLED") != "" {
 		p2pSource = "env: MCPLEXER_P2P_ENABLED"

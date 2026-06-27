@@ -538,7 +538,7 @@ func buildServerDeps(ctx context.Context, cfg *Config, db *sqlite.DB, settingsSv
 	d.notifyBus.SetStore(d.notifyStore)
 	if ps, ok := d.notifyStore.(notify.PushStore); ok {
 		d.notifyPushStore = ps
-		d.notifyBus.SetDispatcher(newWebPushDispatcher(ps))
+		d.notifyBus.SetDispatcher(newWebPushDispatcher(ps, webPushSubscriber(cfg.WebPushSubject, cfg.PublicURL)))
 	}
 
 	// Bridge approvals into the Signal tray. Without this, pending

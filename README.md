@@ -173,6 +173,8 @@ YAML-sourced items are auto-pruned when removed from the config file. Items crea
 | `MCPLEXER_API_TOKEN_PATH` | `~/.mcplexer/api-key` | Path to HTTP API auth token |
 | `MCPLEXER_SOCKET_PATH` | — | Unix socket path for multi-client mode |
 | `MCPLEXER_EXTERNAL_URL` | — | External URL for OAuth callbacks |
+| `MCPLEXER_PUBLIC_URL` | `MCPLEXER_EXTERNAL_URL` | Canonical HTTPS browser/PWA URL |
+| `MCPLEXER_WEB_PUSH_SUBJECT` | `MCPLEXER_PUBLIC_URL` | VAPID subject for standards-based browser push |
 | `MCPLEXER_LOG_LEVEL` | `info` | Log level: debug, info, warn, error |
 
 ## CLI Commands
