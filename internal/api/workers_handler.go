@@ -45,7 +45,8 @@ func (h *workersHandler) currentDelegationDisabled() map[string]bool {
 }
 
 // list serves GET /api/v1/workers. Query: workspace_id, enabled_only,
-// name_pattern. workspace_id defaults to empty (= all workspaces).
+// include_archived, name_pattern. workspace_id defaults to empty (= all
+// workspaces).
 func (h *workersHandler) list(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	in := workersadmin.ListInput{
@@ -54,6 +55,9 @@ func (h *workersHandler) list(w http.ResponseWriter, r *http.Request) {
 	}
 	if v := q.Get("enabled_only"); v == "true" || v == "1" {
 		in.EnabledOnly = true
+	}
+	if v := q.Get("include_archived"); v == "true" || v == "1" {
+		in.IncludeArchived = true
 	}
 	rows, err := h.svc.List(r.Context(), in)
 	if err != nil {
@@ -265,6 +269,29 @@ func (h *workersHandler) remove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// archive serves POST /api/v1/workers/{id}/archive.
+func (h *workersHandler) archive(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "id is required")
+		return
+	}
+	var body struct {
+		Reason string `json:"reason"`
+	}
+	_ = decodeJSON(r, &body)
+	worker, err := h.svc.Archive(r.Context(), id, body.Reason)
+	if err != nil {
+		if errors.Is(err, store.ErrWorkerNotFound) || errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "worker not found")
+			return
+		}
+		writeErrorDetail(w, http.StatusBadRequest, "failed to archive worker", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, worker)
 }
 
 // pause / resume route through the dedicated Service methods so each

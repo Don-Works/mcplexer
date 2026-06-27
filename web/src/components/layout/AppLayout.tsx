@@ -690,7 +690,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
 
   return (
     <DangerousModeProvider>
-      <div className="flex h-[100dvh] min-h-[100dvh] overflow-hidden [padding-left:env(safe-area-inset-left)] [padding-right:env(safe-area-inset-right)] [padding-top:env(safe-area-inset-top)]">
+      <div className="box-border flex h-[100dvh] min-h-[100dvh] overflow-hidden [padding-left:env(safe-area-inset-left)] [padding-right:env(safe-area-inset-right)] [padding-top:env(safe-area-inset-top)]">
         {/* Desktop sidebar */}
         <aside className="hidden w-56 flex-col overflow-hidden border-r border-sidebar-border bg-sidebar-background md:flex">
           <BrandHeader />
@@ -700,7 +700,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
 
         {/* Mobile sheet */}
         <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
-          <SheetContent side="left" className="flex w-72 max-w-[calc(100vw-1rem)] flex-col overflow-hidden gap-0 bg-sidebar-background p-0 sm:w-80 md:w-56" aria-describedby={undefined}>
+          <SheetContent side="left" className="flex w-72 max-w-[calc(100vw-1rem)] flex-col overflow-hidden gap-0 bg-sidebar-background p-0 [padding-bottom:env(safe-area-inset-bottom)] [padding-top:env(safe-area-inset-top)] sm:w-80 md:w-56" aria-describedby={undefined}>
             <SheetTitle className="sr-only">Navigation</SheetTitle>
             <BrandHeader />
             <SidebarNav onNavigate={() => setMobileOpen(false)} />

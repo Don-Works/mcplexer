@@ -25,6 +25,7 @@ func (a *approvalNotifyAdapter) Publish(
 	}
 	a.bus.Publish(notify.Event{
 		MessageID: messageID,
+		Source:    "approval",
 		AgentName: agentName,
 		Role:      role,
 		Kind:      kind,

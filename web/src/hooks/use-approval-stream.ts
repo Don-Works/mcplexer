@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from 'react'
 import type { ApprovalEvent, ToolApproval } from '@/api/types'
-import { subscribeEvent } from '@/hooks/use-event-stream'
+import { subscribeEvent, useEventStreamStatus } from '@/hooks/use-event-stream'
 import { fireApprovalPending } from '@/components/notifications/use-os-notifications'
 
 // Approval pending-queue store. Every useApprovalStream() consumer shares ONE
@@ -16,9 +16,10 @@ import { fireApprovalPending } from '@/components/notifications/use-os-notificat
 interface State {
   pending: ToolApproval[]
   connected: boolean
+  resolvedIds: string[]
 }
 
-let state: State = { pending: [], connected: false }
+let state: State = { pending: [], connected: false, resolvedIds: [] }
 const storeListeners = new Set<() => void>()
 
 let unsubHub: (() => void) | null = null
@@ -36,7 +37,10 @@ function setState(patch: Partial<State>) {
 function handleApproval(data: unknown) {
   const evt = data as ApprovalEvent
   if (evt.type === 'pending') {
-    setState({ pending: [...state.pending, evt.approval] })
+    setState({
+      pending: [...state.pending.filter((a) => a.id !== evt.approval.id), evt.approval],
+      resolvedIds: state.resolvedIds.filter((id) => id !== evt.approval.id),
+    })
     // OS-notification fan-out lives here so it stays on regardless of which
     // page is mounted.
     fireApprovalPending({
@@ -44,7 +48,13 @@ function handleApproval(data: unknown) {
       tool_name: evt.approval.tool_name,
     })
   } else if (evt.type === 'resolved') {
-    setState({ pending: state.pending.filter((a) => a.id !== evt.approval.id) })
+    const id = evt.approval.id
+    setState({
+      pending: state.pending.filter((a) => a.id !== id),
+      resolvedIds: state.resolvedIds.includes(id)
+        ? state.resolvedIds
+        : [...state.resolvedIds, id].slice(-300),
+    })
   }
 }
 
@@ -67,5 +77,7 @@ function subscribe(l: () => void): () => void {
 }
 
 export function useApprovalStream() {
-  return useSyncExternalStore(subscribe, () => state, () => state)
+  const snap = useSyncExternalStore(subscribe, () => state, () => state)
+  const streamStatus = useEventStreamStatus()
+  return { ...snap, connected: streamStatus === 'open' }
 }

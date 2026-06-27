@@ -398,6 +398,44 @@ func TestServiceListFilters(t *testing.T) {
 	}
 }
 
+func TestServiceArchiveHidesFromDefaultList(t *testing.T) {
+	svc, _, wsID, scopeID := newTestService(t)
+	ctx := context.Background()
+	w, err := svc.Create(ctx, baseCreate(wsID, scopeID))
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	archived, err := svc.Archive(ctx, w.ID, "stale one-shot")
+	if err != nil {
+		t.Fatalf("archive: %v", err)
+	}
+	if archived.Enabled {
+		t.Fatal("archived worker is still enabled")
+	}
+	if archived.ArchivedAt == nil {
+		t.Fatal("archived_at was not stamped")
+	}
+	if _, err := svc.Resume(ctx, w.ID); !errors.Is(err, store.ErrWorkerArchived) {
+		t.Fatalf("resume archived err = %v, want ErrWorkerArchived", err)
+	}
+
+	rows, err := svc.List(ctx, admin.ListInput{WorkspaceID: wsID})
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(rows) != 0 {
+		t.Fatalf("default list returned archived rows: %+v", rows)
+	}
+
+	rows, err = svc.List(ctx, admin.ListInput{WorkspaceID: wsID, IncludeArchived: true})
+	if err != nil {
+		t.Fatalf("list archived: %v", err)
+	}
+	if len(rows) != 1 || !rows[0].Archived {
+		t.Fatalf("include_archived rows = %+v, want archived row", rows)
+	}
+}
+
 func TestServiceListMarksDelegationWorkersEphemeral(t *testing.T) {
 	t.Setenv("MCPLEXER_ALLOW_OPENCODE_CLI", "1")
 	svc, _, wsID, _ := newTestService(t)

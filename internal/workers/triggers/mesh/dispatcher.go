@@ -214,6 +214,10 @@ func (d *Dispatcher) dispatchOne(
 		return
 	}
 	depth := chainDepthFromTags(msg.Tags)
+	if worker.ArchivedAt != nil {
+		d.audit(ctx, t, msg, sourcePeerID(msg), depth, "denied", "worker_archived")
+		return
+	}
 	if !worker.Enabled {
 		d.audit(ctx, t, msg, sourcePeerID(msg), depth, "denied", "worker_disabled")
 		return

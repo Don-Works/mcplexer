@@ -9,6 +9,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import {
+  Archive,
   ArrowLeft,
   Bot,
   ChevronDown,
@@ -28,6 +29,7 @@ import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { CopyButton } from '@/components/ui/copy-button'
 import { useApi } from '@/hooks/use-api'
 import {
+  archiveWorker,
   deleteWorker,
   getWorker,
   listWorkerApprovals,
@@ -71,6 +73,7 @@ export function WorkerDetailPage() {
   }, [refetch, refetchApprovals])
   const [busy, setBusy] = useState<string | null>(null)
   const [deleteOpen, setDeleteOpen] = useState(false)
+  const [archiveOpen, setArchiveOpen] = useState(false)
 
   // Poll the worker every 4s so the vitals strip + live tail stay in
   // sync as runs progress. Cheap enough at this cadence.
@@ -117,6 +120,18 @@ export function WorkerDetailPage() {
     }
   }
 
+  async function handleArchive() {
+    setBusy('archive')
+    try {
+      await archiveWorker(id, 'archived from worker detail page')
+      toast.success('Worker archived')
+      navigate('/workers')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Archive failed')
+      setBusy(null)
+    }
+  }
+
   if (loading && !data) {
     return (
       <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -156,6 +171,7 @@ export function WorkerDetailPage() {
           doAction('run', () => runWorkerNow(w.id), `Run started for ${w.name}`)
         }
         onPublish={handlePublish}
+        onArchive={() => setArchiveOpen(true)}
         onDelete={() => setDeleteOpen(true)}
       />
 
@@ -170,6 +186,15 @@ export function WorkerDetailPage() {
       <RecentRunsCard runs={data.recent_runs} />
       <CostCard runs={data.recent_runs} />
       <ConfigCard worker={w} />
+
+      <ConfirmDialog
+        open={archiveOpen}
+        onOpenChange={setArchiveOpen}
+        title={`Archive worker "${w.name}"?`}
+        description="This disables the worker, removes its schedule, blocks future runs, and preserves config plus run history for audit."
+        confirmLabel="Archive"
+        onConfirm={handleArchive}
+      />
 
       <ConfirmDialog
         open={deleteOpen}
@@ -190,10 +215,12 @@ interface HeaderProps {
   onToggle: () => void
   onRunNow: () => void
   onPublish: () => void
+  onArchive: () => void
   onDelete: () => void
 }
 
-function Header({ worker, busy, onToggle, onRunNow, onPublish, onDelete }: HeaderProps) {
+function Header({ worker, busy, onToggle, onRunNow, onPublish, onArchive, onDelete }: HeaderProps) {
+  const archived = Boolean(worker.archived_at)
   return (
     <div className="space-y-2">
       <Link
@@ -216,9 +243,9 @@ function Header({ worker, busy, onToggle, onRunNow, onPublish, onDelete }: Heade
           <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
             <Badge
               variant="outline"
-              className={statusBadgeClass(worker.enabled ? 'success' : 'paused')}
+              className={statusBadgeClass(archived ? 'paused' : worker.enabled ? 'success' : 'paused')}
             >
-              {worker.enabled ? 'enabled' : 'paused'}
+              {archived ? 'archived' : worker.enabled ? 'enabled' : 'paused'}
             </Badge>
             <span
               className="group inline-flex items-center gap-1 font-mono text-[10px] text-muted-foreground/70"
@@ -233,12 +260,13 @@ function Header({ worker, busy, onToggle, onRunNow, onPublish, onDelete }: Heade
           <EnableSwitch
             enabled={worker.enabled}
             busy={busy === 'enable'}
+            disabled={archived}
             onToggle={onToggle}
           />
           <Button
             size="sm"
             variant="outline"
-            disabled={!worker.enabled || busy !== null}
+            disabled={archived || !worker.enabled || busy !== null}
             onClick={onRunNow}
             data-testid="worker-detail-run-now"
           >
@@ -268,6 +296,22 @@ function Header({ worker, busy, onToggle, onRunNow, onPublish, onDelete }: Heade
             )}
             Publish as template
           </Button>
+          {!archived && (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={busy !== null}
+              onClick={onArchive}
+              data-testid="worker-detail-archive"
+            >
+              {busy === 'archive' ? (
+                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Archive className="mr-1.5 h-3.5 w-3.5" />
+              )}
+              Archive
+            </Button>
+          )}
           <Button
             size="sm"
             variant="ghost"

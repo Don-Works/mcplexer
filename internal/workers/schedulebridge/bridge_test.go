@@ -250,6 +250,30 @@ func TestEnsureForWorkerDisabledDeletesRow(t *testing.T) {
 	}
 }
 
+func TestEnsureForWorkerArchivedDeletesRow(t *testing.T) {
+	jobs := newMemJobStore()
+	kick := &kickerSpy{}
+	b := New(jobs, kick)
+	w := mkWorker("wkr-archived", "5m", true)
+	if err := b.EnsureForWorker(context.Background(), w); err != nil {
+		t.Fatalf("initial ensure: %v", err)
+	}
+
+	now := time.Now().UTC()
+	w.Enabled = false
+	w.ArchivedAt = &now
+	if err := b.EnsureForWorker(context.Background(), w); err != nil {
+		t.Fatalf("archived ensure: %v", err)
+	}
+	list, _ := jobs.ListScheduledJobs(context.Background())
+	if len(list) != 0 {
+		t.Errorf("archived worker left %d schedule rows, want 0", len(list))
+	}
+	if kick.reloads.Load() != 2 {
+		t.Errorf("reloads = %d, want 2", kick.reloads.Load())
+	}
+}
+
 func TestRemoveForWorker(t *testing.T) {
 	jobs := newMemJobStore()
 	kick := &kickerSpy{}

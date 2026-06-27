@@ -140,7 +140,7 @@ The PWA serves the same data at `http://localhost:13333`:
 /memory/all                        list + filters + URL-backed drawer
 /memory/about/:kind/:id            "everything about" pivot
 /memory/shared                     incoming peer offers
-/memory/consolidation              consolidator template management
+/memory/consolidation              explicit per-workspace consolidator installs
 ```
 
 The detail drawer surfaces:

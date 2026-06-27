@@ -158,6 +158,10 @@ func (s *Service) Update(ctx context.Context, in UpdateInput) (*store.Worker, er
 	oldSnapshot := *w
 	diff := buildUpdateDiff(&oldSnapshot, in)
 	applyUpdate(w, in)
+	if w.ArchivedAt != nil && w.Enabled {
+		s.emitAuditUpdate(ctx, w.ID, diff, "error", store.ErrWorkerArchived.Error())
+		return nil, store.ErrWorkerArchived
+	}
 	if err := s.validateUpdate(w, in); err != nil {
 		return nil, err
 	}
@@ -275,29 +279,6 @@ func (s *Service) createFromTemplate(
 	in.sourceTemplateName = name
 	in.sourceTemplateVersion = version
 	return s.Create(ctx, in)
-}
-
-// Delete hard-deletes a worker. Runs are intentionally preserved by the
-// store layer; we don't touch them here. Emits worker_admin.delete with
-// the worker name captured BEFORE the delete (the row is gone after).
-func (s *Service) Delete(ctx context.Context, id string) error {
-	if strings.TrimSpace(id) == "" {
-		return errors.New("id required")
-	}
-	// Best-effort name lookup for the audit payload. If the worker
-	// doesn't exist the subsequent DeleteWorker will surface the right
-	// error; we just log "name" empty in the audit row.
-	name := ""
-	if w, err := s.store.GetWorker(ctx, id); err == nil && w != nil {
-		name = w.Name
-	}
-	if err := s.store.DeleteWorker(ctx, id); err != nil {
-		s.emitAuditDelete(ctx, id, name, "error", err.Error())
-		return err
-	}
-	s.emitAuditDelete(ctx, id, name, "ok", "")
-	s.removeScheduleAfterDelete(ctx, id)
-	return nil
 }
 
 // SetEnabled, Pause, Resume, and the shared setEnabledWithVerb live in

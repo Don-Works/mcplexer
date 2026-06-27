@@ -28,7 +28,8 @@ const workerCols = `id, name, description, model_provider, model_id,
     max_wall_clock_seconds, max_monthly_cost_usd, max_consecutive_failures,
     auto_paused_reason,
     source_template_name, source_template_version,
-    enabled, workspace_id, created_at, updated_at`
+    enabled, workspace_id, created_at, updated_at,
+    archived_at, archived_reason`
 
 const workerWorkspaceAccessCols = `worker_id, workspace_id, access, created_at, updated_at`
 
@@ -61,7 +62,8 @@ func (d *DB) CreateWorker(ctx context.Context, w *store.Worker) error {
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
 			        ?, ?, ?, ?, ?, ?, ?,
 			        ?, ?,
-			        ?, ?, ?, ?)`,
+			        ?, ?, ?, ?,
+			        ?, ?)`,
 			w.ID, w.Name, w.Description, w.ModelProvider, w.ModelID,
 			w.ModelEndpointURL, w.SecretScopeID, w.SkillName, w.SkillVersion,
 			skillRefsJSON,
@@ -74,6 +76,7 @@ func (d *DB) CreateWorker(ctx context.Context, w *store.Worker) error {
 			w.SourceTemplateName, w.SourceTemplateVersion,
 			boolToInt(w.Enabled), w.WorkspaceID,
 			formatTime(w.CreatedAt), formatTime(w.UpdatedAt),
+			formatTimePtr(w.ArchivedAt), w.ArchivedReason,
 		); err != nil {
 			return mapConstraintError(err)
 		}
@@ -157,7 +160,7 @@ func (d *DB) GetWorkerByName(
 ) (*store.Worker, error) {
 	row := d.q.QueryRowContext(ctx,
 		`SELECT `+workerCols+` FROM workers
-		 WHERE workspace_id = ? AND name = ?`,
+		 WHERE workspace_id = ? AND name = ? AND archived_at IS NULL`,
 		workspaceID, name)
 	w, err := scanWorker(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -177,8 +180,27 @@ func (d *DB) GetWorkerByName(
 func (d *DB) ListWorkers(
 	ctx context.Context, workspaceID string, enabledOnly bool,
 ) ([]*store.Worker, error) {
+	return d.listWorkers(ctx, workspaceID, enabledOnly, false)
+}
+
+// ListWorkersIncludingArchived returns workers in workspaceID including
+// archived rows. This is an admin/reporting escape hatch; normal callers
+// should use ListWorkers so archived rows do not clutter operator surfaces
+// or scheduling bootstraps.
+func (d *DB) ListWorkersIncludingArchived(
+	ctx context.Context, workspaceID string, enabledOnly bool,
+) ([]*store.Worker, error) {
+	return d.listWorkers(ctx, workspaceID, enabledOnly, true)
+}
+
+func (d *DB) listWorkers(
+	ctx context.Context, workspaceID string, enabledOnly bool, includeArchived bool,
+) ([]*store.Worker, error) {
 	query := `SELECT ` + workerCols + ` FROM workers WHERE workspace_id = ?`
 	args := []any{workspaceID}
+	if !includeArchived {
+		query += ` AND archived_at IS NULL`
+	}
 	if enabledOnly {
 		query += ` AND enabled = 1`
 	}
@@ -236,7 +258,8 @@ func (d *DB) UpdateWorker(ctx context.Context, w *store.Worker) error {
 			    max_wall_clock_seconds = ?, max_monthly_cost_usd = ?,
 			    max_consecutive_failures = ?, auto_paused_reason = ?,
 			    source_template_name = ?, source_template_version = ?,
-			    enabled = ?, workspace_id = ?, updated_at = ?
+			    enabled = ?, workspace_id = ?, updated_at = ?,
+			    archived_at = ?, archived_reason = ?
 			WHERE id = ?`,
 			w.Name, w.Description, w.ModelProvider, w.ModelID,
 			w.ModelEndpointURL, w.SecretScopeID,
@@ -249,7 +272,7 @@ func (d *DB) UpdateWorker(ctx context.Context, w *store.Worker) error {
 			w.MaxConsecutiveFailures, w.AutoPausedReason,
 			w.SourceTemplateName, w.SourceTemplateVersion,
 			boolToInt(w.Enabled), w.WorkspaceID,
-			formatTime(w.UpdatedAt), w.ID,
+			formatTime(w.UpdatedAt), formatTimePtr(w.ArchivedAt), w.ArchivedReason, w.ID,
 		)
 		if err != nil {
 			return mapConstraintError(err)
@@ -339,6 +362,7 @@ func scanWorker(r scanner) (*store.Worker, error) {
 		w                    store.Worker
 		enabled              int
 		memoryScopeID        sql.NullString
+		archivedAt           sql.NullString
 		skillRefsJSON        string
 		createdAt, updatedAt string
 	)
@@ -354,6 +378,7 @@ func scanWorker(r scanner) (*store.Worker, error) {
 		&w.MaxConsecutiveFailures, &w.AutoPausedReason,
 		&w.SourceTemplateName, &w.SourceTemplateVersion,
 		&enabled, &w.WorkspaceID, &createdAt, &updatedAt,
+		&archivedAt, &w.ArchivedReason,
 	)
 	if err != nil {
 		return nil, err
@@ -365,6 +390,12 @@ func scanWorker(r scanner) (*store.Worker, error) {
 	w.SkillRefs = unmarshalSkillRefs(skillRefsJSON)
 	w.CreatedAt = parseTime(createdAt)
 	w.UpdatedAt = parseTime(updatedAt)
+	if archivedAt.Valid && strings.TrimSpace(archivedAt.String) != "" {
+		t := parseTime(archivedAt.String)
+		if !t.IsZero() {
+			w.ArchivedAt = &t
+		}
+	}
 	return &w, nil
 }
 

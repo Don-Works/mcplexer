@@ -57,3 +57,10 @@ type Store interface {
 	// the table holds at most `cap` rows. Returns rows deleted.
 	Prune(ctx context.Context, cap int) (int, error)
 }
+
+// StoreWithPush is the full notification persistence surface used by the
+// daemon and HTTP API. Tests and slim consumers may still wire only Store.
+type StoreWithPush interface {
+	Store
+	PushStore
+}

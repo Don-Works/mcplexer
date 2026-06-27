@@ -207,6 +207,55 @@ func TestWorkerListEnabledOnly(t *testing.T) {
 	}
 }
 
+func TestWorkerArchiveHidesFromDefaultListAndAllowsNameReuse(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	wsID, scopeID := seedWorkspaceAndScope(t, db, ctx)
+
+	w := newWorker(wsID, scopeID, "archivable")
+	if err := db.CreateWorker(ctx, w); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	w.Enabled = false
+	w.ArchivedAt = &now
+	w.ArchivedReason = "stale one-shot worker"
+	if err := db.UpdateWorker(ctx, w); err != nil {
+		t.Fatalf("archive update: %v", err)
+	}
+
+	all, err := db.ListWorkers(ctx, wsID, false)
+	if err != nil {
+		t.Fatalf("list active workers: %v", err)
+	}
+	if len(all) != 0 {
+		t.Fatalf("default list returned archived workers: %d", len(all))
+	}
+
+	withArchived, err := db.ListWorkersIncludingArchived(ctx, wsID, false)
+	if err != nil {
+		t.Fatalf("list with archived: %v", err)
+	}
+	if len(withArchived) != 1 || withArchived[0].ArchivedAt == nil {
+		t.Fatalf("archived list = %+v, want one archived worker", withArchived)
+	}
+	if _, err := db.GetWorkerByName(ctx, wsID, "archivable"); !errors.Is(err, store.ErrWorkerNotFound) {
+		t.Fatalf("GetWorkerByName archived err = %v, want ErrWorkerNotFound", err)
+	}
+
+	replacement := newWorker(wsID, scopeID, "archivable")
+	if err := db.CreateWorker(ctx, replacement); err != nil {
+		t.Fatalf("create replacement with archived name: %v", err)
+	}
+	active, err := db.GetWorkerByName(ctx, wsID, "archivable")
+	if err != nil {
+		t.Fatalf("get replacement by name: %v", err)
+	}
+	if active.ID != replacement.ID {
+		t.Fatalf("GetWorkerByName returned %q, want replacement %q", active.ID, replacement.ID)
+	}
+}
+
 func TestWorkerDuplicateName(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()

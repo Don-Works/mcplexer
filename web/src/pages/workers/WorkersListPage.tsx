@@ -742,21 +742,22 @@ function WorkerRow({ row, busy, onToggle, onRunNow, workspaceLabel }: RowProps) 
 interface EnableSwitchProps {
   enabled: boolean
   busy: boolean
+  disabled?: boolean
   onToggle: () => void
 }
 
-export function EnableSwitch({ enabled, busy, onToggle }: EnableSwitchProps) {
+export function EnableSwitch({ enabled, busy, disabled, onToggle }: EnableSwitchProps) {
   return (
     <button
       type="button"
       role="switch"
       aria-checked={enabled}
-      disabled={busy}
+      disabled={busy || disabled}
       onClick={onToggle}
       className={
         'relative inline-flex h-5 w-9 shrink-0 items-center rounded-full border border-border transition-colors ' +
         (enabled ? 'bg-emerald-500/70' : 'bg-muted') +
-        (busy ? ' opacity-60' : '')
+        (busy || disabled ? ' opacity-60' : '')
       }
       data-testid="worker-enable-switch"
       data-state={enabled ? 'checked' : 'unchecked'}

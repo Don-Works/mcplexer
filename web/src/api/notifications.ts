@@ -66,3 +66,49 @@ export function markAllNotificationsRead(): Promise<{ ok: boolean; unread_count:
     body: JSON.stringify({ all: true }),
   })
 }
+
+export interface PushPublicKeyResponse {
+  public_key: string
+  supported: boolean
+}
+
+export interface PushStatusResponse {
+  subscription_count: number
+}
+
+export interface BrowserPushSubscriptionJSON {
+  endpoint?: string
+  keys?: {
+    p256dh?: string
+    auth?: string
+  }
+}
+
+export function getPushPublicKey(): Promise<PushPublicKeyResponse> {
+  return request('/push/public-key')
+}
+
+export function getPushStatus(): Promise<PushStatusResponse> {
+  return request('/push/status')
+}
+
+export function subscribePush(
+  subscription: BrowserPushSubscriptionJSON,
+  deviceLabel?: string,
+): Promise<{ ok: boolean }> {
+  return request('/push/subscribe', {
+    method: 'POST',
+    body: JSON.stringify({ subscription, device_label: deviceLabel || '' }),
+  })
+}
+
+export function unsubscribePush(endpoint: string): Promise<{ ok: boolean }> {
+  return request('/push/unsubscribe', {
+    method: 'POST',
+    body: JSON.stringify({ endpoint }),
+  })
+}
+
+export function sendTestPush(): Promise<{ ok: boolean }> {
+  return request('/push/test', { method: 'POST' })
+}

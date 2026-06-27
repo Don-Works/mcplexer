@@ -2,10 +2,13 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"time"
 
+	webpush "github.com/SherClockHolmes/webpush-go"
 	"github.com/don-works/mcplexer/internal/notify"
+	"github.com/don-works/mcplexer/internal/store"
 	"github.com/don-works/mcplexer/internal/store/sqlite"
 )
 
@@ -43,6 +46,51 @@ func (a *notifyStoreAdapter) UnreadCount(ctx context.Context) (int, error) {
 
 func (a *notifyStoreAdapter) Prune(ctx context.Context, cap int) (int, error) {
 	return a.db.PruneNotifications(ctx, cap)
+}
+
+func (a *notifyStoreAdapter) EnsureVAPIDKeys(ctx context.Context) (notify.WebPushVAPIDKeys, error) {
+	keys, err := a.db.GetWebPushVAPIDKeys(ctx)
+	if err == nil && keys.PublicKey != "" && keys.PrivateKey != "" {
+		return keys, nil
+	}
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		return notify.WebPushVAPIDKeys{}, err
+	}
+	privateKey, publicKey, err := webpush.GenerateVAPIDKeys()
+	if err != nil {
+		return notify.WebPushVAPIDKeys{}, err
+	}
+	now := time.Now().UTC()
+	generated := notify.WebPushVAPIDKeys{
+		PublicKey:  publicKey,
+		PrivateKey: privateKey,
+		CreatedAt:  now,
+		UpdatedAt:  now,
+	}
+	if err := a.db.InsertWebPushVAPIDKeys(ctx, generated); err != nil {
+		return notify.WebPushVAPIDKeys{}, err
+	}
+	return a.db.GetWebPushVAPIDKeys(ctx)
+}
+
+func (a *notifyStoreAdapter) UpsertPushSubscription(ctx context.Context, sub notify.WebPushSubscription) error {
+	return a.db.UpsertWebPushSubscription(ctx, sub)
+}
+
+func (a *notifyStoreAdapter) DeletePushSubscription(ctx context.Context, endpoint string) error {
+	return a.db.DeleteWebPushSubscription(ctx, endpoint)
+}
+
+func (a *notifyStoreAdapter) ListPushSubscriptions(ctx context.Context) ([]notify.WebPushSubscription, error) {
+	return a.db.ListWebPushSubscriptions(ctx)
+}
+
+func (a *notifyStoreAdapter) MarkPushSubscriptionSuccess(ctx context.Context, endpoint string) error {
+	return a.db.MarkWebPushSubscriptionSuccess(ctx, endpoint)
+}
+
+func (a *notifyStoreAdapter) MarkPushSubscriptionError(ctx context.Context, endpoint, message string, disable bool) error {
+	return a.db.MarkWebPushSubscriptionError(ctx, endpoint, message, disable)
 }
 
 // notificationRetentionCap is the MVP default. Oldest-read rows get

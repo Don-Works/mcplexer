@@ -1,5 +1,5 @@
-// consolidator_autoinstall_test.go — unit coverage for the startup wiring
-// that auto-installs memory-consolidator workers.
+// consolidator_autoinstall_test.go — unit coverage for the optional startup
+// wiring that auto-installs memory-consolidator workers.
 package main
 
 import (
@@ -20,6 +20,11 @@ import (
 func allowClaudeCLI(t *testing.T) {
 	t.Helper()
 	t.Setenv("MCPLEXER_ALLOW_CLAUDE_CLI", "1")
+}
+
+func enableConsolidatorAutoinstall(t *testing.T) {
+	t.Helper()
+	t.Setenv("MCPLEXER_AUTO_INSTALL_MEMORY_CONSOLIDATOR", "1")
 }
 
 // newAutoinstallDB spins up an in-memory SQLite DB with optional workspaces
@@ -119,9 +124,30 @@ func TestPickConsolidatorScope_ReturnsApiKey(t *testing.T) {
 	}
 }
 
+// TestAutoInstallConsolidator_NoOpByDefault confirms daemon startup no longer
+// creates per-workspace consolidators unless the operator explicitly opts in.
+func TestAutoInstallConsolidator_NoOpByDefault(t *testing.T) {
+	ctx := context.Background()
+	db := newAutoinstallDB(t)
+	wsID := seedWorkspace(t, db, "my-workspace")
+	seedAPIKeyScope(t, db)
+	workers := newWorkerAdminWithTemplates(t, db)
+
+	autoInstallConsolidator(ctx, db, workers)
+
+	existing, err := workers.List(ctx, workersadmin.ListInput{WorkspaceID: wsID})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(existing) != 0 {
+		t.Errorf("expected 0 workers when autoinstall is disabled, got %d", len(existing))
+	}
+}
+
 // TestAutoInstallConsolidator_NoOpWhenNoApiKey confirms the function is a
-// no-op when no api_key auth scope is configured, leaving zero workers behind.
+// no-op when no auth scope can satisfy the worker's placeholder.
 func TestAutoInstallConsolidator_NoOpWhenNoApiKey(t *testing.T) {
+	enableConsolidatorAutoinstall(t)
 	ctx := context.Background()
 	db := newAutoinstallDB(t)
 	wsID := seedWorkspace(t, db, "my-workspace")
@@ -134,7 +160,7 @@ func TestAutoInstallConsolidator_NoOpWhenNoApiKey(t *testing.T) {
 		t.Fatalf("List: %v", err)
 	}
 	if len(existing) != 0 {
-		t.Errorf("expected 0 workers when no api_key scope, got %d", len(existing))
+		t.Errorf("expected 0 workers when no auth scope exists, got %d", len(existing))
 	}
 }
 
@@ -142,6 +168,7 @@ func TestAutoInstallConsolidator_NoOpWhenNoApiKey(t *testing.T) {
 // workspace with an api_key scope gets a memory-consolidator worker.
 func TestAutoInstallConsolidator_InstallsWhenApiKeyPresent(t *testing.T) {
 	allowClaudeCLI(t)
+	enableConsolidatorAutoinstall(t)
 	ctx := context.Background()
 	db := newAutoinstallDB(t)
 	wsID := seedWorkspace(t, db, "workspace-a")
@@ -173,6 +200,7 @@ func TestAutoInstallConsolidator_InstallsWhenApiKeyPresent(t *testing.T) {
 // second call silently skips the workspace.
 func TestAutoInstallConsolidator_Idempotent(t *testing.T) {
 	allowClaudeCLI(t)
+	enableConsolidatorAutoinstall(t)
 	ctx := context.Background()
 	db := newAutoinstallDB(t)
 	wsID := seedWorkspace(t, db, "workspace-idempotent")
@@ -201,6 +229,7 @@ func TestAutoInstallConsolidator_Idempotent(t *testing.T) {
 // gets its own consolidator worker when an api_key scope is present.
 func TestAutoInstallConsolidator_MultiWorkspace(t *testing.T) {
 	allowClaudeCLI(t)
+	enableConsolidatorAutoinstall(t)
 	ctx := context.Background()
 	db := newAutoinstallDB(t)
 	ws1 := seedWorkspace(t, db, "ws-multi-1")

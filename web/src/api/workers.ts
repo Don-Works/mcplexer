@@ -30,6 +30,8 @@ export interface Worker {
   exec_mode: ExecMode
   concurrency_policy: ConcurrencyPolicy
   memory_scope_id?: string
+  archived_at?: string | null
+  archived_reason?: string
   // M1 safety caps — 0 means "use the runner default" (or "no cap" for
   // monthly cost + consecutive failures).
   max_input_tokens: number
@@ -98,6 +100,9 @@ export interface WorkerSummary {
   model_id: string
   schedule_spec: string
   enabled: boolean
+  archived?: boolean
+  archived_at?: string | null
+  archived_reason?: string
   last_run_status?: WorkerRunStatus | ''
   last_run_at?: string
   created_at: string
@@ -516,6 +521,7 @@ export interface ListDelegationCapacityParams {
 export interface ListWorkersParams {
   workspaceId?: string
   enabledOnly?: boolean
+  includeArchived?: boolean
   namePattern?: string
 }
 
@@ -524,6 +530,7 @@ function buildListQuery(params?: ListWorkersParams): string {
   const q = new URLSearchParams()
   if (params.workspaceId) q.set('workspace_id', params.workspaceId)
   if (params.enabledOnly) q.set('enabled_only', 'true')
+  if (params.includeArchived) q.set('include_archived', 'true')
   if (params.namePattern) q.set('name_pattern', params.namePattern)
   const s = q.toString()
   return s ? `?${s}` : ''
@@ -553,6 +560,13 @@ export function updateWorker(id: string, data: UpdateWorkerInput): Promise<Worke
 
 export function deleteWorker(id: string): Promise<void> {
   return request(`/workers/${encodeURIComponent(id)}`, { method: 'DELETE' })
+}
+
+export function archiveWorker(id: string, reason?: string): Promise<Worker> {
+  return request(`/workers/${encodeURIComponent(id)}/archive`, {
+    method: 'POST',
+    body: JSON.stringify(reason ? { reason } : {}),
+  })
 }
 
 export function pauseWorker(id: string): Promise<Worker> {
