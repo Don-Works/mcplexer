@@ -84,8 +84,8 @@ func TestSPAFallback_SWVersionBumped(t *testing.T) {
 	if strings.Contains(string(sw), "mcplexer-shell-v8'") || strings.Contains(string(sw), `mcplexer-shell-v8"`) {
 		t.Error("sw.js CACHE_NAME still uses old v8")
 	}
-	if !strings.Contains(string(sw), "mcplexer-shell-v11") {
-		t.Error("sw.js CACHE_NAME should use v11")
+	if !strings.Contains(string(sw), "mcplexer-shell-v12") {
+		t.Error("sw.js CACHE_NAME should use v12")
 	}
 }
 

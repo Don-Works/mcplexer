@@ -676,6 +676,14 @@ func TestClearExpiredTaskLeasesTargetsRightRows(t *testing.T) {
 		Status:            "open",
 		AssigneeSessionID: "carol",
 	}
+	humanExpired := &store.Task{
+		WorkspaceID:        wsID,
+		Title:              "human-expired",
+		Status:             "waiting for customer signoff",
+		AssigneeOriginKind: store.TaskAssigneeHuman,
+		AssigneeUserID:     "human-1",
+		LeaseExpiresAt:     &past,
+	}
 	if err := d.CreateTask(ctx, expired); err != nil {
 		t.Fatalf("CreateTask expired: %v", err)
 	}
@@ -684,6 +692,9 @@ func TestClearExpiredTaskLeasesTargetsRightRows(t *testing.T) {
 	}
 	if err := d.CreateTask(ctx, noLease); err != nil {
 		t.Fatalf("CreateTask no-lease: %v", err)
+	}
+	if err := d.CreateTask(ctx, humanExpired); err != nil {
+		t.Fatalf("CreateTask humanExpired: %v", err)
 	}
 
 	ids, err := d.ClearExpiredTaskLeases(ctx, time.Now().UTC())
@@ -716,6 +727,17 @@ func TestClearExpiredTaskLeasesTargetsRightRows(t *testing.T) {
 	gotNo, _ := d.GetTask(ctx, noLease.ID)
 	if gotNo.AssigneeSessionID != "carol" {
 		t.Fatalf("expected no-lease row's assignee preserved, got %q", gotNo.AssigneeSessionID)
+	}
+
+	// Human-assigned row: untouched and, critically, not returned as a
+	// reclaimed id. The service trusts returned ids to append lease
+	// history + emit mesh, so this must mirror the UPDATE predicate.
+	gotHuman, _ := d.GetTask(ctx, humanExpired.ID)
+	if gotHuman.AssigneeUserID != "human-1" {
+		t.Fatalf("expected human row's assignee preserved, got %q", gotHuman.AssigneeUserID)
+	}
+	if gotHuman.LeaseExpiresAt == nil {
+		t.Fatal("expected human row's stale lease preserved for compatibility")
 	}
 }
 

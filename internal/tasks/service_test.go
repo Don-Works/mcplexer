@@ -187,6 +187,36 @@ func TestUpdateStatusDoingPreservesExistingAssignee(t *testing.T) {
 	}
 }
 
+func TestAssigningHumanClearsStaleLease(t *testing.T) {
+	ctx := context.Background()
+	svc, db, wsID := newSvc(t)
+	t1, _ := svc.Create(ctx, tasks.CreateOptions{
+		WorkspaceID: wsID, Title: "handoff to human", CreatedBySessionID: "agent-a",
+	})
+	if _, err := svc.Claim(ctx, wsID, t1.ID, "", "owner-session", ""); err != nil {
+		t.Fatalf("claim: %v", err)
+	}
+	leased, _ := db.GetTask(ctx, t1.ID)
+	if leased.LeaseExpiresAt == nil {
+		t.Fatal("setup: claimed task should have a lease")
+	}
+
+	if _, err := svc.Update(ctx, wsID, t1.ID, tasks.UpdatePatch{
+		Assignee:           &tasks.Assignee{UserID: "human-1"},
+		UpdatedBySessionID: "dashboard",
+	}); err != nil {
+		t.Fatalf("assign human: %v", err)
+	}
+
+	got, _ := db.GetTask(ctx, t1.ID)
+	if got.AssigneeOriginKind != store.TaskAssigneeHuman || got.AssigneeUserID != "human-1" {
+		t.Fatalf("human assignee not applied: kind=%q user=%q", got.AssigneeOriginKind, got.AssigneeUserID)
+	}
+	if got.LeaseExpiresAt != nil {
+		t.Fatalf("human assignment must clear stale agent lease, got %v", got.LeaseExpiresAt)
+	}
+}
+
 func TestClaimAssignsToMeAndSetsStatus(t *testing.T) {
 	ctx := context.Background()
 	svc, _, wsID := newSvc(t)

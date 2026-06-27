@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"net/url"
 	"sort"
 	"strings"
 	"sync"
@@ -528,12 +529,38 @@ func (m *Manager) Send(ctx context.Context, meta SessionMeta, req SendRequest) (
 			Title:     buildNotifyTitle(msg, role),
 			Body:      strings.TrimSpace(msg.Content),
 			Tags:      msg.Tags,
-			Link:      "/mesh?msg=" + msg.ID,
+			Link:      notifyLinkForMessage(msg),
 			CreatedAt: msg.CreatedAt,
 		})
 	}
 
 	return msg, nil
+}
+
+func notifyLinkForMessage(msg *store.MeshMessage) string {
+	if msg == nil {
+		return "/mesh"
+	}
+	if msg.Kind == KindTaskEvent {
+		if taskID := tagValue(msg.Tags, "task_id:"); taskID != "" {
+			link := "/tasks/" + url.PathEscape(taskID)
+			if workspaceID := tagValue(msg.Tags, "workspace:"); workspaceID != "" {
+				link += "?workspace=" + url.QueryEscape(workspaceID)
+			}
+			return link
+		}
+	}
+	return "/mesh?msg=" + url.QueryEscape(msg.ID)
+}
+
+func tagValue(tags, prefix string) string {
+	for _, tag := range strings.Split(tags, ",") {
+		tag = strings.TrimSpace(tag)
+		if strings.HasPrefix(tag, prefix) {
+			return strings.TrimSpace(strings.TrimPrefix(tag, prefix))
+		}
+	}
+	return ""
 }
 
 func buildNotifyTitle(msg *store.MeshMessage, role string) string {

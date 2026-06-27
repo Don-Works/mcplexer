@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
@@ -63,7 +64,18 @@ func humanTaskNotification(evt tasks.Event) (notify.Event, bool) {
 		Title:     "Human task created",
 		Body:      t.Title,
 		Tags:      "task,human," + t.WorkspaceID,
-		Link:      "/app?task=" + t.ID,
+		Link:      taskDetailLink(t),
 		CreatedAt: at,
 	}, true
+}
+
+func taskDetailLink(t *store.Task) string {
+	if t == nil || strings.TrimSpace(t.ID) == "" {
+		return "/app"
+	}
+	link := "/tasks/" + url.PathEscape(t.ID)
+	if ws := strings.TrimSpace(t.WorkspaceID); ws != "" {
+		link += "?workspace=" + url.QueryEscape(ws)
+	}
+	return link
 }

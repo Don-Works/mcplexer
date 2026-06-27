@@ -1102,7 +1102,8 @@ func (d *DB) ClearExpiredTaskLeases(ctx context.Context, now time.Time) ([]strin
 		rows, err := q.QueryContext(ctx, `
 			SELECT id FROM tasks
 			 WHERE `+taskReclaimableExpr+`
-			   AND deleted_at IS NULL`, cutoff)
+			   AND deleted_at IS NULL
+			   AND COALESCE(assignee_user_id, '') = ''`, cutoff)
 		if err != nil {
 			return fmt.Errorf("scan expired leases: %w", err)
 		}
@@ -1133,7 +1134,7 @@ func (d *DB) ClearExpiredTaskLeases(ctx context.Context, now time.Time) ([]strin
 			       updated_at = ?
 			 WHERE `+taskReclaimableExpr+`
 			   AND deleted_at IS NULL
-			   AND assignee_user_id = ''`,
+			   AND COALESCE(assignee_user_id, '') = ''`,
 			cutoff, cutoff,
 		); err != nil {
 			return fmt.Errorf("clear expired leases: %w", err)
