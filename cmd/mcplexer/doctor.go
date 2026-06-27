@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/don-works/mcplexer/internal/store/sqlite"
@@ -162,6 +163,14 @@ func checkDatabase(cfg *Config) checkResult {
 func checkSocket(socketPath string) checkResult {
 	if socketPath == "" {
 		return checkResult{true, "not configured (skipped)", ""}
+	}
+	if runtime.GOOS == "windows" {
+		p := strings.ToLower(strings.ReplaceAll(socketPath, `/`, `\`))
+		if strings.HasPrefix(p, `\\.\pipe\`) {
+			return checkResult{true, "named pipe configured (" + socketPath + ")", ""}
+		}
+		return checkResult{false, "invalid named pipe path: " + socketPath,
+			"use a path like \\\\.\\pipe\\mcplexer"}
 	}
 	dir := filepath.Dir(socketPath)
 	info, err := os.Stat(dir)

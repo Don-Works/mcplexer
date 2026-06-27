@@ -6,14 +6,13 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
-	"net"
 	"os"
 	"time"
 
 	"github.com/don-works/mcplexer/internal/install"
 )
 
-// stdio cold-start fix — proxy through the daemon socket
+// stdio cold-start fix: proxy through the daemon local IPC endpoint
 //
 // Every `mcplexer` invocation defaulting to stdio mode used to build its own
 // downstream MCP manager, opening every configured remote (Linear, Fetch,
@@ -22,7 +21,7 @@ import (
 // worse under sub-agent concurrency: six parallel agents = six independent
 // tools/list calls per remote, which rate-limit and back off.
 //
-// Fix: when the launchd daemon is up and reachable on its Unix socket, the
+// Fix: when the daemon is up and reachable on its local IPC endpoint, the
 // stdio subprocess proxies stdin/stdout through that socket via the existing
 // `mcplexer connect` machinery. The daemon's downstream connections are
 // already warm, so first-tools-list goes from multi-second cold-start to a
@@ -40,7 +39,7 @@ const (
 	daemonProbeTimeout = 250 * time.Millisecond
 )
 
-// findDaemonSocket returns the path to a healthy daemon Unix socket, or
+// findDaemonSocket returns the path to a healthy daemon IPC endpoint, or
 // "" if no daemon is reachable. The probe consists of dialling the socket
 // and exchanging a minimal MCP `ping` round-trip — a pure connection check
 // would pass even against a half-stuck listener.
@@ -56,7 +55,7 @@ func findDaemonSocket(ctx context.Context) string {
 	if candidate == "" {
 		candidate = install.DefaultSocketPath()
 	}
-	if _, err := os.Stat(candidate); err != nil {
+	if !localIPCPathLikelyPresent(candidate) {
 		return ""
 	}
 	if !probeSocket(ctx, candidate) {
@@ -72,8 +71,7 @@ func probeSocket(ctx context.Context, path string) bool {
 	probeCtx, cancel := context.WithTimeout(ctx, daemonProbeTimeout)
 	defer cancel()
 
-	var d net.Dialer
-	conn, err := d.DialContext(probeCtx, "unix", path)
+	conn, err := dialLocalIPCContext(probeCtx, path)
 	if err != nil {
 		return false
 	}

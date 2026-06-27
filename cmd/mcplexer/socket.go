@@ -64,7 +64,7 @@ func serveSocket(
 	rdy *readiness.Tracker,
 ) error {
 	defer func() { _ = ln.Close() }()
-	slog.Info("unix socket listening", "path", path)
+	slog.Info(localIPCDescription()+" listening", "path", path)
 
 	// Close listener when context is cancelled to unblock Accept.
 	go func() {

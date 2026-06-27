@@ -1,5 +1,7 @@
 # Binaries
 bin/
+dist/
+.release-work/
 /mcplexer
 *.exe
 

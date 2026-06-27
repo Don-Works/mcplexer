@@ -12,9 +12,11 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/don-works/mcplexer/internal/install"
 )
 
-// cmdConnect bridges stdin/stdout to the MCPlexer daemon's Unix socket.
+// cmdConnect bridges stdin/stdout to the MCPlexer daemon's local IPC endpoint.
 func cmdConnect(args []string) error {
 	var socketPath string
 	for _, arg := range args {
@@ -25,14 +27,13 @@ func cmdConnect(args []string) error {
 	if socketPath == "" {
 		socketPath = os.Getenv("MCPLEXER_SOCKET_PATH")
 	}
-
 	if socketPath == "" {
-		return fmt.Errorf("socket path required: use --socket=<path>")
+		socketPath = install.DefaultSocketPath()
 	}
 	return connectDirect(socketPath)
 }
 
-// connectDirect dials the Unix socket and bridges stdin/stdout to it.
+// connectDirect dials the local IPC endpoint and bridges stdin/stdout to it.
 // On disconnect it automatically reconnects, replaying the MCP init
 // handshake so the client never sees the interruption. Signal handling
 // is owned here so direct CLI use (`mcplexer connect`) gets SIGINT/SIGTERM
@@ -193,7 +194,7 @@ func dialWithBackoff(ctx context.Context, socketPath string) (net.Conn, error) {
 
 	step := 0
 	for {
-		conn, err := net.Dial("unix", socketPath)
+		conn, err := dialLocalIPCContext(ctx, socketPath)
 		if err == nil {
 			return conn, nil
 		}
