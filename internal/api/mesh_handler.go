@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"path/filepath"
 	"time"
 
@@ -97,6 +98,7 @@ func (h *meshHandler) status(w http.ResponseWriter, r *http.Request) {
 		Repo:          q.Get("repo"),
 		Branch:        q.Get("branch"),
 		WorkspacePath: q.Get("workspace_path"),
+		ExcludeKinds:  meshStatusExcludeKinds(q),
 	})
 	if err != nil {
 		msgs = []store.MeshMessage{}
@@ -168,6 +170,13 @@ func (h *meshHandler) status(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
+}
+
+func meshStatusExcludeKinds(q url.Values) []string {
+	if q.Get("include_task_events") == "1" || q.Get("kinds") == "task_event" || q.Get("msg") != "" {
+		return nil
+	}
+	return []string{"task_event"}
 }
 
 // resolveWorkspaceNames builds id→name + path→name lookup maps once per

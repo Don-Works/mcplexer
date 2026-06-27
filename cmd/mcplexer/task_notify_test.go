@@ -35,7 +35,7 @@ func TestHumanTaskNotificationCreatedOnly(t *testing.T) {
 	if got.Priority != "urgent" {
 		t.Fatalf("priority = %q, want urgent", got.Priority)
 	}
-	if got.Link != "/app?task=task-1" {
+	if got.Link != "/tasks/task-1?workspace=ws-1" {
 		t.Fatalf("link = %q, want task deep-link", got.Link)
 	}
 }

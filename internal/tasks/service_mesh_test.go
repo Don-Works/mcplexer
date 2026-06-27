@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/don-works/mcplexer/internal/mesh"
 	"github.com/don-works/mcplexer/internal/store"
@@ -130,6 +131,44 @@ func TestServiceUpdate_StatusChangedFiresStatusEvent(t *testing.T) {
 	}
 	if calls[0].NotifyUser {
 		t.Errorf("status_changed must not notify (locked decision #5)")
+	}
+}
+
+func TestSweepExpiredNonWorkingLeaseDoesNotEmitStatusChanged(t *testing.T) {
+	ctx := context.Background()
+	svc, db, wsID, sender := newSvcWithEmitter(t)
+	t1, _ := svc.Create(ctx, tasks.CreateOptions{
+		WorkspaceID: wsID, Title: "blocked lease", CreatedBySessionID: "agent-a",
+	})
+	if _, err := svc.Claim(ctx, wsID, t1.ID, "", "owner-session", ""); err != nil {
+		t.Fatalf("claim: %v", err)
+	}
+	blocked := "blocked"
+	if _, err := svc.Update(ctx, wsID, t1.ID, tasks.UpdatePatch{
+		Status: &blocked, UpdatedBySessionID: "owner-session",
+	}); err != nil {
+		t.Fatalf("update blocked: %v", err)
+	}
+	if _, err := db.HeartbeatTask(ctx, t1.ID, "owner-session", -1*time.Hour); err != nil {
+		t.Fatalf("backdate heartbeat: %v", err)
+	}
+
+	sender.mu.Lock()
+	sender.calls = nil
+	sender.mu.Unlock()
+	if swept, err := svc.SweepExpiredLeases(ctx); err != nil || swept != 1 {
+		t.Fatalf("SweepExpiredLeases = (%d, %v), want (1, nil)", swept, err)
+	}
+
+	calls := sender.snapshot()
+	if len(calls) != 1 {
+		t.Fatalf("expected one mesh emit for lease cleanup, got %d: %+v", len(calls), calls)
+	}
+	if strings.Contains(calls[0].Tags, "task_event:status_changed") {
+		t.Fatalf("non-working lease cleanup must not emit status_changed: %+v", calls[0])
+	}
+	if !strings.Contains(calls[0].Tags, "task_event:updated") {
+		t.Fatalf("expected generic updated event, got %+v", calls[0])
 	}
 }
 

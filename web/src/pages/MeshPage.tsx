@@ -355,7 +355,10 @@ export function MeshPage() {
   const { data: settingsData, loading: settingsLoading } = useApi(settingsFetcher)
   const meshEnabled = settingsData?.settings?.mesh_enabled ?? false
 
-  const meshFetcher = useCallback(() => getMeshStatus(), [])
+  const [searchParams, setSearchParams] = useSearchParams()
+  const targetMsg = searchParams.get('msg')
+
+  const meshFetcher = useCallback(() => getMeshStatus(targetMsg ? { msg: targetMsg } : undefined), [targetMsg])
   const { data: meshData, loading: meshLoading, refetch } = useApi(meshFetcher)
 
   const claimsFetcher = useCallback(() => getFileClaims(), [])
@@ -364,8 +367,6 @@ export function MeshPage() {
   // Deep-link target: /mesh?msg=<id> from a clicked notify toast. We highlight
   // and scroll once the target row has rendered, then clear the highlight
   // after a beat so the visual cue doesn't stick.
-  const [searchParams, setSearchParams] = useSearchParams()
-  const targetMsg = searchParams.get('msg')
   const [highlightId, setHighlightId] = useState<string | null>(null)
   const rowRefs = useRef<Map<string, HTMLDivElement>>(new Map())
   const registerRow = useCallback((id: string, el: HTMLDivElement | null) => {

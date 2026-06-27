@@ -21,8 +21,9 @@
 //   v9 — mobile PWA start_url shell + push notification display hook.
 //   v10 — auto-update messaging and safer notification actions.
 //   v11 — canonical HTTPS PWA origin + notification permission gesture fix.
+//   v12 — task notification deep links + Mesh task-event noise filter.
 // activate() prunes any cache name that isn't this one.
-const CACHE_NAME = 'mcplexer-shell-v11';
+const CACHE_NAME = 'mcplexer-shell-v12';
 const SHELL_URLS = ['/', '/app?source=pwa', '/icon.svg', '/icon-192.png', '/manifest.webmanifest'];
 
 self.addEventListener('install', (event) => {

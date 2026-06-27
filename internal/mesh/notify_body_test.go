@@ -65,6 +65,39 @@ func TestSend_NotifyBus_DeliversFullContent(t *testing.T) {
 	}
 }
 
+func TestSend_NotifyBus_TaskEventLinksToTask(t *testing.T) {
+	t.Parallel()
+	db := newDB(t)
+	mgr := mesh.NewManager(db)
+	bus := notify.NewBus()
+	mgr.SetNotifyBus(bus)
+	ch := bus.Subscribe()
+	defer bus.Unsubscribe(ch)
+
+	_, err := mgr.Send(context.Background(), mesh.SessionMeta{
+		SessionID:    "test-task-link",
+		WorkspaceIDs: []string{"ws-1"},
+		ClientType:   "test",
+	}, mesh.SendRequest{
+		Kind:       mesh.KindTaskEvent,
+		Content:    "Task closed: ship it",
+		NotifyUser: true,
+		Tags:       "task_event:closed,task_id:task/1,workspace:ws 1",
+	})
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+
+	select {
+	case evt := <-ch:
+		if evt.Link != "/tasks/task%2F1?workspace=ws+1" {
+			t.Fatalf("notify link = %q, want task detail link", evt.Link)
+		}
+	default:
+		t.Fatal("expected notify event on bus, got none")
+	}
+}
+
 func min(a, b int) int {
 	if a < b {
 		return a

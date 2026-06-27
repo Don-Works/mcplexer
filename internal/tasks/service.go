@@ -686,6 +686,10 @@ func (s *Service) updateWithSignals(ctx context.Context, workspaceID, id string,
 		if assigneeChanged {
 			t.AssignedBySessionID = p.UpdatedBySessionID
 			t.AssignedAt = &now
+			// A lease belongs to the previous local/peer assignee. Drop it
+			// on reassignment; the working-status stamp below installs a
+			// fresh lease when the new assignee can heartbeat it.
+			t.LeaseExpiresAt = nil
 			history = append(history, store.TaskStatusHistoryEntry{
 				At: now, BySession: p.UpdatedBySessionID, Evt: "assigned",
 				From: from, To: to,
@@ -967,8 +971,10 @@ func (s *Service) SweepExpiredLeases(ctx context.Context) (int, error) {
 		before := cloneTask(t)
 		history := readHistory(t.StatusHistoryJSON)
 		preStatus := t.Status
+		demoted := false
 		if s.isWorkingStatus(ctx, t.WorkspaceID, t.Status) {
 			t.Status = "open"
+			demoted = true
 			history = append(history, store.TaskStatusHistoryEntry{
 				At: now, Evt: "status_changed",
 				From: preStatus, To: "open", Note: "lease expired, demoted from working status",
@@ -990,7 +996,11 @@ func (s *Service) SweepExpiredLeases(ctx context.Context) (int, error) {
 			Note:      "lease expired",
 		})
 		s.publish(Event{Kind: EventTaskUpdated, WorkspaceID: t.WorkspaceID, Task: t, At: now})
-		s.emitter.EmitStatusChanged(ctx, t, preStatus, "open", EmitContext{ActorKind: "system"})
+		if demoted {
+			s.emitter.EmitStatusChanged(ctx, t, preStatus, "open", EmitContext{ActorKind: "system"})
+		} else {
+			s.emitter.EmitUpdated(ctx, t, EmitContext{ActorKind: "system"})
+		}
 	}
 	return len(ids), nil
 }
@@ -1028,8 +1038,10 @@ func (s *Service) ReleaseSessionTasksWithReason(ctx context.Context, sessionID, 
 		before := cloneTask(t)
 		history := readHistory(t.StatusHistoryJSON)
 		preStatus := t.Status
+		demoted := false
 		if s.isWorkingStatus(ctx, t.WorkspaceID, t.Status) {
 			t.Status = "open"
+			demoted = true
 			history = append(history, store.TaskStatusHistoryEntry{
 				At: now, BySession: sessionID, Evt: "status_changed",
 				From: preStatus, To: "open", Note: demoteNote,
@@ -1053,7 +1065,12 @@ func (s *Service) ReleaseSessionTasksWithReason(ctx context.Context, sessionID, 
 			Note:      releaseNote,
 		})
 		s.publish(Event{Kind: EventTaskUpdated, WorkspaceID: t.WorkspaceID, Task: t, At: now})
-		s.emitter.EmitStatusChanged(ctx, t, preStatus, t.Status, EmitContext{ActorKind: "system", SessionID: sessionID})
+		ec := EmitContext{ActorKind: "system", SessionID: sessionID}
+		if demoted {
+			s.emitter.EmitStatusChanged(ctx, t, preStatus, t.Status, ec)
+		} else {
+			s.emitter.EmitUpdated(ctx, t, ec)
+		}
 	}
 	return len(ids), nil
 }

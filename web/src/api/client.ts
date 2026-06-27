@@ -793,8 +793,11 @@ export function submitDescription(data: {
 }
 
 // Mesh
-export function getMeshStatus(): Promise<MeshStatusResponse> {
-  return request('/mesh/status')
+export function getMeshStatus(params?: { msg?: string; includeTaskEvents?: boolean }): Promise<MeshStatusResponse> {
+  const qs = new URLSearchParams()
+  if (params?.msg) qs.set('msg', params.msg)
+  if (params?.includeTaskEvents) qs.set('include_task_events', '1')
+  return request(`/mesh/status${qs.toString() ? `?${qs}` : ''}`)
 }
 
 // Mesh agent "Focus" — switches the user's local tmux to the target
