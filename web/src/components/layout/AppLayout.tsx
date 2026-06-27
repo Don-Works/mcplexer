@@ -7,6 +7,7 @@ import {
   FileText,
   FolderOpen,
   GitBranch,
+  Inbox,
   Layers,
   LayoutDashboard,
   Laptop,
@@ -95,6 +96,7 @@ const monitorNav: NavItem[] = [
 ]
 
 const inboxNav: NavItem[] = [
+  { label: 'Human inbox', href: '/app', icon: <Inbox className="h-4 w-4" />, hint: 'Mobile-first approvals and human task queue' },
   { label: 'Approvals', href: '/approvals', icon: <ShieldCheck className="h-4 w-4" />, hint: 'Pending tool-call approvals waiting on your decision' },
   { label: 'Worker proposals', href: '/worker-approvals', icon: <ShieldCheck className="h-4 w-4" />, hint: 'Worker propose-mode changes waiting on your decision' },
 ]
@@ -498,6 +500,9 @@ function FullSidebarNav({ onNavigate }: { onNavigate?: () => void }) {
   // Brain status — hide brain nav entries when disabled.
   const { enabled: brainEnabled } = useBrainStatus()
   const inboxNavWithBadges: NavItem[] = inboxNav.map((item) => {
+    if (item.href === '/app') {
+      return { ...item, warnBadge: pendingToolApprovals.length }
+    }
     if (item.href === '/approvals') {
       return { ...item, warnBadge: pendingToolApprovals.length }
     }
@@ -612,6 +617,12 @@ function ServerSidebarNav({
     })
   }
   if (hasCapability(system, 'tasks')) {
+    serverNav.push({
+      label: 'Human inbox',
+      href: '/app',
+      icon: <Inbox className="h-4 w-4" />,
+      hint: 'Mobile-first approvals and human task queue',
+    })
     serverNav.push({
       label: 'Tasks',
       href: '/tasks',

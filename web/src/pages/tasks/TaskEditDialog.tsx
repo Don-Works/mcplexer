@@ -39,11 +39,14 @@ interface BaseProps {
   onSaved: (task: Task) => void
 }
 
+type AssigneeKind = 'session' | 'user' | 'none'
+
 interface CreateProps extends BaseProps {
   mode: 'create'
   defaultWorkspaceId?: string
   composeInto?: string
   initialAssignee?: string
+  initialAssigneeKind?: AssigneeKind
 }
 
 interface EditProps extends BaseProps {
@@ -96,13 +99,19 @@ function taskAssigneePayload(s: string): CreateTaskBody['assignee'] {
   return { session_id: v }
 }
 
+function taskAssigneeKind(task: Task): AssigneeKind {
+  if (task.assignee_user_id) return 'user'
+  if (task.assignee_session_id || task.assignee_peer_id) return 'session'
+  return 'none'
+}
+
 export function TaskEditDialog(props: TaskEditDialogProps) {
   const isEdit = props.mode === 'edit'
   const editTask = isEdit ? props.task : null
   const editTagsKey = editTask?.tags?.join('\n') ?? ''
   const resetKey = isEdit
     ? `edit:${props.task.workspace_id}:${props.task.id}`
-    : `create:${props.defaultWorkspaceId ?? ''}:${props.composeInto ?? ''}:${props.initialAssignee ?? ''}`
+    : `create:${props.defaultWorkspaceId ?? ''}:${props.composeInto ?? ''}:${props.initialAssigneeKind ?? ''}:${props.initialAssignee ?? ''}`
   const initial = useMemo<{
     workspaceId: string
     title: string
@@ -113,6 +122,7 @@ export function TaskEditDialog(props: TaskEditDialogProps) {
     tags: string[]
     meta: string
     assignee: string
+    assigneeKind: AssigneeKind
     composeInto: string
   }>(() => {
     if (isEdit) {
@@ -127,6 +137,7 @@ export function TaskEditDialog(props: TaskEditDialogProps) {
         tags: task.tags ?? [],
         meta: task.meta ?? '',
         assignee: taskAssigneeInput(task),
+        assigneeKind: taskAssigneeKind(task),
         composeInto: '',
       }
     }
@@ -140,6 +151,7 @@ export function TaskEditDialog(props: TaskEditDialogProps) {
       tags: [],
       meta: '',
       assignee: props.initialAssignee ?? '',
+      assigneeKind: props.initialAssigneeKind ?? (props.initialAssignee ? 'session' : 'none'),
       composeInto: props.composeInto ?? '',
     }
   }, [
@@ -158,6 +170,7 @@ export function TaskEditDialog(props: TaskEditDialogProps) {
     editTask?.assignee_session_id,
     props.mode === 'create' ? props.defaultWorkspaceId : undefined,
     props.mode === 'create' ? props.initialAssignee : undefined,
+    props.mode === 'create' ? props.initialAssigneeKind : undefined,
     props.mode === 'create' ? props.composeInto : undefined,
   ])
 
@@ -175,13 +188,7 @@ export function TaskEditDialog(props: TaskEditDialogProps) {
   // will be sent (preserves the existing unassigned state); "user"
   // routes the value through `assignee.user_id` (migration 105); the
   // legacy default routes it through `assignee.session_id`.
-  const [assigneeKind, setAssigneeKind] = useState<'session' | 'user' | 'none'>(
-    isEdit && props.task.assignee_user_id
-      ? 'user'
-      : isEdit && props.task.assignee_session_id
-        ? 'session'
-        : 'none',
-  )
+  const [assigneeKind, setAssigneeKind] = useState<AssigneeKind>(initial.assigneeKind)
   const [assignee, setAssignee] = useState(initial.assignee)
   const [composeInto, setComposeInto] = useState(initial.composeInto)
   const [busy, setBusy] = useState(false)
@@ -212,13 +219,7 @@ export function TaskEditDialog(props: TaskEditDialogProps) {
     setMeta(initial.meta)
     setAssignee(initial.assignee)
     setComposeInto(initial.composeInto)
-    setAssigneeKind(
-      isEdit && props.task.assignee_user_id
-        ? 'user'
-        : isEdit && props.task.assignee_session_id
-          ? 'session'
-          : 'none',
-    )
+    setAssigneeKind(initial.assigneeKind)
   }, [props.open, resetKey, initial, isEdit, props])
 
   function commitTag() {
@@ -537,9 +538,9 @@ export function TaskEditDialog(props: TaskEditDialogProps) {
 function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return (
     <div className="space-y-1">
-      <div className="flex items-baseline justify-between">
+      <div className="flex flex-col gap-0.5 sm:flex-row sm:items-baseline sm:justify-between">
         <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{label}</Label>
-        {hint ? <span className="text-[10px] text-muted-foreground/70">{hint}</span> : null}
+        {hint ? <span className="text-[10px] leading-snug text-muted-foreground/70 sm:text-right">{hint}</span> : null}
       </div>
       {children}
     </div>

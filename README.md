@@ -84,6 +84,16 @@ task install
 
 **Install the dashboard as a desktop app:** in Chrome / Edge / Arc, click the install icon in the address bar (or "Install MCPlexer…" from the menu). The PWA runs in a standalone window with its own Dock icon, and fires OS notifications for approvals and high-priority mesh signals while open.
 
+**Install the mobile PWA over Tailscale:** expose the daemon only on your tailnet and allow the Tailscale hostname as a browser origin:
+
+```bash
+MCPLEXER_HTTP_ADDR=0.0.0.0:3333 \
+MCPLEXER_TRUSTED_HOSTS=my-mac.tailnet-name.ts.net \
+mcplexer serve
+```
+
+Open `https://my-mac.tailnet-name.ts.net/app` from the phone, then install it from the browser menu. Use the HTTPS Tailscale hostname for mobile installability and notification support; the bare hostname belongs in `MCPLEXER_TRUSTED_HOSTS`.
+
 ### Or just the binary
 
 ```bash
@@ -156,6 +166,7 @@ YAML-sourced items are auto-pruned when removed from the config file. Items crea
 |----------|---------|-------------|
 | `MCPLEXER_MODE` | `stdio` | Transport mode: `stdio` or `http` |
 | `MCPLEXER_HTTP_ADDR` | `127.0.0.1:3333` | HTTP listen address |
+| `MCPLEXER_TRUSTED_HOSTS` | auto local hostnames | Extra browser Origin hostnames for LAN or Tailscale UI access |
 | `MCPLEXER_DB_DSN` | `~/.mcplexer/mcplexer.db` | Database path |
 | `MCPLEXER_CONFIG` | `~/.mcplexer/mcplexer.yaml` | Config file path |
 | `MCPLEXER_AGE_KEY` | auto-generated | Path to age identity file |

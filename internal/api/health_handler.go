@@ -32,7 +32,8 @@ type SystemInfo struct {
 	P2PEnabled bool   `json:"p2p_enabled"`
 	// ServerProfile is "full" for a local workstation, or a focused server
 	// profile such as "skills", "tasks", or "skills+tasks".
-	ServerProfile string `json:"server_profile,omitempty"`
+	ServerProfile string   `json:"server_profile,omitempty"`
+	TrustedHosts  []string `json:"trusted_hosts,omitempty"`
 	// Capabilities lets the UI hide workstation-only surfaces when a daemon
 	// is running as a shared server. Missing means "legacy/full".
 	Capabilities map[string]bool `json:"capabilities,omitempty"`

@@ -84,12 +84,13 @@ export function AuditPage() {
     hasMore,
     loadMore,
   } = useAuditFeed(filter)
+  const loadedPages = pages ?? []
 
   // Live events not yet in the keyset feed, prepended to the top.
   const uniqueLive = useMemo(() => {
-    const ids = new Set(pages.map((r) => r.id))
+    const ids = new Set(loadedPages.map((r) => r.id))
     return liveRecords.filter((r) => !ids.has(r.id))
-  }, [pages, liveRecords])
+  }, [loadedPages, liveRecords])
 
   // When a search is active, its ranked results replace the feed entirely.
   const searchActive = search.results !== null
@@ -109,8 +110,8 @@ export function AuditPage() {
     [filter],
   )
   const feedRecords = useMemo(
-    () => (searchActive ? search.results ?? [] : [...uniqueLive, ...pages]),
-    [searchActive, search.results, uniqueLive, pages],
+    () => (searchActive ? search.results ?? [] : [...uniqueLive, ...loadedPages]),
+    [searchActive, search.results, uniqueLive, loadedPages],
   )
 
   // --- Selection (URL-backed, deep-link fallback + keyboard nav) ---
