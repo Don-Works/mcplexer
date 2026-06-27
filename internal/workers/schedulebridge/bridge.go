@@ -59,7 +59,7 @@ func New(jobs store.ScheduledJobStore, kicker SchedulerKicker) *Bridge {
 // EnsureForWorker creates a kind="worker" scheduled_jobs row for w when
 // one doesn't already exist, refreshes spec/enabled/next_run_at on the
 // existing row when the worker config has drifted, or deletes the row
-// when w is disabled. Idempotent.
+// when w is disabled or archived. Idempotent.
 //
 // When ScheduleSpec is the manual sentinel (scheduler.SpecManual), the
 // worker has no scheduler-driven firing — only mesh triggers and
@@ -77,12 +77,12 @@ func (b *Bridge) EnsureForWorker(ctx context.Context, w *store.Worker) error {
 	if err != nil {
 		return err
 	}
-	if !w.Enabled {
+	if !w.Enabled || w.ArchivedAt != nil {
 		if existing == nil {
 			return nil
 		}
 		if err := b.jobs.DeleteScheduledJob(ctx, existing.ID); err != nil {
-			return fmt.Errorf("delete scheduled job (disabled): %w", err)
+			return fmt.Errorf("delete scheduled job (disabled/archived): %w", err)
 		}
 		b.kick(ctx)
 		return nil

@@ -262,16 +262,19 @@ func defaultSpecValidator(spec string) error {
 // per worker so admin agents can triage at a glance without a follow-up
 // list_runs call.
 type WorkerSummary struct {
-	ID            string     `json:"id"`
-	Name          string     `json:"name"`
-	ModelProvider string     `json:"model_provider"`
-	ModelID       string     `json:"model_id"`
-	ScheduleSpec  string     `json:"schedule_spec"`
-	Enabled       bool       `json:"enabled"`
-	LastRunStatus string     `json:"last_run_status,omitempty"`
-	LastRunAt     *time.Time `json:"last_run_at,omitempty"`
-	CreatedAt     time.Time  `json:"created_at"`
-	WorkspaceID   string     `json:"workspace_id"`
+	ID             string     `json:"id"`
+	Name           string     `json:"name"`
+	ModelProvider  string     `json:"model_provider"`
+	ModelID        string     `json:"model_id"`
+	ScheduleSpec   string     `json:"schedule_spec"`
+	Enabled        bool       `json:"enabled"`
+	LastRunStatus  string     `json:"last_run_status,omitempty"`
+	LastRunAt      *time.Time `json:"last_run_at,omitempty"`
+	CreatedAt      time.Time  `json:"created_at"`
+	WorkspaceID    string     `json:"workspace_id"`
+	Archived       bool       `json:"archived,omitempty"`
+	ArchivedAt     *time.Time `json:"archived_at,omitempty"`
+	ArchivedReason string     `json:"archived_reason,omitempty"`
 
 	// Ephemeral workers are one-shot contexts created by Delegate. They
 	// live in the same workers table so runs/cost/audit keep one ledger,
@@ -287,9 +290,14 @@ type WorkerSummary struct {
 
 // ListInput matches the mcplexer__list_workers tool input schema.
 type ListInput struct {
-	EnabledOnly bool   `json:"enabled_only,omitempty"`
-	WorkspaceID string `json:"workspace_id,omitempty"`
-	NamePattern string `json:"name_pattern,omitempty"`
+	EnabledOnly     bool   `json:"enabled_only,omitempty"`
+	IncludeArchived bool   `json:"include_archived,omitempty"`
+	WorkspaceID     string `json:"workspace_id,omitempty"`
+	NamePattern     string `json:"name_pattern,omitempty"`
+}
+
+type archivedWorkerLister interface {
+	ListWorkersIncludingArchived(ctx context.Context, workspaceID string, enabledOnly bool) ([]*store.Worker, error)
 }
 
 // List returns workers across the configured workspace(s). When
@@ -302,7 +310,17 @@ func (s *Service) List(ctx context.Context, in ListInput) ([]WorkerSummary, erro
 	}
 	out := make([]WorkerSummary, 0)
 	for _, wsID := range workspaces {
-		ws, lerr := s.store.ListWorkers(ctx, wsID, in.EnabledOnly)
+		var ws []*store.Worker
+		var lerr error
+		if in.IncludeArchived {
+			if lister, ok := s.store.(archivedWorkerLister); ok {
+				ws, lerr = lister.ListWorkersIncludingArchived(ctx, wsID, in.EnabledOnly)
+			} else {
+				ws, lerr = s.store.ListWorkers(ctx, wsID, in.EnabledOnly)
+			}
+		} else {
+			ws, lerr = s.store.ListWorkers(ctx, wsID, in.EnabledOnly)
+		}
 		if lerr != nil {
 			return nil, fmt.Errorf("list workers in %s: %w", wsID, lerr)
 		}
@@ -346,14 +364,17 @@ func (s *Service) collectWorkspaceIDs(
 // run yet) — they're a UI hint, not a load-bearing field.
 func (s *Service) summarize(ctx context.Context, w *store.Worker) WorkerSummary {
 	row := WorkerSummary{
-		ID:            w.ID,
-		Name:          w.Name,
-		ModelProvider: w.ModelProvider,
-		ModelID:       w.ModelID,
-		ScheduleSpec:  w.ScheduleSpec,
-		Enabled:       w.Enabled,
-		CreatedAt:     w.CreatedAt,
-		WorkspaceID:   w.WorkspaceID,
+		ID:             w.ID,
+		Name:           w.Name,
+		ModelProvider:  w.ModelProvider,
+		ModelID:        w.ModelID,
+		ScheduleSpec:   w.ScheduleSpec,
+		Enabled:        w.Enabled,
+		CreatedAt:      w.CreatedAt,
+		WorkspaceID:    w.WorkspaceID,
+		Archived:       w.ArchivedAt != nil,
+		ArchivedAt:     w.ArchivedAt,
+		ArchivedReason: w.ArchivedReason,
 	}
 	if meta, ok := parseDelegationMetadata(w.ParametersJSON); ok {
 		row.Ephemeral = true

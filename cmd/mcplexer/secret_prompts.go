@@ -26,6 +26,7 @@ func (a *notifyBusAdapter) Publish(id, label, reason string) {
 	}
 	a.bus.Publish(notify.Event{
 		MessageID: id,
+		Source:    "secret",
 		AgentName: "mcplexer",
 		Role:      "secret-prompt",
 		Kind:      "secret_prompt",

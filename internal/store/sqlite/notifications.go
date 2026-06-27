@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/don-works/mcplexer/internal/notify"
+	"github.com/don-works/mcplexer/internal/store"
 )
 
 // InsertNotification persists a notification. Returns the row ID. If
@@ -175,4 +176,159 @@ func (d *DB) PruneNotifications(ctx context.Context, cap int) (int, error) {
 	}
 	n, _ := res.RowsAffected()
 	return int(n), nil
+}
+
+// GetWebPushVAPIDKeys returns the singleton locally-generated Web Push
+// protocol signing keys. ErrNotFound means the daemon should generate them.
+func (d *DB) GetWebPushVAPIDKeys(ctx context.Context) (notify.WebPushVAPIDKeys, error) {
+	var (
+		keys      notify.WebPushVAPIDKeys
+		createdAt string
+		updatedAt string
+	)
+	err := d.q.QueryRowContext(ctx, `
+		SELECT public_key, private_key, created_at, updated_at
+		FROM web_push_vapid
+		WHERE id = 1`).Scan(&keys.PublicKey, &keys.PrivateKey, &createdAt, &updatedAt)
+	if err == sql.ErrNoRows {
+		return notify.WebPushVAPIDKeys{}, store.ErrNotFound
+	}
+	if err != nil {
+		return notify.WebPushVAPIDKeys{}, err
+	}
+	keys.CreatedAt = parseTime(createdAt)
+	keys.UpdatedAt = parseTime(updatedAt)
+	return keys, nil
+}
+
+// InsertWebPushVAPIDKeys inserts the singleton Web Push protocol signing keys.
+// If another caller already created them, the insert is ignored.
+func (d *DB) InsertWebPushVAPIDKeys(ctx context.Context, keys notify.WebPushVAPIDKeys) error {
+	if keys.CreatedAt.IsZero() {
+		keys.CreatedAt = time.Now().UTC()
+	}
+	if keys.UpdatedAt.IsZero() {
+		keys.UpdatedAt = keys.CreatedAt
+	}
+	_, err := d.q.ExecContext(ctx, `
+		INSERT OR IGNORE INTO web_push_vapid
+			(id, public_key, private_key, created_at, updated_at)
+		VALUES (1, ?, ?, ?, ?)`,
+		keys.PublicKey, keys.PrivateKey, formatTime(keys.CreatedAt), formatTime(keys.UpdatedAt),
+	)
+	return err
+}
+
+// UpsertWebPushSubscription records or refreshes a browser PushSubscription.
+func (d *DB) UpsertWebPushSubscription(ctx context.Context, sub notify.WebPushSubscription) error {
+	now := time.Now().UTC()
+	if sub.CreatedAt.IsZero() {
+		sub.CreatedAt = now
+	}
+	if sub.UpdatedAt.IsZero() {
+		sub.UpdatedAt = now
+	}
+	enabled := 0
+	if sub.Enabled {
+		enabled = 1
+	}
+	_, err := d.q.ExecContext(ctx, `
+		INSERT INTO web_push_subscriptions
+			(endpoint, p256dh, auth, user_agent, origin, device_label, enabled, created_at, updated_at, last_error)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '')
+		ON CONFLICT(endpoint) DO UPDATE SET
+			p256dh = excluded.p256dh,
+			auth = excluded.auth,
+			user_agent = excluded.user_agent,
+			origin = excluded.origin,
+			device_label = excluded.device_label,
+			enabled = excluded.enabled,
+			updated_at = excluded.updated_at,
+			last_error = '',
+			last_error_at = NULL`,
+		sub.Endpoint, sub.P256DH, sub.Auth, sub.UserAgent, sub.Origin, sub.DeviceLabel,
+		enabled, formatTime(sub.CreatedAt), formatTime(sub.UpdatedAt),
+	)
+	return err
+}
+
+func (d *DB) DeleteWebPushSubscription(ctx context.Context, endpoint string) error {
+	_, err := d.q.ExecContext(ctx,
+		`DELETE FROM web_push_subscriptions WHERE endpoint = ?`,
+		endpoint,
+	)
+	return err
+}
+
+func (d *DB) ListWebPushSubscriptions(ctx context.Context) ([]notify.WebPushSubscription, error) {
+	rows, err := d.q.QueryContext(ctx, `
+		SELECT endpoint, p256dh, auth, user_agent, origin, device_label, enabled,
+		       created_at, updated_at, last_success_at, last_error_at, last_error
+		FROM web_push_subscriptions
+		WHERE enabled = 1
+		ORDER BY updated_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []notify.WebPushSubscription
+	for rows.Next() {
+		var (
+			sub           notify.WebPushSubscription
+			enabled       int
+			createdAt     string
+			updatedAt     string
+			lastSuccessAt sql.NullString
+			lastErrorAt   sql.NullString
+		)
+		if err := rows.Scan(
+			&sub.Endpoint, &sub.P256DH, &sub.Auth, &sub.UserAgent, &sub.Origin, &sub.DeviceLabel,
+			&enabled, &createdAt, &updatedAt, &lastSuccessAt, &lastErrorAt, &sub.LastError,
+		); err != nil {
+			return nil, err
+		}
+		sub.Enabled = enabled == 1
+		sub.CreatedAt = parseTime(createdAt)
+		sub.UpdatedAt = parseTime(updatedAt)
+		if lastSuccessAt.Valid {
+			t := parseTime(lastSuccessAt.String)
+			sub.LastSuccessAt = &t
+		}
+		if lastErrorAt.Valid {
+			t := parseTime(lastErrorAt.String)
+			sub.LastErrorAt = &t
+		}
+		out = append(out, sub)
+	}
+	return out, rows.Err()
+}
+
+func (d *DB) MarkWebPushSubscriptionSuccess(ctx context.Context, endpoint string) error {
+	now := formatTime(time.Now().UTC())
+	_, err := d.q.ExecContext(ctx, `
+		UPDATE web_push_subscriptions
+		SET last_success_at = ?, last_error_at = NULL, last_error = '', enabled = 1, updated_at = ?
+		WHERE endpoint = ?`,
+		now, now, endpoint,
+	)
+	return err
+}
+
+func (d *DB) MarkWebPushSubscriptionError(ctx context.Context, endpoint, message string, disable bool) error {
+	if len(message) > 500 {
+		message = message[:500]
+	}
+	enabled := 1
+	if disable {
+		enabled = 0
+	}
+	now := formatTime(time.Now().UTC())
+	_, err := d.q.ExecContext(ctx, `
+		UPDATE web_push_subscriptions
+		SET last_error_at = ?, last_error = ?, enabled = ?, updated_at = ?
+		WHERE endpoint = ?`,
+		now, message, enabled, now, endpoint,
+	)
+	return err
 }

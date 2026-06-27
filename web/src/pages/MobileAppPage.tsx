@@ -8,8 +8,8 @@ import {
   Inbox,
   ListTodo,
   Plus,
-  RefreshCw,
   Search,
+  Send,
   ShieldCheck,
   Smartphone,
   Wifi,
@@ -34,6 +34,14 @@ import {
   useNow,
 } from '@/pages/tasks/task-utils'
 import { getHealth, listApprovals, listUsers, listWorkspaces, type HealthResponse } from '@/api/client'
+import {
+  getPushPublicKey,
+  getPushStatus,
+  sendTestPush,
+  subscribePush,
+  unsubscribePush,
+  type BrowserPushSubscriptionJSON,
+} from '@/api/notifications'
 import { listTasks, type Task, type TaskListFilter } from '@/api/tasks'
 import type { ToolApproval, User, Workspace } from '@/api/types'
 import { useApi } from '@/hooks/use-api'
@@ -119,10 +127,12 @@ function installUrl(): string {
   return `${window.location.origin}/app`
 }
 
-function mergeApprovals(live: ToolApproval[], loaded: ToolApproval[] | null): ToolApproval[] {
+function mergeApprovals(live: ToolApproval[], loaded: ToolApproval[] | null, resolvedIds: string[]): ToolApproval[] {
   const seen = new Set<string>()
+  const resolved = new Set(resolvedIds)
   const out: ToolApproval[] = []
   for (const approval of [...live, ...(loaded ?? [])]) {
+    if (resolved.has(approval.id)) continue
     if (seen.has(approval.id)) continue
     seen.add(approval.id)
     out.push(approval)
@@ -153,8 +163,17 @@ function humanLabel(task: Task, users: Map<string, User>): string {
   return `@${user?.display_name || userID}`
 }
 
+function urlBase64ToArrayBuffer(value: string): ArrayBuffer {
+  const padding = '='.repeat((4 - (value.length % 4)) % 4)
+  const base64 = (value + padding).replace(/-/g, '+').replace(/_/g, '/')
+  const raw = window.atob(base64)
+  const out = new Uint8Array(raw.length)
+  for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i)
+  return out.buffer as ArrayBuffer
+}
+
 export function MobileAppPage() {
-  const { pending, connected } = useApprovalStream()
+  const { pending, connected, resolvedIds } = useApprovalStream()
   const now = useNowTick()
   useNow(30_000)
 
@@ -205,7 +224,7 @@ export function MobileAppPage() {
     onEvent: () => refetchTasks(),
   })
 
-  const allPending = useMemo(() => mergeApprovals(pending, dbPending), [pending, dbPending])
+  const allPending = useMemo(() => mergeApprovals(pending, dbPending, resolvedIds), [pending, dbPending, resolvedIds])
   const filteredTasks = useMemo(() => {
     const rows = tasksData ?? []
     const priorityRows = priorityFilter === 'all'
@@ -245,10 +264,6 @@ export function MobileAppPage() {
           </div>
         </div>
         <div className="flex gap-2">
-          <Button variant="outline" size="sm" onClick={() => { refetchPending(); refetchTasks() }}>
-            <RefreshCw className="h-4 w-4" />
-            Refresh
-          </Button>
           <Button size="sm" onClick={() => setCreateOpen(true)} disabled={workspaces.length === 0}>
             <Plus className="h-4 w-4" />
             New human task
@@ -322,8 +337,35 @@ function PwaStatusPanel({
     if (typeof window === 'undefined' || !('Notification' in window)) return 'unsupported'
     return window.Notification.permission
   })
+  const [pushState, setPushState] = useState<'checking' | 'unsupported' | 'needs_https' | 'off' | 'on'>('checking')
+  const [pushBusy, setPushBusy] = useState(false)
+  const [pushCount, setPushCount] = useState(0)
   const trusted = hostnameTrusted(window.location.hostname, health?.system?.trusted_hosts)
   const secure = secureOrigin()
+
+  const refreshPushState = useCallback(async () => {
+    if (typeof window === 'undefined') return
+    if (!('Notification' in window) || !('serviceWorker' in navigator) || !('PushManager' in window)) {
+      setPushState('unsupported')
+      return
+    }
+    setNotificationPermission(window.Notification.permission)
+    if (!secureOrigin()) {
+      setPushState('needs_https')
+      return
+    }
+    try {
+      const [registration, status] = await Promise.all([
+        navigator.serviceWorker.ready,
+        getPushStatus().catch(() => ({ subscription_count: 0 })),
+      ])
+      const sub = await registration.pushManager.getSubscription()
+      setPushCount(status.subscription_count)
+      setPushState(sub ? 'on' : 'off')
+    } catch {
+      setPushState('off')
+    }
+  }, [])
 
   useEffect(() => {
     const mql = window.matchMedia('(display-mode: standalone)')
@@ -334,19 +376,89 @@ function PwaStatusPanel({
     }
   }, [])
 
-  async function requestNotifications() {
-    if (!('Notification' in window)) {
+  useEffect(() => {
+    void refreshPushState()
+  }, [refreshPushState])
+
+  async function enablePushNotifications() {
+    if (!('Notification' in window) || !('serviceWorker' in navigator) || !('PushManager' in window)) {
       setNotificationPermission('unsupported')
+      setPushState('unsupported')
+      toast.error('Push notifications are not supported in this browser mode')
       return
     }
+    if (!secureOrigin()) {
+      setPushState('needs_https')
+      toast.error('Push notifications need HTTPS or localhost')
+      return
+    }
+    setPushBusy(true)
     try {
       const result = await window.Notification.requestPermission()
       setNotificationPermission(result)
-      if (result === 'granted') toast.success('Notifications enabled')
+      if (result !== 'granted') {
+        setPushState('off')
+        return
+      }
+      const registration = await navigator.serviceWorker.ready
+      let sub = await registration.pushManager.getSubscription()
+      if (!sub) {
+        const key = await getPushPublicKey()
+        sub = await registration.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlBase64ToArrayBuffer(key.public_key),
+        })
+      }
+      await subscribePush(
+        sub.toJSON() as BrowserPushSubscriptionJSON,
+        isStandaloneMode() ? 'Installed PWA' : 'Browser',
+      )
+      await refreshPushState()
+      toast.success('Push notifications enabled')
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Notification permission failed')
+    } finally {
+      setPushBusy(false)
     }
   }
+
+  async function disablePushNotifications() {
+    if (!('serviceWorker' in navigator)) return
+    setPushBusy(true)
+    try {
+      const registration = await navigator.serviceWorker.ready
+      const sub = await registration.pushManager.getSubscription()
+      if (sub) {
+        const endpoint = sub.endpoint
+        await sub.unsubscribe()
+        await unsubscribePush(endpoint)
+      }
+      await refreshPushState()
+      toast.success('Push notifications disabled')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not disable push notifications')
+    } finally {
+      setPushBusy(false)
+    }
+  }
+
+  async function testPushNotification() {
+    setPushBusy(true)
+    try {
+      await sendTestPush()
+      toast.success('Test notification sent')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Test push failed')
+    } finally {
+      setPushBusy(false)
+    }
+  }
+
+  const notifyValue = pushState === 'on'
+    ? 'push on'
+    : pushState === 'checking'
+      ? 'checking'
+      : notificationPermission
 
   return (
     <section className="grid gap-2 sm:grid-cols-2 xl:grid-cols-5" aria-label="PWA status">
@@ -382,16 +494,23 @@ function PwaStatusPanel({
               Notify
             </div>
             <div className="mt-1 truncate font-mono text-lg text-foreground">
-              {notificationPermission}
+              {notifyValue}
             </div>
           </div>
-          {notificationPermission === 'default' ? (
-            <Button size="sm" onClick={requestNotifications}>
+          {pushState === 'on' ? (
+            <div className="flex items-center gap-1.5">
+              <Button size="icon-sm" variant="outline" onClick={testPushNotification} disabled={pushBusy} title="Send test push">
+                <Send className="h-4 w-4" />
+              </Button>
+              <Button size="icon-sm" variant="ghost" onClick={disablePushNotifications} disabled={pushBusy} title="Disable push">
+                <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+              </Button>
+            </div>
+          ) : pushState === 'off' || notificationPermission === 'default' || notificationPermission === 'granted' ? (
+            <Button size="sm" onClick={enablePushNotifications} disabled={pushBusy || pushState === 'needs_https'}>
               <BellRing className="h-4 w-4" />
-              Enable
+              Push
             </Button>
-          ) : notificationPermission === 'granted' ? (
-            <CheckCircle2 className="h-5 w-5 text-emerald-400" />
           ) : null}
         </div>
         <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
@@ -400,6 +519,9 @@ function PwaStatusPanel({
           </Badge>
           <Badge tone={trusted ? 'success' : 'warn'} variant="outline" className="font-mono">
             {trusted ? 'trusted host' : 'host not listed'}
+          </Badge>
+          <Badge tone={pushState === 'on' ? 'success' : 'muted'} variant="outline" className="font-mono">
+            {pushCount} sub
           </Badge>
         </div>
       </div>

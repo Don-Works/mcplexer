@@ -246,6 +246,9 @@ func (s *Scheduler) workerSkipReason(
 	if err != nil {
 		return fmt.Sprintf("worker missing: %v", err)
 	}
+	if w.ArchivedAt != nil {
+		return "worker archived"
+	}
 	if !w.Enabled {
 		return "worker disabled"
 	}

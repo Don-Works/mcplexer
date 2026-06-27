@@ -5,6 +5,8 @@ go 1.25.11
 require (
 	aead.dev/minisign v0.3.0
 	filippo.io/age v1.3.1
+	github.com/Microsoft/go-winio v0.6.2
+	github.com/SherClockHolmes/webpush-go v1.4.0
 	github.com/adrg/frontmatter v0.2.0
 	github.com/dop251/goja v0.0.0-20260311135729-065cd970411c
 	github.com/fsnotify/fsnotify v1.10.1
@@ -51,7 +53,6 @@ require (
 	github.com/GoogleCloudPlatform/opentelemetry-operations-go/detectors/gcp v1.32.0 // indirect
 	github.com/GoogleCloudPlatform/opentelemetry-operations-go/exporter/metric v0.56.0 // indirect
 	github.com/GoogleCloudPlatform/opentelemetry-operations-go/internal/resourcemapping v0.56.0 // indirect
-	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/ProtonMail/go-crypto v1.4.1 // indirect
 	github.com/aws/aws-sdk-go-v2 v1.41.7 // indirect
 	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.10 // indirect

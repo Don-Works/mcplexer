@@ -69,6 +69,7 @@ type RouterDeps struct {
 	BackupSvc             *backup.Service         // optional; enables /api/v1/backups
 	NotifyBus             *notify.Bus             // optional; enables user-notification SSE stream
 	NotifyStore           notify.Store            // optional; enables persistent /api/v1/notifications endpoints (Signal tray)
+	NotifyPushStore       notify.PushStore        // optional; enables standards-based PWA Web Push endpoints
 	SessionBus            *session.Bus            // optional; enables session SSE stream
 	ToolCache             *cache.ToolCache        // optional; enables cache stats/flush API
 	InstallManager        *install.Manager        // optional; enables MCP install endpoints
@@ -352,6 +353,15 @@ func NewRouter(deps RouterDeps) http.Handler {
 		mux.HandleFunc("POST /api/v1/notifications/read", nh.markReadBulk)
 	}
 
+	if deps.NotifyPushStore != nil {
+		ph := &pushHandler{store: deps.NotifyPushStore, bus: deps.NotifyBus}
+		mux.HandleFunc("GET /api/v1/push/public-key", ph.publicKey)
+		mux.HandleFunc("GET /api/v1/push/status", ph.status)
+		mux.HandleFunc("POST /api/v1/push/subscribe", ph.subscribe)
+		mux.HandleFunc("POST /api/v1/push/unsubscribe", ph.unsubscribe)
+		mux.HandleFunc("POST /api/v1/push/test", ph.test)
+	}
+
 	if deps.BackupSvc != nil {
 		bh := &backupHandler{svc: deps.BackupSvc}
 		mux.HandleFunc("GET /api/v1/backups", bh.list)
@@ -592,6 +602,7 @@ func NewRouter(deps RouterDeps) http.Handler {
 		mux.HandleFunc("GET /api/v1/workers/{id}", wh.get)
 		mux.HandleFunc("PATCH /api/v1/workers/{id}", wh.update)
 		mux.HandleFunc("DELETE /api/v1/workers/{id}", wh.remove)
+		mux.HandleFunc("POST /api/v1/workers/{id}/archive", wh.archive)
 		mux.HandleFunc("POST /api/v1/workers/{id}/pause", wh.pause)
 		mux.HandleFunc("POST /api/v1/workers/{id}/resume", wh.resume)
 		mux.HandleFunc("POST /api/v1/workers/{id}/run-now", wh.runNow)

@@ -1,15 +1,13 @@
-// consolidator_autoinstall.go — daemon-startup wiring that guarantees a
-// memory-consolidator worker exists in every workspace whenever an
-// api_key auth scope has been configured. The consolidator runs two
-// passes per execution (global memory + workspace memory, scope-
-// preserving) so the user never has to opt-in per workspace — matching
-// the "global + local simultaneously the whole time" direction.
+// consolidator_autoinstall.go — optional daemon-startup wiring that can
+// install a memory-consolidator worker in every workspace when explicitly
+// enabled by the operator.
 //
 // Safe to call on every boot; idempotent:
 //   - Skips workspaces that already have a worker named "memory-consolidator"
 //   - Skips entirely when no api_key auth scope exists yet (consolidator
-//     needs a model to call; the user will configure one via Settings →
-//     Secrets, and the next daemon boot picks it up)
+//     needs a model to call; the user can configure one via Settings →
+//     Secrets, and then opt into boot-time installation if desired)
+//   - Skips by default unless MCPLEXER_AUTO_INSTALL_MEMORY_CONSOLIDATOR=1
 //
 // Best-effort: a failed install logs + continues to the next workspace
 // rather than aborting daemon startup.
@@ -18,6 +16,7 @@ package main
 import (
 	"context"
 	"log"
+	"os"
 	"strings"
 
 	"github.com/don-works/mcplexer/internal/store"
@@ -30,16 +29,24 @@ const (
 	autoConsolidatorSchedule = "0 3 * * *"
 )
 
-// autoInstallConsolidator ensures the memory-consolidator worker exists
-// in every workspace. Called once at daemon startup, after the worker
-// admin service is wired. Idempotent; safe to no-op when prereqs are
-// missing.
+func autoInstallConsolidatorEnabled() bool {
+	v := strings.TrimSpace(strings.ToLower(os.Getenv("MCPLEXER_AUTO_INSTALL_MEMORY_CONSOLIDATOR")))
+	return v == "1" || v == "true" || v == "yes" || v == "on"
+}
+
+// autoInstallConsolidator ensures the memory-consolidator worker exists in
+// every workspace only when explicitly enabled. Called once at daemon startup,
+// after the worker admin service is wired. Idempotent; safe to no-op when
+// prereqs are missing.
 func autoInstallConsolidator(
 	ctx context.Context,
 	db store.Store,
 	workers *workersadmin.Service,
 ) {
 	if db == nil || workers == nil {
+		return
+	}
+	if !autoInstallConsolidatorEnabled() {
 		return
 	}
 	scopeID, ok := pickConsolidatorScope(ctx, db)

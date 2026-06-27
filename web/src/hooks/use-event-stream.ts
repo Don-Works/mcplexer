@@ -1,3 +1,4 @@
+import { useSyncExternalStore } from 'react'
 import { getBackoffDelay } from '@/lib/sse-backoff'
 
 // Single multiplexed SSE hub. The gateway serves GET /api/v1/events/stream,
@@ -47,15 +48,31 @@ let es: EventSource | null = null
 let retry = 0
 let retryTimer: ReturnType<typeof setTimeout> | undefined
 let refcount = 0
+let connectionState: EventStreamState = 'idle'
+const statusListeners = new Set<() => void>()
+
+export type EventStreamState = 'idle' | 'connecting' | 'open' | 'reconnecting'
+
+function emitStatus() {
+  for (const listener of statusListeners) listener()
+}
+
+function setConnectionState(next: EventStreamState) {
+  if (connectionState === next) return
+  connectionState = next
+  emitStatus()
+}
 
 function connect() {
   if (es) return
+  setConnectionState(retry > 0 ? 'reconnecting' : 'connecting')
   const apiBase = import.meta.env.VITE_API_BASE_URL?.replace(/\/api\/v1$/, '') || ''
   const source = new EventSource(`${apiBase}/api/v1/events/stream`)
   es = source
 
   source.onopen = () => {
     retry = 0
+    setConnectionState('open')
   }
 
   for (const channel of CHANNELS) {
@@ -73,6 +90,7 @@ function connect() {
   source.onerror = () => {
     source.close()
     if (es === source) es = null
+    setConnectionState('reconnecting')
     const delay = getBackoffDelay(retry)
     retry++
     retryTimer = setTimeout(() => {
@@ -88,6 +106,7 @@ function teardown() {
   }
   es?.close()
   es = null
+  setConnectionState('idle')
 }
 
 // subscribeEvent registers a handler for one channel and returns an
@@ -102,4 +121,13 @@ export function subscribeEvent(channel: EventChannel, handler: Handler): () => v
     refcount--
     if (refcount === 0) teardown()
   }
+}
+
+function subscribeStatus(listener: () => void): () => void {
+  statusListeners.add(listener)
+  return () => statusListeners.delete(listener)
+}
+
+export function useEventStreamStatus(): EventStreamState {
+  return useSyncExternalStore(subscribeStatus, () => connectionState, () => connectionState)
 }

@@ -264,6 +264,37 @@ func TestRunWithOptsDisabledWorkerDoesNotStart(t *testing.T) {
 	}
 }
 
+func TestRunWithOptsArchivedWorkerDoesNotStart(t *testing.T) {
+	db := newTestStore(t)
+	wsID, scopeID := setupFKs(t, db)
+	w := sampleWorker(wsID, scopeID)
+	now := time.Now().UTC()
+	w.Enabled = false
+	w.ArchivedAt = &now
+	w.ArchivedReason = "old one-shot worker"
+	createWorker(t, db, w)
+
+	adapter := &fakeAdapter{responses: []models.SendResponse{
+		{Text: "should not run", StopReason: models.StopEndTurn},
+	}}
+	r := makeRunner(t, db, adapter, &fakeDispatcher{}, &fakeMesh{})
+
+	runID, err := r.RunWithOpts(context.Background(), w.ID, runner.RunOpts{})
+	if !errors.Is(err, store.ErrWorkerArchived) {
+		t.Fatalf("err = %v, want ErrWorkerArchived", err)
+	}
+	if runID != "" {
+		t.Fatalf("runID = %q, want empty", runID)
+	}
+	runs, err := db.ListWorkerRuns(context.Background(), w.ID, 10)
+	if err != nil {
+		t.Fatalf("list runs: %v", err)
+	}
+	if len(runs) != 0 {
+		t.Fatalf("created %d run rows for archived worker, want 0", len(runs))
+	}
+}
+
 func TestRun_TextOnlySuccess(t *testing.T) {
 	db := newTestStore(t)
 	wsID, scopeID := setupFKs(t, db)

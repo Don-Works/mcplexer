@@ -44,9 +44,10 @@ type Event struct {
 // Bus fans out notification events to SSE subscribers and (optionally)
 // persists them via Store for the Signal tray.
 type Bus struct {
-	mu    sync.RWMutex
-	subs  map[<-chan Event]chan Event
-	store Store // optional — set via SetStore to enable persistence
+	mu         sync.RWMutex
+	subs       map[<-chan Event]chan Event
+	store      Store      // optional — set via SetStore to enable persistence
+	dispatcher Dispatcher // optional — sends durable out-of-browser push
 }
 
 func NewBus() *Bus {
@@ -59,6 +60,21 @@ func NewBus() *Bus {
 func (b *Bus) SetStore(s Store) {
 	b.mu.Lock()
 	b.store = s
+	b.mu.Unlock()
+}
+
+// Dispatcher receives every published notification after the bus has taken
+// its persistence snapshot. Implementations must be non-blocking from the
+// publisher's point of view; Bus invokes it in a goroutine.
+type Dispatcher interface {
+	Dispatch(ctx context.Context, evt Event)
+}
+
+// SetDispatcher wires an optional out-of-process notification sender, such as
+// standards-based Web Push for installed PWAs.
+func (b *Bus) SetDispatcher(d Dispatcher) {
+	b.mu.Lock()
+	b.dispatcher = d
 	b.mu.Unlock()
 }
 
@@ -85,8 +101,16 @@ func (b *Bus) Unsubscribe(ch <-chan Event) {
 func (b *Bus) Publish(evt Event) {
 	b.mu.RLock()
 	store := b.store
-	subs := b.subs
+	dispatcher := b.dispatcher
+	subs := make([]chan Event, 0, len(b.subs))
+	for _, ch := range b.subs {
+		subs = append(subs, ch)
+	}
 	b.mu.RUnlock()
+
+	if evt.CreatedAt.IsZero() {
+		evt.CreatedAt = time.Now().UTC()
+	}
 
 	if store != nil {
 		// Bounded background write — we don't want a slow DB to back
@@ -99,6 +123,10 @@ func (b *Bus) Publish(evt Event) {
 			)
 		}
 		cancel()
+	}
+
+	if dispatcher != nil {
+		go dispatcher.Dispatch(context.Background(), evt)
 	}
 
 	for _, ch := range subs {

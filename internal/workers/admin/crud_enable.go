@@ -59,6 +59,10 @@ func (s *Service) setEnabledWithVerb(
 	if err != nil {
 		return nil, err
 	}
+	if enabled && w.ArchivedAt != nil {
+		s.emitAuditSetEnabled(ctx, id, verb, enabled, w.Enabled, "error", store.ErrWorkerArchived.Error())
+		return nil, store.ErrWorkerArchived
+	}
 	previous := w.Enabled
 	if w.Enabled == enabled {
 		// Idempotent no-op: still audit so reviewers see the operator

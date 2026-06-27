@@ -19,8 +19,9 @@
 //   v7 — template-based version from the build pipeline.
 //   v8 — evict v7 caches that blanked the dashboard on localhost.
 //   v9 — mobile PWA start_url shell + push notification display hook.
+//   v10 — auto-update messaging and safer notification actions.
 // activate() prunes any cache name that isn't this one.
-const CACHE_NAME = 'mcplexer-shell-v9';
+const CACHE_NAME = 'mcplexer-shell-v10';
 const SHELL_URLS = ['/', '/app?source=pwa', '/icon.svg', '/icon-192.png', '/manifest.webmanifest'];
 
 self.addEventListener('install', (event) => {
@@ -44,7 +45,17 @@ self.addEventListener('activate', (event) => {
     const names = await caches.keys();
     await Promise.all(names.filter((n) => n !== CACHE_NAME).map((n) => caches.delete(n)));
     await self.clients.claim();
+    const all = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    for (const client of all) {
+      client.postMessage({ type: 'mcplexer-sw-activated', version: CACHE_NAME });
+    }
   })());
+});
+
+self.addEventListener('message', (event) => {
+  if (event.data && event.data.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+  }
 });
 
 self.addEventListener('fetch', (event) => {
@@ -108,6 +119,7 @@ self.addEventListener('push', (event) => {
       tag: payload.tag || payload.id || 'mcplexer',
       icon: payload.icon || '/icon-192.png',
       badge: payload.badge || '/icon-192.png',
+      requireInteraction: payload.priority === 'critical',
       data: {
         url: payload.url || payload.path || '/app',
       },

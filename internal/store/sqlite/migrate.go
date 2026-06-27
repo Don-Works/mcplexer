@@ -114,6 +114,7 @@ var schemaInvariants = []func(context.Context, *sql.DB) error{
 	ensureSkillRefinementProposals,
 	ensureDownstreamCallTimeout,
 	ensureWorkerCapabilityProfile,
+	ensureWorkerArchiveColumns,
 	ensureWorkspaceLinkColumns,
 	ensureWorkerMeshTriggerStatusCols,
 	ensureCrmPerson,
@@ -692,6 +693,58 @@ func ensureWorkerCapabilityProfile(ctx context.Context, db *sql.DB) error {
 		`ALTER TABLE workers ADD COLUMN capability_profile_json TEXT NOT NULL DEFAULT ''`,
 	); err != nil {
 		return fmt.Errorf("add workers.capability_profile_json: %w", err)
+	}
+	return nil
+}
+
+// ensureWorkerArchiveColumns adds the archived_at / archived_reason columns
+// and live-row partial unique index when migration 123 was skipped by a
+// corrupted schema_version or branch swap. Idempotent.
+func ensureWorkerArchiveColumns(ctx context.Context, db *sql.DB) error {
+	rows, err := db.QueryContext(ctx, `PRAGMA table_info(workers)`)
+	if err != nil {
+		return fmt.Errorf("pragma table_info workers: %w", err)
+	}
+	defer rows.Close() //nolint:errcheck
+	tableExists := false
+	cols := map[string]bool{}
+	for rows.Next() {
+		tableExists = true
+		var (
+			cid         int
+			name, ctype string
+			notnull, pk int
+			dfltValue   sql.NullString
+		)
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dfltValue, &pk); err != nil {
+			return fmt.Errorf("scan pragma row: %w", err)
+		}
+		cols[name] = true
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate pragma rows: %w", err)
+	}
+	if !tableExists {
+		return nil
+	}
+	if !cols["archived_at"] {
+		if _, err := db.ExecContext(ctx, `ALTER TABLE workers ADD COLUMN archived_at DATETIME NULL`); err != nil {
+			return fmt.Errorf("add workers.archived_at: %w", err)
+		}
+	}
+	if !cols["archived_reason"] {
+		if _, err := db.ExecContext(ctx, `ALTER TABLE workers ADD COLUMN archived_reason TEXT NOT NULL DEFAULT ''`); err != nil {
+			return fmt.Errorf("add workers.archived_reason: %w", err)
+		}
+	}
+	if _, err := db.ExecContext(ctx, `DROP INDEX IF EXISTS idx_workers_workspace_name`); err != nil {
+		return fmt.Errorf("drop old worker name index: %w", err)
+	}
+	if _, err := db.ExecContext(ctx, `
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_workers_workspace_name_live
+		ON workers(workspace_id, name)
+		WHERE archived_at IS NULL`); err != nil {
+		return fmt.Errorf("create live worker name index: %w", err)
 	}
 	return nil
 }

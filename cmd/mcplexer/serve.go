@@ -306,6 +306,7 @@ type serverDeps struct {
 	approvalMgr       *approval.Manager
 	notifyBus         *notify.Bus
 	notifyStore       notify.Store
+	notifyPushStore   notify.PushStore
 	auditBus          *audit.Bus
 	auditor           *audit.Logger
 	sessionBus        *session.Bus
@@ -534,6 +535,10 @@ func buildServerDeps(ctx context.Context, cfg *Config, db *sqlite.DB, settingsSv
 	// effort (a slow DB shouldn't back up publishers).
 	d.notifyStore = newNotifyStore(db)
 	d.notifyBus.SetStore(d.notifyStore)
+	if ps, ok := d.notifyStore.(notify.PushStore); ok {
+		d.notifyPushStore = ps
+		d.notifyBus.SetDispatcher(newWebPushDispatcher(ps))
+	}
 
 	// Bridge approvals into the Signal tray. Without this, pending
 	// approvals (shell-guard Bash hits, MCP tool gates) only fire
@@ -1087,6 +1092,7 @@ func buildServerDeps(ctx context.Context, cfg *Config, db *sqlite.DB, settingsSv
 	d.tasksSvc.SetBus(tasks.NewBus())
 	d.tasksSvc.SetWorkspaceLookup(db)
 	d.tasksSvc.SetPeerScopeLookup(db)
+	bridgeHumanTaskNotifications(ctx, d.tasksSvc.Bus(), d.notifyBus)
 
 	// Concierge — chat turn signal classifier + log (epic
 	// 01KSGKFZMVFZRWVDSZMK8W9JN1). Always wired alongside the tasks
@@ -1358,10 +1364,10 @@ func buildServerDeps(ctx context.Context, cfg *Config, db *sqlite.DB, settingsSv
 		slog.Info("resumed orphaned delegation runs after restart", "count", n)
 	}
 
-	// Auto-install the memory consolidator in every workspace whenever an
-	// api_key auth scope is available. Idempotent + best-effort — never
-	// blocks startup. Matches the "global + local simultaneously the whole
-	// time" direction: the user shouldn't have to opt in per workspace.
+	// Optional memory-consolidator bootstrapping. Disabled by default so
+	// workspaces do not grow implicit workers; operators can opt in with
+	// MCPLEXER_AUTO_INSTALL_MEMORY_CONSOLIDATOR=1 or install per workspace
+	// from /memory/consolidation. Best-effort; never blocks startup.
 	// See consolidator_autoinstall.go.
 	autoInstallConsolidator(ctx, db, workerAdminSvc)
 
@@ -1543,6 +1549,7 @@ func runServer(ctx context.Context, cfg *Config, db *sqlite.DB, cfgSvc *config.S
 		Auditor:                d.auditor,
 		NotifyBus:              d.notifyBus,
 		NotifyStore:            d.notifyStore,
+		NotifyPushStore:        d.notifyPushStore,
 		SessionBus:             d.sessionBus,
 		ToolCache:              d.toolCache,
 		InstallManager:         d.installMgr,

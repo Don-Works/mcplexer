@@ -122,6 +122,11 @@ type Worker struct {
 	WorkspaceAccess []WorkerWorkspaceAccess `json:"workspace_access,omitempty"`
 	CreatedAt       time.Time               `json:"created_at"`
 	UpdatedAt       time.Time               `json:"updated_at"`
+	// ArchivedAt marks a Worker as retired without deleting config or run
+	// history. Archived workers are hidden from default lists, cannot be
+	// resumed, and must never be scheduled or run.
+	ArchivedAt     *time.Time `json:"archived_at,omitempty"`
+	ArchivedReason string     `json:"archived_reason,omitempty"`
 
 	// SourceTemplateName + SourceTemplateVersion record the skill-registry
 	// `worker` template this Worker was installed from (M3). Empty Name /

@@ -111,6 +111,9 @@ func (r *Runner) RunWithOpts(ctx context.Context, workerID string, opts RunOpts)
 	if err != nil {
 		return "", fmt.Errorf("get worker: %w", err)
 	}
+	if worker.ArchivedAt != nil {
+		return "", fmt.Errorf("%w: %s", store.ErrWorkerArchived, workerID)
+	}
 	if !worker.Enabled {
 		return "", fmt.Errorf("%w: %s", ErrWorkerDisabled, workerID)
 	}

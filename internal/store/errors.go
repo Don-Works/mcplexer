@@ -77,6 +77,11 @@ var (
 	// exist" without false-positives on related lookups.
 	ErrWorkerNotFound = errors.New("worker not found")
 
+	// ErrWorkerArchived is returned when a caller tries to run or re-enable
+	// a worker that has been explicitly archived. Archived workers retain
+	// their row and run history but must never dispatch.
+	ErrWorkerArchived = errors.New("worker archived")
+
 	// ErrWorkerRunNotFound is returned when a WorkerRun row is missing.
 	ErrWorkerRunNotFound = errors.New("worker run not found")
 

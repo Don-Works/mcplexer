@@ -1,15 +1,11 @@
-// MemoryConsolidationPage — surfaces the always-on memory consolidator.
-// The daemon auto-installs the consolidator in every workspace at
-// startup whenever an api_key auth scope is configured (see
-// cmd/mcplexer/consolidator_autoinstall.go) — there is no manual enable
-// flow. Each run does TWO scope-preserving passes per workspace:
+// MemoryConsolidationPage — surfaces the memory consolidator workers operators
+// explicitly install per workspace. Each run does TWO scope-preserving passes:
 //   1. global memory  → consolidated notes saved with scope:"global"
 //   2. workspace memory → consolidated notes saved with scope:"workspace"
 // so consolidated rows are never written back to the wrong scope.
 //
-// The UI shows the status of every workspace's consolidator side-by-side
-// + a Pause / Resume kill-switch + Run Now. No install button, no
-// workspace dropdown.
+// The UI shows the status of every workspace's consolidator side-by-side,
+// with Install / Pause / Resume / Run Now controls.
 
 import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
@@ -122,10 +118,10 @@ export function MemoryConsolidationPage() {
           Consolidation
         </h1>
         <p className="max-w-2xl text-sm text-muted-foreground">
-          Auto-installed in every workspace. Each scheduled run does TWO scope-preserving
-          passes — one against global memory, one against the workspace — so consolidated
-          notes are written back to the same scope as their sources. Pinned memories are
-          never touched.
+          Install the consolidator only where you want it. Each scheduled run does TWO
+          scope-preserving passes — one against global memory, one against the workspace —
+          so consolidated notes are written back to the same scope as their sources.
+          Pinned memories are never touched.
         </p>
       </header>
 
@@ -134,9 +130,9 @@ export function MemoryConsolidationPage() {
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
             <Globe className="h-3.5 w-3.5" />
             <span>
-              Global memory is consolidated automatically by every workspace's
-              consolidator — there is no separate global toggle. Pausing one workspace
-              doesn't stop another from consolidating global memory.
+              Each installed workspace consolidator can process global memory and that
+              workspace's local memory. Keep consolidators explicit so automation matches
+              the workspace's operating policy.
             </span>
           </div>
         </CardContent>
@@ -152,9 +148,8 @@ export function MemoryConsolidationPage() {
       {!topLevelLoading && rows.length === 0 && (
         <Card>
           <CardContent className="p-6 text-center text-sm text-muted-foreground">
-            No workspaces yet. Once you have at least one workspace and any
-            configured auth scope, the consolidator installs itself on the next
-            daemon restart.
+            No workspaces yet. Create a workspace, configure a usable model/auth scope,
+            then install a consolidator where you want scheduled memory hygiene.
           </CardContent>
         </Card>
       )}
@@ -294,9 +289,10 @@ function WorkspaceCard({
             </Button>
           )}
           {!status?.installed && (
-            <span className="text-[11px] text-muted-foreground">
-              Daemon will auto-install on next boot once any auth scope exists.
-            </span>
+            <Button size="sm" onClick={onResume} disabled={busy !== ''}>
+              {busy === 'resume' ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Power className="mr-1.5 h-3.5 w-3.5" />}
+              Install
+            </Button>
           )}
           {status?.worker_id && (
             <Link

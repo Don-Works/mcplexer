@@ -40,6 +40,7 @@ const (
 	auditEventAdminCreate     = "worker_admin.create"
 	auditEventAdminUpdate     = "worker_admin.update"
 	auditEventAdminDelete     = "worker_admin.delete"
+	auditEventAdminArchive    = "worker_admin.archive"
 	auditEventAdminSetEnabled = "worker_admin.set_enabled"
 	auditEventAdminPause      = "worker_admin.pause"
 	auditEventAdminResume     = "worker_admin.resume"
@@ -166,6 +167,20 @@ func (s *Service) emitAuditDelete(
 ) {
 	s.emitAudit(ctx, workerID, auditEventAdminDelete, map[string]any{
 		"name": name,
+	}, status, errMsg)
+}
+
+// emitAuditArchive records a soft worker retirement. The worker row and
+// run history remain queryable, so this is the normal cleanup path for
+// stale or one-shot-looking workers.
+func (s *Service) emitAuditArchive(
+	ctx context.Context, workerID, name, reason string, previousEnabled bool,
+	status, errMsg string,
+) {
+	s.emitAudit(ctx, workerID, auditEventAdminArchive, map[string]any{
+		"name":             name,
+		"reason":           reason,
+		"previous_enabled": previousEnabled,
 	}, status, errMsg)
 }
 
