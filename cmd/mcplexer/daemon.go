@@ -76,6 +76,13 @@ func daemonStart(args []string) error {
 		fmt.Println("MCPlexer started via launchd")
 		return nil
 	}
+	if systemdUserInstalled() {
+		if err := systemdUserStart(); err != nil {
+			return fmt.Errorf("systemctl --user start: %w", err)
+		}
+		fmt.Println("MCPlexer started via systemd user service")
+		return nil
+	}
 
 	// Parse flags with defaults
 	addr := os.Getenv("MCPLEXER_HTTP_ADDR")
@@ -161,6 +168,13 @@ func daemonStop() error {
 		fmt.Println("MCPlexer stopped via launchd")
 		return nil
 	}
+	if systemdUserInstalled() {
+		if err := systemdUserStop(); err != nil {
+			return fmt.Errorf("systemctl --user stop: %w", err)
+		}
+		fmt.Println("MCPlexer stopped via systemd user service")
+		return nil
+	}
 
 	dir, err := dataDir()
 	if err != nil {
@@ -203,6 +217,15 @@ func daemonStatus() error {
 			fmt.Println("MCPlexer daemon: running (launchd)")
 		} else {
 			fmt.Println("MCPlexer daemon: stopped (launchd installed)")
+		}
+		return nil
+	}
+	if systemdUserInstalled() {
+		running, _ := systemdUserStatus()
+		if running {
+			fmt.Println("MCPlexer daemon: running (systemd user service)")
+		} else {
+			fmt.Println("MCPlexer daemon: stopped (systemd user service installed)")
 		}
 		return nil
 	}
@@ -284,14 +307,21 @@ func daemonLogs(args []string) error {
 }
 
 func daemonUninstall() error {
-	if !launchdInstalled() {
-		fmt.Println("No launchd agent installed")
+	if launchdInstalled() {
+		if err := uninstallLaunchd(); err != nil {
+			return fmt.Errorf("uninstall launchd: %w", err)
+		}
+		fmt.Println("MCPlexer launchd agent uninstalled")
 		return nil
 	}
-	if err := uninstallLaunchd(); err != nil {
-		return fmt.Errorf("uninstall launchd: %w", err)
+	if systemdUserInstalled() {
+		if err := uninstallSystemdUser(); err != nil {
+			return fmt.Errorf("uninstall systemd user service: %w", err)
+		}
+		fmt.Println("MCPlexer systemd user service uninstalled")
+		return nil
 	}
-	fmt.Println("MCPlexer launchd agent uninstalled")
+	fmt.Println("No MCPlexer service manager unit installed")
 	return nil
 }
 
