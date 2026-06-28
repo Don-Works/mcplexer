@@ -386,6 +386,7 @@ func TestIsTransientOpenCodeError(t *testing.T) {
 		"opencode_cli: run: exit status 1 (stderr: Error: Session not found)",
 		"opencode_cli: run: dial tcp 127.0.0.1:4096: connect: connection refused",
 		"opencode_cli: run: unexpected EOF",
+		"opencode_cli: run: exit status 1 (stderr: Error: Unexpected error database is locked)",
 		"post: connection reset by peer",
 	}
 	for _, msg := range transient {

@@ -176,18 +176,59 @@ func TestMemoryCandidates_UnusableProfileIs204(t *testing.T) {
 	}
 }
 
+func TestComplete_NewerUnusableCLIProfilesAre204(t *testing.T) {
+	tests := []struct {
+		provider string
+		model    string
+		env      string
+	}{
+		{models.ProviderGrokCLI, "grok-build", "MCPLEXER_ALLOW_GROK_CLI"},
+		{models.ProviderMiMoCLI, "xiaomi/mimo-v2.5", "MCPLEXER_ALLOW_MIMO_CLI"},
+		{models.ProviderGeminiCLI, "gemini-2.5-pro", "MCPLEXER_ALLOW_GEMINI_CLI"},
+		{models.ProviderCodexCLI, "o3", "MCPLEXER_ALLOW_CODEX_CLI"},
+		{models.ProviderPiCLI, "qwen-local", "MCPLEXER_ALLOW_PI_CLI"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.provider, func(t *testing.T) {
+			db := newBrainTestStore(t)
+			seedGatedProviderProfile(t, db, tt.provider, tt.model, tt.env)
+			h := &assistHandler{assistant: assist.New(db, nil, nil), store: db, enabled: true}
+
+			mux := http.NewServeMux()
+			mux.HandleFunc("POST /api/v1/assist/complete", h.complete)
+			srv := httptest.NewServer(mux)
+			defer srv.Close()
+
+			resp, err := http.Post(srv.URL+"/api/v1/assist/complete", "application/json",
+				strings.NewReader(`{"context":"continue this"}`))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = resp.Body.Close() }()
+			if resp.StatusCode != http.StatusNoContent {
+				t.Fatalf("status = %d want 204 (gated %s must degrade silently, not 502)", resp.StatusCode, tt.provider)
+			}
+		})
+	}
+}
+
 // seedGatedCLIProfile inserts a single claude_cli model profile. With
 // MCPLEXER_ALLOW_CLAUDE_CLI unset (the test default), models.NewAdapter
 // rejects it with ErrClaudeCLINotAllowed — exercising the real
 // adapter-construction-error -> silent-degrade path end-to-end.
 func seedGatedCLIProfile(t *testing.T, db store.ModelProfileStore) {
 	t.Helper()
-	t.Setenv("MCPLEXER_ALLOW_CLAUDE_CLI", "")
+	seedGatedProviderProfile(t, db, models.ProviderClaudeCLI, "claude-sonnet", "MCPLEXER_ALLOW_CLAUDE_CLI")
+}
+
+func seedGatedProviderProfile(t *testing.T, db store.ModelProfileStore, provider, model, env string) {
+	t.Helper()
+	t.Setenv(env, "")
 	p := &store.ModelProfile{
-		ID:          "gated-cli",
-		Name:        "gated-cli",
-		Provider:    models.ProviderClaudeCLI,
-		KnownModels: []string{"claude-sonnet"},
+		ID:          "gated-" + provider,
+		Name:        "gated-" + provider,
+		Provider:    provider,
+		KnownModels: []string{model},
 	}
 	if err := db.CreateModelProfile(context.Background(), p); err != nil {
 		t.Fatalf("seed gated cli profile: %v", err)

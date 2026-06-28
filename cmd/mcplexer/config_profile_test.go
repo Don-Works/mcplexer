@@ -48,6 +48,19 @@ func TestLoadConfigReadsServerProfile(t *testing.T) {
 	}
 }
 
+func TestParseTrustedHostsNormalizesBrowserOrigins(t *testing.T) {
+	got := parseTrustedHosts("https://My-Mac.Tailnet-Name.ts.net:3333/app, other-host.local:4444, plain.example.")
+	want := []string{"my-mac.tailnet-name.ts.net", "other-host.local", "plain.example"}
+	if len(got) != len(want) {
+		t.Fatalf("parseTrustedHosts length = %d (%v), want %d (%v)", len(got), got, len(want), want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("parseTrustedHosts[%d] = %q, want %q (all: %v)", i, got[i], want[i], got)
+		}
+	}
+}
+
 func TestApplyFlagsReadsServerProfile(t *testing.T) {
 	cfg := &Config{ServerProfile: serverProfileFull}
 	if err := applyFlags(cfg, []string{"--server-profile=skills"}); err != nil {

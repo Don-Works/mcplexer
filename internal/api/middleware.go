@@ -291,16 +291,16 @@ func isAllowedOrigin(origin string, allowed []string) bool {
 	return slices.Contains(allowed, host)
 }
 
-// normalizeHosts lowercases, trims, and drops empty entries from a host
-// allowlist. Returns nil for an empty input so callers can compare against
-// nil cheaply.
+// normalizeHosts lowercases, trims, converts origin-ish values to bare
+// hostnames, and drops empty entries. Config should already normalize env
+// values, but tests and future callers may pass trusted hosts directly.
 func normalizeHosts(in []string) []string {
 	if len(in) == 0 {
 		return nil
 	}
 	out := make([]string, 0, len(in))
 	for _, h := range in {
-		h = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(h)), ".")
+		h = normalizeAllowedHost(h)
 		if h == "" {
 			continue
 		}
@@ -310,6 +310,29 @@ func normalizeHosts(in []string) []string {
 		return nil
 	}
 	return out
+}
+
+func normalizeAllowedHost(raw string) string {
+	h := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(raw), "."))
+	if h == "" {
+		return ""
+	}
+	if strings.Contains(h, "://") {
+		if u, err := url.Parse(h); err == nil && u.Hostname() != "" {
+			return strings.ToLower(strings.TrimSuffix(u.Hostname(), "."))
+		}
+		return ""
+	}
+	if i := strings.IndexAny(h, "/?#"); i >= 0 {
+		h = h[:i]
+	}
+	if u, err := url.Parse("http://" + h); err == nil && u.Hostname() != "" {
+		return strings.ToLower(strings.TrimSuffix(u.Hostname(), "."))
+	}
+	if host, _, err := net.SplitHostPort(h); err == nil {
+		h = host
+	}
+	return strings.ToLower(strings.Trim(strings.TrimSuffix(h, "."), "[]"))
 }
 
 // statusWriter captures the HTTP status code for logging.

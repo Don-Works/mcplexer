@@ -242,6 +242,39 @@ func TestCORSMiddleware(t *testing.T) {
 			t.Fatalf("unexpected allow-origin header: %q", got)
 		}
 	})
+
+	t.Run("trusted browser origin form is normalized", func(t *testing.T) {
+		trusted := corsMiddleware([]string{"https://my-mac.tailnet-name.ts.net:3333/app"})(noop)
+		req := httptest.NewRequest(http.MethodOptions, "http://my-mac.tailnet-name.ts.net:3333/api/v1/push/status", nil)
+		req.Header.Set("Origin", "https://my-mac.tailnet-name.ts.net")
+		rr := httptest.NewRecorder()
+		trusted.ServeHTTP(rr, req)
+		if rr.Code != http.StatusNoContent {
+			t.Fatalf("expected %d, got %d", http.StatusNoContent, rr.Code)
+		}
+		if got := rr.Header().Get("Access-Control-Allow-Origin"); got != "https://my-mac.tailnet-name.ts.net" {
+			t.Fatalf("unexpected allow-origin header: %q", got)
+		}
+	})
+}
+
+func TestRouterPreflightBypassesAuth(t *testing.T) {
+	h := NewRouter(RouterDeps{
+		APIToken:     "secret-token",
+		TrustedHosts: []string{"https://my-mac.tailnet-name.ts.net:13333/app"},
+	})
+	req := httptest.NewRequest(http.MethodOptions, "http://my-mac.tailnet-name.ts.net:13333/api/v1/push/subscribe", nil)
+	req.Header.Set("Origin", "https://my-mac.tailnet-name.ts.net")
+	req.Header.Set("Access-Control-Request-Method", "POST")
+	req.Header.Set("Access-Control-Request-Headers", "content-type")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("expected %d, got %d body=%q", http.StatusNoContent, rr.Code, rr.Body.String())
+	}
+	if got := rr.Header().Get("Access-Control-Allow-Origin"); got != "https://my-mac.tailnet-name.ts.net" {
+		t.Fatalf("unexpected allow-origin header: %q", got)
+	}
 }
 
 func TestRequestIDMiddleware(t *testing.T) {
