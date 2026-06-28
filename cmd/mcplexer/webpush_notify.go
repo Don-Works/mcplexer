@@ -174,6 +174,15 @@ func webPushEligible(evt notify.Event) bool {
 	if kind == "approval_pending" {
 		return true
 	}
+	if kind == "worker_run_failed" {
+		return true
+	}
+	if kind == "delegation_completed" {
+		return true
+	}
+	if kind == "offer_received" {
+		return true
+	}
 	if source == "task" && (kind == "task_created" || kind == "task_updated") {
 		return true
 	}

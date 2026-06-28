@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"hash"
+	"log/slog"
 	"net"
 	"net/http"
 	"strconv"
@@ -290,6 +291,7 @@ func hawkPayloadHash(hashFn func() hash.Hash, contentType string, body []byte) s
 func hawkHashFunc(algorithm string) (func() hash.Hash, error) {
 	switch strings.ToLower(strings.ReplaceAll(strings.TrimSpace(algorithm), "-", "")) {
 	case "sha1":
+		slog.Warn("HAWK SHA-1 is deprecated, prefer SHA-256")
 		return sha1.New, nil
 	case "sha256":
 		return sha256.New, nil

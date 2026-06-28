@@ -878,13 +878,13 @@ func (m *Manager) ListToolsForServers(ctx context.Context, serverIDs []string) (
 // log readability, never for correctness.
 func (m *Manager) resolveServerNames(ctx context.Context, serverIDs []string) map[string]string {
 	out := make(map[string]string, len(serverIDs))
-	for _, id := range serverIDs {
-		srv, err := m.store.GetDownstreamServer(ctx, id)
-		if err != nil || srv == nil {
-			continue
-		}
-		if srv.Name != "" {
-			out[id] = srv.Name
+	servers, err := m.store.GetDownstreamServersByIDs(ctx, serverIDs)
+	if err != nil {
+		return out
+	}
+	for i := range servers {
+		if servers[i].Name != "" {
+			out[servers[i].ID] = servers[i].Name
 		}
 	}
 	return out

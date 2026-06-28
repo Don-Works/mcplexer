@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback } from 'react'
+import { lazy, Suspense } from 'react'
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { Toaster } from '@/components/ui/sonner'
@@ -13,9 +13,8 @@ import { AppLayout } from '@/components/layout/AppLayout'
 import { BrainGate } from '@/components/BrainGate'
 import { QuickSetupPage } from '@/pages/QuickSetupPage'
 import { HarnessSetupPage } from '@/pages/HarnessSetupPage'
-import { getHealth } from '@/api/client'
-import { useApi } from '@/hooks/use-api'
 import { serverHomePath } from '@/lib/server-profile'
+import { HealthProvider, useHealth } from '@/hooks/use-health'
 
 const DashboardPage = lazy(() => import('@/pages/DashboardPage').then(m => ({ default: m.DashboardPage })))
 const AuditPage = lazy(() => import('@/pages/AuditPage').then(m => ({ default: m.AuditPage })))
@@ -98,8 +97,7 @@ function CommandBridge() {
 }
 
 function ProfileHome() {
-  const fetcher = useCallback(() => getHealth().catch(() => null), [])
-  const { data, loading } = useApi(fetcher)
+  const { data, loading } = useHealth()
   const home = serverHomePath(data?.system)
   if (home !== '/') return <Navigate to={home} replace />
   if (loading && !data) return <PageLoader />
@@ -114,6 +112,7 @@ function RedirectWithSearch({ to }: { to: string }) {
 function App() {
   return (
     <TooltipProvider>
+    <HealthProvider>
     <BrowserRouter>
       <NotifyBridge />
       <CommandBridge />
@@ -220,6 +219,7 @@ function App() {
     </BrowserRouter>
     <SecretPromptModal />
     <Toaster />
+    </HealthProvider>
     </TooltipProvider>
   )
 }

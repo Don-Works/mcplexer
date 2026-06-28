@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/don-works/mcplexer/internal/store"
@@ -58,6 +59,37 @@ func (d *DB) GetDownstreamServer(ctx context.Context, id string) (*store.Downstr
 		       call_timeout_sec
 		FROM downstream_servers WHERE id = ?`, id)
 	return scanDownstreamServer(row)
+}
+
+func (d *DB) GetDownstreamServersByIDs(ctx context.Context, ids []string) ([]store.DownstreamServer, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	ph := make([]string, len(ids))
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		ph[i] = "?"
+		args[i] = id
+	}
+	query := `SELECT id, name, transport, command, args, url, tool_namespace, discovery,
+		capabilities_cache, cache_config, idle_timeout_sec, max_instances,
+		restart_policy, disabled, source, created_at, updated_at,
+		call_timeout_sec
+	FROM downstream_servers WHERE id IN (` + strings.Join(ph, ",") + `)`
+	rows, err := d.q.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []store.DownstreamServer
+	for rows.Next() {
+		ds, err := scanDownstreamServerRow(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *ds)
+	}
+	return out, rows.Err()
 }
 
 func (d *DB) GetDownstreamServerByName(ctx context.Context, name string) (*store.DownstreamServer, error) {

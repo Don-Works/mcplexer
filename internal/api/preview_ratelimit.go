@@ -9,15 +9,17 @@ import (
 // production rate-limiting belongs in middleware; for the addon preview
 // pane the goal is just to stop a stuck UI from hammering target APIs.
 type previewRateLimiter struct {
-	mu      sync.Mutex
-	buckets map[string]*previewBucket
-	rate    int           // tokens per window
-	window  time.Duration // bucket reset interval
+	mu        sync.Mutex
+	buckets   map[string]*previewBucket
+	rate      int           // tokens per window
+	window    time.Duration // bucket reset interval
+	lastSweep time.Time
 }
 
 type previewBucket struct {
-	tokens int
-	reset  time.Time
+	tokens    int
+	reset     time.Time
+	lastSeen  time.Time
 }
 
 // newPreviewRateLimiter caps each remote at rate calls per window.
@@ -38,14 +40,33 @@ func (l *previewRateLimiter) allow(key string) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	now := time.Now()
+	l.maybeSweep(now)
 	b, ok := l.buckets[key]
 	if !ok || now.After(b.reset) {
-		l.buckets[key] = &previewBucket{tokens: l.rate - 1, reset: now.Add(l.window)}
+		l.buckets[key] = &previewBucket{tokens: l.rate - 1, reset: now.Add(l.window), lastSeen: now}
 		return true
 	}
+	b.lastSeen = now
 	if b.tokens <= 0 {
 		return false
 	}
 	b.tokens--
 	return true
+}
+
+const previewBucketMaxAge = time.Hour
+
+// maybeSweep removes entries older than previewBucketMaxAge. Runs at
+// most once per minute to avoid lock contention. Caller holds l.mu.
+func (l *previewRateLimiter) maybeSweep(now time.Time) {
+	if now.Sub(l.lastSweep) < time.Minute {
+		return
+	}
+	l.lastSweep = now
+	cutoff := now.Add(-previewBucketMaxAge)
+	for k, b := range l.buckets {
+		if b.lastSeen.Before(cutoff) {
+			delete(l.buckets, k)
+		}
+	}
 }

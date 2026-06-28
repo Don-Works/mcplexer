@@ -97,6 +97,9 @@ func (m *mockRouteStore) CreateDownstreamServer(context.Context, *store.Downstre
 func (m *mockRouteStore) GetDownstreamServerByName(context.Context, string) (*store.DownstreamServer, error) {
 	return nil, nil
 }
+func (m *mockRouteStore) GetDownstreamServersByIDs(context.Context, []string) ([]store.DownstreamServer, error) {
+	return nil, nil
+}
 func (m *mockRouteStore) ListDownstreamServers(context.Context) ([]store.DownstreamServer, error) {
 	return nil, nil
 }

@@ -938,6 +938,7 @@ type OAuthProviderStore interface {
 type DownstreamServerStore interface {
 	CreateDownstreamServer(ctx context.Context, d *DownstreamServer) error
 	GetDownstreamServer(ctx context.Context, id string) (*DownstreamServer, error)
+	GetDownstreamServersByIDs(ctx context.Context, ids []string) ([]DownstreamServer, error)
 	GetDownstreamServerByName(ctx context.Context, name string) (*DownstreamServer, error)
 	ListDownstreamServers(ctx context.Context) ([]DownstreamServer, error)
 	UpdateDownstreamServer(ctx context.Context, d *DownstreamServer) error

@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"path/filepath"
 	"strings"
 )
@@ -38,6 +39,14 @@ func validate(cfg *FileConfig) error {
 		nsSet[ds.ToolNamespace] = true
 		if err := validateTransport(ds.Transport); err != nil {
 			errs = append(errs, fmt.Sprintf("downstream_servers[%d]: %v", i, err))
+		}
+		if ds.IdleTimeoutSec < 0 || ds.IdleTimeoutSec > 86400 {
+			errs = append(errs, fmt.Sprintf("downstream_servers[%d]: idle_timeout_sec must be >= 0 and <= 86400", i))
+		}
+		if ds.Transport == "http" && ds.URL != "" {
+			if err := validateHTTPURL(ds.URL); err != nil {
+				errs = append(errs, fmt.Sprintf("downstream_servers[%d]: %v", i, err))
+			}
 		}
 	}
 
@@ -95,6 +104,32 @@ func validateGlob(pattern string) error {
 	_, err := filepath.Match(pattern, "test")
 	if err != nil {
 		return fmt.Errorf("invalid glob pattern %q: %w", pattern, err)
+	}
+	return nil
+}
+
+func validateHTTPURL(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("invalid url %q: %w", raw, err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("url %q must use http or https", raw)
+	}
+	if u.Host == "" {
+		return fmt.Errorf("url %q must include a host", raw)
+	}
+	return nil
+}
+
+// ValidateCallTimeoutSec checks that a call_timeout_sec value is within bounds.
+// Returns nil for 0 (means "use default"). Non-zero must be > 0 and < 3600.
+func ValidateCallTimeoutSec(v int) error {
+	if v == 0 {
+		return nil
+	}
+	if v < 0 || v > 3600 {
+		return fmt.Errorf("call_timeout_sec must be > 0 and <= 3600, got %d", v)
 	}
 	return nil
 }

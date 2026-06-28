@@ -9,7 +9,10 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 )
+
+var discoveryHTTPClient = &http.Client{Timeout: 30 * time.Second}
 
 // ProtectedResourceMetadata from /.well-known/oauth-protected-resource.
 type ProtectedResourceMetadata struct {
@@ -95,13 +98,13 @@ func DynamicClientRegister(
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := discoveryHTTPClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("dcr request: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	respBody, err := io.ReadAll(resp.Body)
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
 		return nil, fmt.Errorf("read dcr response: %w", err)
 	}
@@ -130,7 +133,7 @@ func fetchJSON[T any](ctx context.Context, url string) (*T, error) {
 	}
 	req.Header.Set("Accept", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := discoveryHTTPClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -140,7 +143,7 @@ func fetchJSON[T any](ctx context.Context, url string) (*T, error) {
 		return nil, fmt.Errorf("fetch %s: status %d", url, resp.StatusCode)
 	}
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
 		return nil, fmt.Errorf("read response: %w", err)
 	}
