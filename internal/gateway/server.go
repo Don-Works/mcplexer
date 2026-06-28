@@ -418,6 +418,7 @@ func (s *Server) run(ctx context.Context, r io.Reader, w io.Writer) error {
 	defer func() {
 		cancel()
 		wg.Wait()
+		s.handler.bgWg.Wait()
 		disconnCtx, disconnCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer disconnCancel()
 		// Release task leases held by this session so working-status
@@ -448,7 +449,9 @@ func (s *Server) run(ctx context.Context, r io.Reader, w io.Writer) error {
 
 	s.w = w
 	s.handler.setNotifier(s)
+	s.handler.bgCtxMu.Lock()
 	s.handler.bgCtx = ctx
+	s.handler.bgCtxMu.Unlock()
 
 	if s.keepaliveInterval > 0 {
 		done := make(chan struct{})

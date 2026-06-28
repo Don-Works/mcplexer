@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"errors"
+	"hash"
 	"time"
 )
 
@@ -73,17 +74,35 @@ const MaxEnvelopeBytes = 1 << 20 // 1 MiB
 var errEnvelopeTooLarge = errors.New("p2p mesh: envelope exceeds max size")
 
 // canonicalSigningBytes returns the bytes covered by an envelope's Ed25519
-// signature: SHA-256(id || ts_be || payload). Keeping this small + stable
-// avoids the JSON-canonicalisation rabbit-hole while still binding the
-// content to the signer.
-func canonicalSigningBytes(id string, ts int64, payload []byte) []byte {
+// signature: SHA-256 of length-prefixed (id, ts, kind, content, recipient,
+// workspaceID, payload). Length-prefixed encoding avoids ambiguity between
+// concatenated fields.
+func canonicalSigningBytes(env *MeshEnvelope) []byte {
 	h := sha256.New()
-	h.Write([]byte(id))
+	writeLP(h, env.ID)
 	var tsBuf [8]byte
-	binary.BigEndian.PutUint64(tsBuf[:], uint64(ts))
+	binary.BigEndian.PutUint64(tsBuf[:], uint64(env.TS))
 	h.Write(tsBuf[:])
-	h.Write(payload)
+	writeLP(h, env.Kind)
+	content := env.Content
+	if len(content) > 1024 {
+		content = content[:1024]
+	}
+	writeLP(h, content)
+	writeLP(h, env.Recipient.Kind)
+	writeLP(h, env.Recipient.Value)
+	writeLP(h, env.WorkspaceID)
+	h.Write(env.Payload)
 	return h.Sum(nil)
+}
+
+// writeLP writes a length-prefixed string to h: 4-byte big-endian length
+// followed by the string bytes.
+func writeLP(h hash.Hash, s string) {
+	var lenBuf [4]byte
+	binary.BigEndian.PutUint32(lenBuf[:], uint32(len(s)))
+	h.Write(lenBuf[:])
+	h.Write([]byte(s))
 }
 
 // envelopeAge returns how long ago the envelope was sent, in real time.

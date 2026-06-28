@@ -246,11 +246,15 @@ func (h *handler) triggerBackgroundRefresh(cacheKey string, serverIDs []string) 
 	h.bgRefreshAt[cacheKey] = time.Now()
 	h.bgRefreshMu.Unlock()
 
+	h.bgCtxMu.RLock()
 	ctx := h.bgCtx
+	h.bgCtxMu.RUnlock()
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	h.bgWg.Add(1)
 	go func() {
+		defer h.bgWg.Done()
 		defer func() {
 			h.bgRefreshMu.Lock()
 			h.bgRefreshInFlight[cacheKey] = false
@@ -351,10 +355,13 @@ func toolsetSignature(raw json.RawMessage) string {
 
 // sendToolsListChanged sends a tools/list_changed notification if a notifier is available.
 func (h *handler) sendToolsListChanged() {
-	if h.notifier == nil {
+	h.notifierMu.RLock()
+	n := h.notifier
+	h.notifierMu.RUnlock()
+	if n == nil {
 		return
 	}
-	if err := h.notifier.Notify("notifications/tools/list_changed", nil); err != nil {
+	if err := n.Notify("notifications/tools/list_changed", nil); err != nil {
 		slog.Warn("failed to send tools/list_changed notification", "error", err)
 	}
 }
@@ -1058,7 +1065,7 @@ func (h *handler) tryFuzzyToolRecovery(ctx context.Context, name string) (string
 // Returns true if the tool is explicitly marked as read-only.
 func (h *handler) isReadOnlyTool(ctx context.Context, serverID, toolName string) bool {
 	srv, err := h.store.GetDownstreamServer(ctx, serverID)
-	if err != nil || len(srv.CapabilitiesCache) == 0 {
+	if srv == nil || err != nil || len(srv.CapabilitiesCache) == 0 {
 		return false
 	}
 

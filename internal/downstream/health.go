@@ -74,6 +74,9 @@ type serverHealth struct {
 	// stabilise the server (i.e. another failure arrived before the
 	// window elapsed), caps at maxBackoff.
 	backoff time.Duration
+	// lastSeen is the most recent time a success or failure was recorded.
+	// Used by CleanupStale to evict dormant entries.
+	lastSeen time.Time
 }
 
 // Threshold + backoff knobs. Exposed as vars so tests can shrink them
@@ -128,6 +131,7 @@ func (t *HealthTracker) RecordSuccess(serverID string, now time.Time) {
 	defer t.mu.Unlock()
 	h := t.entry(serverID)
 	h.lastSuccessAt = now
+	h.lastSeen = now
 	h.consecutiveFailures = 0
 	h.lastFailureReason = ""
 }
@@ -152,6 +156,7 @@ func (t *HealthTracker) RecordFailure(serverID, reason string, now time.Time) (b
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	h := t.entry(serverID)
+	h.lastSeen = now
 	// Window check: if the last failure was outside the window, this
 	// streak is "fresh" — reset the counter to 1 rather than continuing.
 	if !h.lastFailureAt.IsZero() && now.Sub(h.lastFailureAt) > StuckThresholdWindow {
@@ -240,6 +245,22 @@ func (t *HealthTracker) SnapshotAll(now time.Time) []ServerHealth {
 		out = append(out, t.snapshotLocked(id, h, now))
 	}
 	return out
+}
+
+// CleanupStale removes entries that haven't been seen in maxAge. Returns
+// the number of entries removed. Safe to call periodically from any goroutine.
+func (t *HealthTracker) CleanupStale(now time.Time, maxAge time.Duration) int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	cutoff := now.Add(-maxAge)
+	removed := 0
+	for id, h := range t.byServer {
+		if !h.lastSeen.IsZero() && h.lastSeen.Before(cutoff) {
+			delete(t.byServer, id)
+			removed++
+		}
+	}
+	return removed
 }
 
 // entry returns the existing serverHealth or lazily creates one.

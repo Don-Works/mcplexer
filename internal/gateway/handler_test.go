@@ -111,6 +111,9 @@ type mockWorkspace struct {
 	tags json.RawMessage
 }
 
+func (m *mockStore) GetDownstreamServersByIDs(_ context.Context, _ []string) ([]store.DownstreamServer, error) {
+	return nil, nil
+}
 func (m *mockStore) ListDownstreamServers(_ context.Context) ([]store.DownstreamServer, error) {
 	return m.servers, nil
 }

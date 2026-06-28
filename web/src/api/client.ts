@@ -707,8 +707,8 @@ export interface HealthResponse {
   system: SystemInfo
 }
 
-export function getHealth(): Promise<HealthResponse> {
-  return request('/health')
+export function getHealth(init?: RequestInit): Promise<HealthResponse> {
+  return request('/health', init)
 }
 
 export type SystemRevealTarget = 'data_dir' | 'config_file' | 'log_path' | 'addons_dir'

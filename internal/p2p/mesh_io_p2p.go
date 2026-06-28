@@ -81,7 +81,7 @@ func (t *MeshTransport) verifyAndAuthorize(remote peer.ID, env *MeshEnvelope) st
 	if pub == nil {
 		return "no_public_key"
 	}
-	ok, err := pub.Verify(canonicalSigningBytes(env.ID, env.TS, env.Payload), env.Signature)
+	ok, err := pub.Verify(canonicalSigningBytes(env), env.Signature)
 	if err != nil || !ok {
 		return "invalid_signature"
 	}
@@ -95,7 +95,7 @@ func (t *MeshTransport) verifyAndAuthorize(remote peer.ID, env *MeshEnvelope) st
 	if !paired {
 		return "unpaired_peer"
 	}
-	if drift := envelopeAge(env); drift > 1*time.Hour || drift < -5*time.Minute {
+	if drift := envelopeAge(env); drift > 10*time.Minute || drift < -2*time.Minute {
 		return "stale_or_future"
 	}
 	return ""

@@ -38,14 +38,14 @@ import {
   DangerousModeViewportFrame,
 } from './dangerous-mode'
 import { cn } from '@/lib/utils'
-import { useCallback, useState } from 'react'
+import { useState } from 'react'
 import { SignalTray } from '@/components/notifications/SignalTray'
 import { SignalFlash } from '@/components/notifications/SignalFlash'
 import { SignalSidebarTrigger } from '@/components/notifications/SignalSidebarTrigger'
 import { useSignal } from '@/components/notifications/use-signal'
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet'
-import { useApi } from '@/hooks/use-api'
-import { getHealth, revealSystemPath, type HealthResponse } from '@/api/client'
+import { useHealth } from '@/hooks/use-health'
+import { revealSystemPath, type HealthResponse } from '@/api/client'
 import { toast } from 'sonner'
 import { ConfigureWithAI } from '@/components/ConfigureWithAI'
 import { hasCapability, isServerProfile, serverProfileLabel } from '@/lib/server-profile'
@@ -345,8 +345,7 @@ function shortenHomePath(p?: string) {
 }
 
 function StatusBar() {
-  const fetcher = useCallback(() => getHealth().catch(() => null), [])
-  const { data } = useApi(fetcher)
+  const { data } = useHealth()
   const [revealing, setRevealing] = useState(false)
   const displayHost = window.location.host || 'localhost'
   const dataDir = data?.system?.data_dir
@@ -470,8 +469,7 @@ function TopBarSearch() {
 }
 
 function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
-  const fetcher = useCallback(() => getHealth().catch(() => null), [])
-  const { data: health } = useApi(fetcher)
+  const { data: health } = useHealth()
 
   if (isServerProfile(health?.system)) {
     return <ServerSidebarNav health={health} onNavigate={onNavigate} />

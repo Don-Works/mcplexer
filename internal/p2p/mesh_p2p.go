@@ -84,7 +84,7 @@ func NewMeshTransport(h *Host, lookup MeshPeerLookup, audit MeshAuditor, logger 
 		lookup: lookup,
 		audit:  audit,
 		logger: logger,
-		dedupe: newDedupeWindow(10_000),
+		dedupe: newDedupeWindow(100_000),
 	}
 }
 
@@ -277,7 +277,7 @@ func (t *MeshTransport) signEnvelope(env *MeshEnvelope) error {
 	if env.TS == 0 {
 		env.TS = time.Now().UnixMilli()
 	}
-	sig, err := priv.Sign(canonicalSigningBytes(env.ID, env.TS, env.Payload))
+	sig, err := priv.Sign(canonicalSigningBytes(env))
 	if err != nil {
 		return fmt.Errorf("p2p mesh: sign envelope: %w", err)
 	}
