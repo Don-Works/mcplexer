@@ -134,6 +134,51 @@ Every HTTP API call requires a token. The daemon generates one at first startup 
 
 Health (`/api/v1/health`) and OAuth callbacks are exempt; everything else returns 401 without a valid token.
 
+### Network exposure
+
+MCPlexer binds to `127.0.0.1:3333` by default — only accessible from the same machine. If you bind to `0.0.0.0` or a LAN address, be aware:
+
+- **The API token is the only authentication.** Anyone who can reach the port can make fully privileged API calls if they have the token. There is no per-user auth, rate limiting, or CSRF protection beyond the token.
+- **Use a reverse proxy for internet exposure.** Do not expose the daemon directly. Put it behind nginx, Caddy, or Tailscale with TLS termination:
+
+```nginx
+# nginx example
+server {
+    listen 443 ssl;
+    server_name mcplexer.example.com;
+
+    ssl_certificate     /etc/ssl/certs/mcplexer.pem;
+    ssl_certificate_key /etc/ssl/private/mcplexer.key;
+
+    location / {
+        proxy_pass http://127.0.0.1:3333;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # WebSocket + SSE support
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_read_timeout 86400;
+    }
+}
+```
+
+```bash
+# Caddy example (auto-TLS)
+mcplexer.example.com {
+    reverse_proxy localhost:3333
+}
+```
+
+- **Set `MCPLEXER_TRUSTED_HOSTS`** to your external hostname so the Origin check passes for browser requests through the proxy.
+- **Set `MCPLEXER_EXTERNAL_URL`** or `MCPLEXER_PUBLIC_URL` to the canonical HTTPS URL for OAuth callbacks and PWA installability.
+- **Tailscale is the simplest secure option** for personal remote access — no TLS config needed, just bind to `0.0.0.0:3333` and use your tailnet hostname.
+
+See [SECURITY.md](SECURITY.md) for the full security policy and vulnerability reporting process.
+
 ## Configuration
 
 MCPlexer supports three configuration methods:
