@@ -195,6 +195,11 @@ func isUnusableProfileErr(err error) bool {
 	return errors.Is(err, ErrNoProfile) ||
 		errors.Is(err, models.ErrClaudeCLINotAllowed) ||
 		errors.Is(err, models.ErrOpenCodeCLINotAllowed) ||
+		errors.Is(err, models.ErrGrokCLINotAllowed) ||
+		errors.Is(err, models.ErrMiMoCLINotAllowed) ||
+		errors.Is(err, models.ErrGeminiCLINotAllowed) ||
+		errors.Is(err, models.ErrCodexCLINotAllowed) ||
+		errors.Is(err, models.ErrPiCLINotAllowed) ||
 		errors.Is(err, models.ErrMissingAPIKey) ||
 		errors.Is(err, models.ErrMissingEndpoint) ||
 		errors.Is(err, models.ErrMissingModelID)

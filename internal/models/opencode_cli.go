@@ -202,6 +202,7 @@ func isTransientOpenCodeError(err error) bool {
 		"server closed",
 		"unexpected eof",
 		"connection reset",
+		"database is locked",
 	} {
 		if strings.Contains(msg, marker) {
 			return true

@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log/slog"
+	"net"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -252,8 +253,11 @@ func mergeTrustedHosts(primary, extra []string) []string {
 	return out
 }
 
-// parseTrustedHosts splits a comma-separated host list, trims whitespace,
-// lowercases entries, and drops empties.
+// parseTrustedHosts splits a comma-separated host list, normalizes entries to
+// bare lower-case hostnames, and drops empties. Operators often paste full
+// browser origins ("https://host:3333/app") even though the runtime matches
+// only Origin.Hostname(); accept those forms so a harmless formatting mismatch
+// does not break mobile PWA/CORS access.
 func parseTrustedHosts(raw string) []string {
 	if raw == "" {
 		return nil
@@ -261,7 +265,7 @@ func parseTrustedHosts(raw string) []string {
 	parts := strings.Split(raw, ",")
 	out := make([]string, 0, len(parts))
 	for _, p := range parts {
-		h := strings.ToLower(strings.TrimSpace(p))
+		h := normalizeConfiguredHost(p)
 		if h == "" {
 			continue
 		}
@@ -271,6 +275,29 @@ func parseTrustedHosts(raw string) []string {
 		return nil
 	}
 	return out
+}
+
+func normalizeConfiguredHost(raw string) string {
+	h := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(raw), "."))
+	if h == "" {
+		return ""
+	}
+	if strings.Contains(h, "://") {
+		if u, err := url.Parse(h); err == nil && u.Hostname() != "" {
+			return strings.ToLower(strings.TrimSuffix(u.Hostname(), "."))
+		}
+		return ""
+	}
+	if i := strings.IndexAny(h, "/?#"); i >= 0 {
+		h = h[:i]
+	}
+	if parsed, err := url.Parse("http://" + h); err == nil && parsed.Hostname() != "" {
+		return strings.ToLower(strings.TrimSuffix(parsed.Hostname(), "."))
+	}
+	if host, _, err := net.SplitHostPort(h); err == nil {
+		h = host
+	}
+	return strings.ToLower(strings.Trim(strings.TrimSuffix(h, "."), "[]"))
 }
 
 func envBool(key string, fallback bool) bool {

@@ -35,6 +35,10 @@ func apiTokenAuthMiddleware(token string) func(http.Handler) http.Handler {
 				next.ServeHTTP(w, r)
 				return
 			}
+			if r.Method == http.MethodOptions {
+				next.ServeHTTP(w, r)
+				return
+			}
 			if isAuthExempt(r) {
 				next.ServeHTTP(w, r)
 				return
