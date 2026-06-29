@@ -114,6 +114,7 @@ var schemaInvariants = []func(context.Context, *sql.DB) error{
 	ensureSkillRefinementProposals,
 	ensureDownstreamCallTimeout,
 	ensureWorkerCapabilityProfile,
+	ensureWorkerExecuteScripts,
 	ensureWorkerArchiveColumns,
 	ensureWorkspaceLinkColumns,
 	ensureWorkerMeshTriggerStatusCols,
@@ -693,6 +694,55 @@ func ensureWorkerCapabilityProfile(ctx context.Context, db *sql.DB) error {
 		`ALTER TABLE workers ADD COLUMN capability_profile_json TEXT NOT NULL DEFAULT ''`,
 	); err != nil {
 		return fmt.Errorf("add workers.capability_profile_json: %w", err)
+	}
+	return nil
+}
+
+// ensureWorkerExecuteScripts adds the pre_execute_script / post_execute_script
+// columns to the workers table when migration 125 either didn't apply or
+// schema_version raced past it (branch swaps, partially-restored backups).
+// Idempotent — adds each column only when missing. Mirrors
+// ensureWorkerCapabilityProfile.
+func ensureWorkerExecuteScripts(ctx context.Context, db *sql.DB) error {
+	rows, err := db.QueryContext(ctx, `PRAGMA table_info(workers)`)
+	if err != nil {
+		return fmt.Errorf("pragma table_info workers: %w", err)
+	}
+	defer rows.Close() //nolint:errcheck
+	tableExists := false
+	cols := map[string]bool{}
+	for rows.Next() {
+		tableExists = true
+		var (
+			cid         int
+			name, ctype string
+			notnull, pk int
+			dfltValue   sql.NullString
+		)
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dfltValue, &pk); err != nil {
+			return fmt.Errorf("scan pragma row: %w", err)
+		}
+		cols[name] = true
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate pragma rows: %w", err)
+	}
+	if !tableExists {
+		return nil
+	}
+	if !cols["pre_execute_script"] {
+		if _, err := db.ExecContext(ctx,
+			`ALTER TABLE workers ADD COLUMN pre_execute_script TEXT NOT NULL DEFAULT ''`,
+		); err != nil {
+			return fmt.Errorf("add workers.pre_execute_script: %w", err)
+		}
+	}
+	if !cols["post_execute_script"] {
+		if _, err := db.ExecContext(ctx,
+			`ALTER TABLE workers ADD COLUMN post_execute_script TEXT NOT NULL DEFAULT ''`,
+		); err != nil {
+			return fmt.Errorf("add workers.post_execute_script: %w", err)
+		}
 	}
 	return nil
 }

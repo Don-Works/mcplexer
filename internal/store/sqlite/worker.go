@@ -29,7 +29,8 @@ const workerCols = `id, name, description, model_provider, model_id,
     auto_paused_reason,
     source_template_name, source_template_version,
     enabled, workspace_id, created_at, updated_at,
-    archived_at, archived_reason`
+    archived_at, archived_reason,
+    pre_execute_script, post_execute_script`
 
 const workerWorkspaceAccessCols = `worker_id, workspace_id, access, created_at, updated_at`
 
@@ -63,6 +64,7 @@ func (d *DB) CreateWorker(ctx context.Context, w *store.Worker) error {
 			        ?, ?, ?, ?, ?, ?, ?,
 			        ?, ?,
 			        ?, ?, ?, ?,
+			        ?, ?,
 			        ?, ?)`,
 			w.ID, w.Name, w.Description, w.ModelProvider, w.ModelID,
 			w.ModelEndpointURL, w.SecretScopeID, w.SkillName, w.SkillVersion,
@@ -77,6 +79,7 @@ func (d *DB) CreateWorker(ctx context.Context, w *store.Worker) error {
 			boolToInt(w.Enabled), w.WorkspaceID,
 			formatTime(w.CreatedAt), formatTime(w.UpdatedAt),
 			formatTimePtr(w.ArchivedAt), w.ArchivedReason,
+			w.PreExecuteScript, w.PostExecuteScript,
 		); err != nil {
 			return mapConstraintError(err)
 		}
@@ -259,7 +262,8 @@ func (d *DB) UpdateWorker(ctx context.Context, w *store.Worker) error {
 			    max_consecutive_failures = ?, auto_paused_reason = ?,
 			    source_template_name = ?, source_template_version = ?,
 			    enabled = ?, workspace_id = ?, updated_at = ?,
-			    archived_at = ?, archived_reason = ?
+			    archived_at = ?, archived_reason = ?,
+			    pre_execute_script = ?, post_execute_script = ?
 			WHERE id = ?`,
 			w.Name, w.Description, w.ModelProvider, w.ModelID,
 			w.ModelEndpointURL, w.SecretScopeID,
@@ -272,7 +276,8 @@ func (d *DB) UpdateWorker(ctx context.Context, w *store.Worker) error {
 			w.MaxConsecutiveFailures, w.AutoPausedReason,
 			w.SourceTemplateName, w.SourceTemplateVersion,
 			boolToInt(w.Enabled), w.WorkspaceID,
-			formatTime(w.UpdatedAt), formatTimePtr(w.ArchivedAt), w.ArchivedReason, w.ID,
+			formatTime(w.UpdatedAt), formatTimePtr(w.ArchivedAt), w.ArchivedReason,
+			w.PreExecuteScript, w.PostExecuteScript, w.ID,
 		)
 		if err != nil {
 			return mapConstraintError(err)
@@ -379,6 +384,7 @@ func scanWorker(r scanner) (*store.Worker, error) {
 		&w.SourceTemplateName, &w.SourceTemplateVersion,
 		&enabled, &w.WorkspaceID, &createdAt, &updatedAt,
 		&archivedAt, &w.ArchivedReason,
+		&w.PreExecuteScript, &w.PostExecuteScript,
 	)
 	if err != nil {
 		return nil, err

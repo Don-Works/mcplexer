@@ -171,8 +171,53 @@ export function ToolsCard({ state, set, tools }: ToolsCardProps) {
             </p>
           </details>
         )}
+        <ExecuteHooksFields state={state} set={set} />
       </CardContent>
     </Card>
+  )
+}
+
+// ExecuteHooksFields renders the optional pre/post-execute JS hook editors.
+// Both run in the code-mode sandbox with this worker's own tool allowlist
+// (so an endpoint check uses an allowed downstream tool, e.g.
+// fetch.fetch({url}) — there is no JS fetch). Tucked under <details> so the
+// common case stays uncluttered.
+function ExecuteHooksFields({ state, set }: { state: EditorState; set: Setter }) {
+  const active = state.preExecuteScript.trim() !== '' || state.postExecuteScript.trim() !== ''
+  return (
+    <details className="text-xs" open={active}>
+      <summary className="cursor-pointer text-muted-foreground hover:text-foreground">
+        Execute hooks (advanced){active ? ' — active' : ''}
+      </summary>
+      <div className="mt-2 space-y-3">
+        <div>
+          <div className="mb-1 font-medium text-foreground">Pre-execute gate</div>
+          <Textarea
+            rows={4}
+            value={state.preExecuteScript}
+            onChange={(e) => set('preExecuteScript', e.target.value)}
+            placeholder={'// Runs BEFORE any model spend. `hook` = {phase,worker,run,params}.\n// Throw or abort(reason) to BLOCK the run; return to proceed.\nconst r = fetch.fetch({ url: "https://example.com/gate" });\nif (!/"go":true/.test(r.content[0].text)) abort("gate said no");'}
+            className="font-mono text-xs"
+          />
+        </div>
+        <div>
+          <div className="mb-1 font-medium text-foreground">Post-execute hook</div>
+          <Textarea
+            rows={4}
+            value={state.postExecuteScript}
+            onChange={(e) => set('postExecuteScript', e.target.value)}
+            placeholder={'// Runs AFTER output is produced. `hook.run` adds {status,output,error,...}.\n// Throw or abort(reason) on a successful run to REJECT its output.\nif ((hook.run.output || "").length < 20) abort("output too short");'}
+            className="font-mono text-xs"
+          />
+        </div>
+        <p className="text-[10px] text-muted-foreground/70">
+          JavaScript, run in the code-mode sandbox with this worker&apos;s tool
+          allowlist. A blocked run lands in status <code>blocked</code> (not a
+          failure — it never counts toward the auto-pause streak). There is no
+          JS <code>fetch</code>; reach endpoints via an allowed downstream tool.
+        </p>
+      </div>
+    </details>
   )
 }
 

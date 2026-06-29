@@ -33,6 +33,10 @@ export function statusBadgeClass(status?: WorkerRunStatus | string | ''): string
       // Operator hard-stop: slate, deliberately distinct from failure
       // red — a cancelled run is an intentional stop, not an error.
       return 'bg-slate-500/10 text-slate-300 border-slate-500/40'
+    case 'blocked':
+      // Gated by a pre/post-execute hook: violet, distinct from failure
+      // red and cancel slate — an intentional policy stop, not an error.
+      return 'bg-violet-500/10 text-violet-300 border-violet-500/40'
     case 'running':
       return 'bg-sky-500/10 text-sky-300 border-sky-500/40'
     case 'paused':

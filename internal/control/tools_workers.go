@@ -96,6 +96,8 @@ func workerCommonProps() props {
 		"parameters_json":      propStr("JSON object literal injected into prompt_template. Default {}."),
 		"schedule_spec":        propStr("Cron expression (e.g. \"0 9 * * *\") or Go duration string (\"5m\", \"1h\"). Parsed by the scheduler."),
 		"tool_allowlist_json":  propStr("JSON array of tool-name globs the runner may call. Default []."),
+		"pre_execute_script":   propStr("Optional JavaScript gate run in the code-mode sandbox BEFORE any model/CLI spend. Runs with this worker's own tool allowlist; `hook` exposes {phase,worker,run,params}. Throw or call abort(reason) to BLOCK the run (status=blocked, zero spend); return cleanly to proceed. There is no JS fetch — reach an HTTP endpoint via a downstream tool the allowlist permits, e.g. fetch.fetch({url}). Example: const r=fetch.fetch({url:\"https://api.example.com/gate\"}); if(!/\\\"go\\\":true/.test(r.content[0].text)) abort(\"gate said no\");"),
+		"post_execute_script":  propStr("Optional JavaScript run in the code-mode sandbox AFTER output is produced. `hook.run` adds {status,output,error,input_tokens,output_tokens,cost_usd,tool_calls}. Throw or abort(reason) on an otherwise-successful run to REJECT the output (status=blocked, channel emission suppressed). Use for output validation or post-run notifications."),
 		"output_channels_json": propStr("JSON array describing output sinks. Default [{type:mesh,priority:normal}]."),
 		"exec_mode":            propStr("propose (emit a draft + mesh message — default) or autonomous (execute tool calls directly, subject to allowlist)."),
 		"concurrency_policy":   propStr("skip (default; drop the tick when a run is in flight) or queue (start a parallel run, audit-only)."),

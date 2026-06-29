@@ -73,6 +73,9 @@ export interface EditorState {
   parametersJSON: string
   scheduleSpec: string
   toolAllowlistJSON: string
+  // Optional pre/post-execute JS hooks (code-mode sandbox). Empty = no hook.
+  preExecuteScript: string
+  postExecuteScript: string
   outputChannels: OutputChannel[]
   execMode: ExecMode
   concurrencyPolicy: ConcurrencyPolicy
@@ -104,6 +107,8 @@ export function defaultState(): EditorState {
     parametersJSON: '{}',
     scheduleSpec: '0 * * * *',
     toolAllowlistJSON: '[]',
+    preExecuteScript: '',
+    postExecuteScript: '',
     outputChannels: [{ type: 'mesh', priority: 'normal' }],
     execMode: 'propose',
     concurrencyPolicy: 'skip',
@@ -133,6 +138,8 @@ export function stateFromWorker(w: Worker): EditorState {
     parametersJSON: w.parameters_json || '{}',
     scheduleSpec: w.schedule_spec,
     toolAllowlistJSON: w.tool_allowlist_json || '[]',
+    preExecuteScript: w.pre_execute_script ?? '',
+    postExecuteScript: w.post_execute_script ?? '',
     outputChannels: parseChannels(w.output_channels_json),
     execMode: w.exec_mode,
     concurrencyPolicy: w.concurrency_policy,
@@ -425,6 +432,10 @@ export function toCreateInput(s: EditorState): CreateWorkerInput {
     parameters_json: s.parametersJSON.trim() || '{}',
     schedule_spec: s.scheduleSpec.trim(),
     tool_allowlist_json: s.toolAllowlistJSON.trim() || '[]',
+    // Send '' (not undefined) so clearing the textarea clears the hook on
+    // update; the backend treats '' as "no hook".
+    pre_execute_script: s.preExecuteScript.trim(),
+    post_execute_script: s.postExecuteScript.trim(),
     output_channels_json: JSON.stringify(s.outputChannels),
     exec_mode: s.execMode,
     concurrency_policy: s.concurrencyPolicy,
@@ -470,6 +481,8 @@ export function toUpdateInput(s: EditorState): UpdateWorkerInput {
     parameters_json: c.parameters_json,
     schedule_spec: c.schedule_spec,
     tool_allowlist_json: c.tool_allowlist_json,
+    pre_execute_script: c.pre_execute_script,
+    post_execute_script: c.post_execute_script,
     output_channels_json: c.output_channels_json,
     exec_mode: c.exec_mode,
     concurrency_policy: c.concurrency_policy,

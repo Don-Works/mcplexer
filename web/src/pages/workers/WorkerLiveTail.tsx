@@ -29,6 +29,7 @@ const TERMINAL: ReadonlySet<WorkerRunStatus> = new Set([
   'paused',
   'rejected',
   'awaiting_approval',
+  'blocked',
 ])
 
 export function WorkerLiveTail({ liveRun, onRunSettled }: Props) {

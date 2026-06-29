@@ -23,27 +23,32 @@ import (
 // forge template lineage. See internal/workers/admin/template_install.go
 // for the template flow that populates these.
 type CreateInput struct {
-	Name                  string                        `json:"name"`
-	Description           string                        `json:"description,omitempty"`
-	ModelProvider         string                        `json:"model_provider"`
-	ModelID               string                        `json:"model_id"`
-	ModelEndpointURL      string                        `json:"model_endpoint_url,omitempty"`
-	SecretScopeID         string                        `json:"secret_scope_id"`
-	SkillName             string                        `json:"skill_name,omitempty"`
-	SkillVersion          string                        `json:"skill_version,omitempty"`
-	SkillRefs             []store.SkillRef              `json:"skill_refs,omitempty"`
-	PromptTemplate        string                        `json:"prompt_template"`
-	ParametersJSON        string                        `json:"parameters_json,omitempty"`
-	ScheduleSpec          string                        `json:"schedule_spec"`
-	ToolAllowlistJSON     string                        `json:"tool_allowlist_json,omitempty"`
-	CapabilityProfileJSON string                        `json:"capability_profile_json,omitempty"`
-	OutputChannelsJSON    string                        `json:"output_channels_json,omitempty"`
-	ExecMode              string                        `json:"exec_mode,omitempty"`
-	ConcurrencyPolicy     string                        `json:"concurrency_policy,omitempty"`
-	MemoryScopeID         string                        `json:"memory_scope_id,omitempty"`
-	Enabled               *bool                         `json:"enabled,omitempty"`
-	WorkspaceID           string                        `json:"workspace_id"`
-	WorkspaceAccess       []store.WorkerWorkspaceAccess `json:"workspace_access,omitempty"`
+	Name                  string           `json:"name"`
+	Description           string           `json:"description,omitempty"`
+	ModelProvider         string           `json:"model_provider"`
+	ModelID               string           `json:"model_id"`
+	ModelEndpointURL      string           `json:"model_endpoint_url,omitempty"`
+	SecretScopeID         string           `json:"secret_scope_id"`
+	SkillName             string           `json:"skill_name,omitempty"`
+	SkillVersion          string           `json:"skill_version,omitempty"`
+	SkillRefs             []store.SkillRef `json:"skill_refs,omitempty"`
+	PromptTemplate        string           `json:"prompt_template"`
+	ParametersJSON        string           `json:"parameters_json,omitempty"`
+	ScheduleSpec          string           `json:"schedule_spec"`
+	ToolAllowlistJSON     string           `json:"tool_allowlist_json,omitempty"`
+	CapabilityProfileJSON string           `json:"capability_profile_json,omitempty"`
+	// PreExecuteScript / PostExecuteScript are optional JS hooks run in the
+	// code-mode sandbox around the model loop. Pre gates the run (throw /
+	// abort(reason) blocks before any model spend); post can reject output.
+	PreExecuteScript   string                        `json:"pre_execute_script,omitempty"`
+	PostExecuteScript  string                        `json:"post_execute_script,omitempty"`
+	OutputChannelsJSON string                        `json:"output_channels_json,omitempty"`
+	ExecMode           string                        `json:"exec_mode,omitempty"`
+	ConcurrencyPolicy  string                        `json:"concurrency_policy,omitempty"`
+	MemoryScopeID      string                        `json:"memory_scope_id,omitempty"`
+	Enabled            *bool                         `json:"enabled,omitempty"`
+	WorkspaceID        string                        `json:"workspace_id"`
+	WorkspaceAccess    []store.WorkerWorkspaceAccess `json:"workspace_access,omitempty"`
 
 	// Per-worker safety caps (M1). 0 in run caps means "use the runner
 	// default"; 0 in budget/failure caps means "no cap".
@@ -112,19 +117,22 @@ type UpdateInput struct {
 	// SkillRefs is the canonical multi-skill list. When non-nil it
 	// overrides SkillName / SkillVersion (which exist only for backward
 	// compat). A non-nil zero-length slice clears every attached skill.
-	SkillRefs             *[]store.SkillRef              `json:"skill_refs,omitempty"`
-	PromptTemplate        *string                        `json:"prompt_template,omitempty"`
-	ParametersJSON        *string                        `json:"parameters_json,omitempty"`
-	ScheduleSpec          *string                        `json:"schedule_spec,omitempty"`
-	ToolAllowlistJSON     *string                        `json:"tool_allowlist_json,omitempty"`
-	CapabilityProfileJSON *string                        `json:"capability_profile_json,omitempty"`
-	OutputChannelsJSON    *string                        `json:"output_channels_json,omitempty"`
-	ExecMode              *string                        `json:"exec_mode,omitempty"`
-	ConcurrencyPolicy     *string                        `json:"concurrency_policy,omitempty"`
-	MemoryScopeID         *string                        `json:"memory_scope_id,omitempty"`
-	Enabled               *bool                          `json:"enabled,omitempty"`
-	WorkspaceID           *string                        `json:"workspace_id,omitempty"`
-	WorkspaceAccess       *[]store.WorkerWorkspaceAccess `json:"workspace_access,omitempty"`
+	SkillRefs             *[]store.SkillRef `json:"skill_refs,omitempty"`
+	PromptTemplate        *string           `json:"prompt_template,omitempty"`
+	ParametersJSON        *string           `json:"parameters_json,omitempty"`
+	ScheduleSpec          *string           `json:"schedule_spec,omitempty"`
+	ToolAllowlistJSON     *string           `json:"tool_allowlist_json,omitempty"`
+	CapabilityProfileJSON *string           `json:"capability_profile_json,omitempty"`
+	// PreExecuteScript / PostExecuteScript: pass "" to clear a hook.
+	PreExecuteScript   *string                        `json:"pre_execute_script,omitempty"`
+	PostExecuteScript  *string                        `json:"post_execute_script,omitempty"`
+	OutputChannelsJSON *string                        `json:"output_channels_json,omitempty"`
+	ExecMode           *string                        `json:"exec_mode,omitempty"`
+	ConcurrencyPolicy  *string                        `json:"concurrency_policy,omitempty"`
+	MemoryScopeID      *string                        `json:"memory_scope_id,omitempty"`
+	Enabled            *bool                          `json:"enabled,omitempty"`
+	WorkspaceID        *string                        `json:"workspace_id,omitempty"`
+	WorkspaceAccess    *[]store.WorkerWorkspaceAccess `json:"workspace_access,omitempty"`
 
 	// Per-worker safety caps (M1). Pointer-typed so omitted fields are
 	// left untouched; passing 0 explicitly clears run caps to the runner
@@ -230,6 +238,16 @@ func (s *Service) validateUpdate(w *store.Worker, in UpdateInput) error {
 	}
 	if in.CapabilityProfileJSON != nil {
 		if err := validateCapabilityProfileJSON(*in.CapabilityProfileJSON); err != nil {
+			return err
+		}
+	}
+	if in.PreExecuteScript != nil {
+		if err := validateExecuteScript("pre_execute_script", w.PreExecuteScript); err != nil {
+			return err
+		}
+	}
+	if in.PostExecuteScript != nil {
+		if err := validateExecuteScript("post_execute_script", w.PostExecuteScript); err != nil {
 			return err
 		}
 	}

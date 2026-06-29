@@ -42,6 +42,14 @@ const (
 	// so cancelled runs are excluded from the consecutive-failure
 	// auto-pause streak and from delegation / model-rank failure counts.
 	StatusCancelled = "cancelled"
+	// StatusBlocked is the terminal state when a worker's pre-execute hook
+	// gates the run (before any model/CLI spend), or its post-execute hook
+	// rejects an otherwise-successful run's output. It is deliberately
+	// DISTINCT from StatusFailure: a gate doing its job is not a worker
+	// failing, so blocked runs are excluded from the consecutive-failure
+	// auto-pause streak (autopause counts only StatusFailure). The block
+	// reason is carried in the run's Error field. See hooks.go.
+	StatusBlocked = "blocked"
 )
 
 // Exec modes recognised by the runner.
@@ -200,7 +208,15 @@ func (r *Runner) RunWithOpts(ctx context.Context, workerID string, opts RunOpts)
 			br.ReleaseBrowserSession("worker:" + worker.ID)
 		}
 	}()
-	outcome = r.runLoop(ctx, state)
+	// Pre-execute hook gate: runs the worker's pre_execute_script (if any)
+	// in the code-mode sandbox BEFORE any adapter.Send, so a block costs
+	// zero model/CLI spend. A blocked gate short-circuits to a terminal
+	// "blocked" outcome and skips the loop entirely. See hooks.go.
+	if blocked := r.runPreExecuteHook(ctx, worker, run, state); blocked != nil {
+		outcome = *blocked
+	} else {
+		outcome = r.runLoop(ctx, state)
+	}
 	return runID, nil
 }
 
@@ -725,6 +741,11 @@ func (r *Runner) finalize(
 	state *loopState,
 	outcome loopOutcome,
 ) {
+	// Post-execute hook: runs the worker's post_execute_script (if any) in
+	// the code-mode sandbox before any output is emitted, so a rejection
+	// can flip a successful run to "blocked" and suppress channel emission.
+	// Skips paused/pre-blocked runs internally. See hooks.go.
+	outcome = r.runPostExecuteHook(ctx, worker, run, state, outcome)
 	finishedAt := r.clock.Now().UTC()
 	r.applyCLIToolCallCap(ctx, worker, run, state, &outcome)
 	r.emitTerminalOutputs(ctx, worker, run, state, outcome, finishedAt)

@@ -35,6 +35,16 @@ export function ConfigView({ worker }: { worker: Worker }) {
       <Field label="Tool allowlist" wide>
         <CodeBlock>{prettyJSON(worker.tool_allowlist_json)}</CodeBlock>
       </Field>
+      {worker.pre_execute_script && worker.pre_execute_script.trim() !== '' && (
+        <Field label="Pre-execute hook" wide>
+          <CodeBlock>{worker.pre_execute_script}</CodeBlock>
+        </Field>
+      )}
+      {worker.post_execute_script && worker.post_execute_script.trim() !== '' && (
+        <Field label="Post-execute hook" wide>
+          <CodeBlock>{worker.post_execute_script}</CodeBlock>
+        </Field>
+      )}
       <Field label="Output channels" wide>
         <CodeBlock>{prettyJSON(worker.output_channels_json)}</CodeBlock>
       </Field>
