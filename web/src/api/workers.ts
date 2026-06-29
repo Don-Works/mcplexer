@@ -26,6 +26,11 @@ export interface Worker {
   parameters_json: string
   schedule_spec: string
   tool_allowlist_json: string
+  // Optional pre/post-execute JS hooks run in the code-mode sandbox around
+  // the model loop. pre gates the run (block before spend); post can reject
+  // output. Empty = no hook.
+  pre_execute_script?: string
+  post_execute_script?: string
   output_channels_json: string
   exec_mode: ExecMode
   concurrency_policy: ConcurrencyPolicy
@@ -91,6 +96,9 @@ export type WorkerRunStatus =
   | 'rejected'
   | 'interrupted'
   | 'cancelled'
+  // blocked = a pre-execute hook gated the run (before any model spend) or a
+  // post-execute hook rejected the output. Terminal; not a failure.
+  | 'blocked'
 
 // WorkerSummary is the slim list-row from the admin service.
 export interface WorkerSummary {
@@ -175,6 +183,8 @@ export interface CreateWorkerInput {
   parameters_json?: string
   schedule_spec: string
   tool_allowlist_json?: string
+  pre_execute_script?: string
+  post_execute_script?: string
   output_channels_json?: string
   exec_mode?: ExecMode
   concurrency_policy?: ConcurrencyPolicy

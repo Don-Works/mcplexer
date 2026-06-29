@@ -122,6 +122,18 @@ func addLongDiffs(d map[string]any, old *store.Worker, in UpdateInput) {
 			"new": fingerprint(*in.CapabilityProfileJSON),
 		}
 	}
+	if in.PreExecuteScript != nil {
+		d["pre_execute_script"] = map[string]any{
+			"old": fingerprint(old.PreExecuteScript),
+			"new": fingerprint(*in.PreExecuteScript),
+		}
+	}
+	if in.PostExecuteScript != nil {
+		d["post_execute_script"] = map[string]any{
+			"old": fingerprint(old.PostExecuteScript),
+			"new": fingerprint(*in.PostExecuteScript),
+		}
+	}
 	if in.OutputChannelsJSON != nil {
 		d["output_channels_json"] = map[string]any{
 			"old": fingerprint(old.OutputChannelsJSON),

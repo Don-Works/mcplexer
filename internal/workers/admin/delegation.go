@@ -53,7 +53,13 @@ type DelegationInput struct {
 	ModelCandidateIndex int                        `json:"model_candidate_index,omitempty"`
 	ModelCandidates     []DelegationModelCandidate `json:"model_candidates,omitempty"`
 	ToolAllowlistJSON   string                     `json:"tool_allowlist_json,omitempty"`
-	ReviewRequired      *bool                      `json:"review_required,omitempty"`
+	// PreExecuteScript / PostExecuteScript are optional JS hooks run in the
+	// code-mode sandbox around this delegate's loop. Pre gates the run
+	// (throw / abort(reason) blocks before any model spend); post can reject
+	// output. Validated + executed identically to a hand-built worker's.
+	PreExecuteScript  string `json:"pre_execute_script,omitempty"`
+	PostExecuteScript string `json:"post_execute_script,omitempty"`
+	ReviewRequired    *bool  `json:"review_required,omitempty"`
 
 	// CapabilityPreset sizes the delegate's allowed tool surface +
 	// mcplexer features to its trust ("full"|"coder"|"researcher"|
@@ -690,6 +696,8 @@ func buildDelegationWorkerInput(
 		ScheduleSpec:           "manual",
 		ToolAllowlistJSON:      in.ToolAllowlistJSON,
 		CapabilityProfileJSON:  in.capabilityProfileJSON,
+		PreExecuteScript:       in.PreExecuteScript,
+		PostExecuteScript:      in.PostExecuteScript,
 		OutputChannelsJSON:     buildDelegationOutputChannels(),
 		ExecMode:               runner.ExecModeAutonomous,
 		ConcurrencyPolicy:      "skip",

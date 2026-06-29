@@ -10,13 +10,34 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/don-works/mcplexer/internal/codemode"
 	"github.com/don-works/mcplexer/internal/store"
 )
 
 const (
 	maxWorkerSkillRefs           = 8
 	maxWorkerParametersJSONBytes = 64 * 1024
+	maxWorkerExecuteScriptBytes  = 64 * 1024
 )
+
+// validateExecuteScript guards a pre/post-execute hook script: a byte cap
+// plus the SAME codemode.Preflight() the sandbox runs (syntax error + no
+// eval/Function/import/require), so a broken hook is rejected at write time
+// rather than blocking every run. Empty = no hook = always valid. TypeScript
+// annotations are stripped first (mirroring the runtime) so a TS-annotated
+// hook validates the same way it will execute.
+func validateExecuteScript(field, raw string) error {
+	if len(raw) > maxWorkerExecuteScriptBytes {
+		return fmt.Errorf("%s max %d bytes (got %d)", field, maxWorkerExecuteScriptBytes, len(raw))
+	}
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	if issues := codemode.Preflight(codemode.StripTypeScript(raw)); len(issues) > 0 {
+		return fmt.Errorf("%s: %s", field, codemode.FormatPreflightIssues(issues))
+	}
+	return nil
+}
 
 // validateSkillRefs rejects entries with an empty name or duplicate
 // (name, version) pairs. Order matters for the runner so we don't

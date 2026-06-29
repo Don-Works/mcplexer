@@ -44,6 +44,8 @@ func (s *Service) buildWorkerFromCreate(in CreateInput) (*store.Worker, error) {
 		ScheduleSpec:           in.ScheduleSpec,
 		ToolAllowlistJSON:      defaultStr(in.ToolAllowlistJSON, "[]"),
 		CapabilityProfileJSON:  strings.TrimSpace(in.CapabilityProfileJSON),
+		PreExecuteScript:       in.PreExecuteScript,
+		PostExecuteScript:      in.PostExecuteScript,
 		OutputChannelsJSON:     defaultStr(in.OutputChannelsJSON, `[{"type":"mesh","priority":"normal"}]`),
 		ExecMode:               defaultStr(in.ExecMode, "propose"),
 		ConcurrencyPolicy:      defaultStr(in.ConcurrencyPolicy, "skip"),

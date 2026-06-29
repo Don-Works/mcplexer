@@ -29,6 +29,7 @@ const TERMINAL: ReadonlySet<WorkerRunStatus> = new Set([
   'rejected',
   'awaiting_approval',
   'cancelled',
+  'blocked',
 ])
 
 interface Options {

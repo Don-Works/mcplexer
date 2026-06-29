@@ -119,6 +119,12 @@ func validateCreate(in CreateInput) error {
 	if err := validateCapabilityProfileJSON(in.CapabilityProfileJSON); err != nil {
 		return err
 	}
+	if err := validateExecuteScript("pre_execute_script", in.PreExecuteScript); err != nil {
+		return err
+	}
+	if err := validateExecuteScript("post_execute_script", in.PostExecuteScript); err != nil {
+		return err
+	}
 	if err := validateOutputChannelsJSON(in.OutputChannelsJSON); err != nil {
 		return err
 	}
@@ -405,6 +411,12 @@ func applyUpdate(w *store.Worker, in UpdateInput) {
 	}
 	if in.CapabilityProfileJSON != nil {
 		w.CapabilityProfileJSON = *in.CapabilityProfileJSON
+	}
+	if in.PreExecuteScript != nil {
+		w.PreExecuteScript = *in.PreExecuteScript
+	}
+	if in.PostExecuteScript != nil {
+		w.PostExecuteScript = *in.PostExecuteScript
 	}
 	if in.OutputChannelsJSON != nil {
 		w.OutputChannelsJSON = *in.OutputChannelsJSON

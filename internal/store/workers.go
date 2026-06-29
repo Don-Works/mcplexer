@@ -90,9 +90,20 @@ type Worker struct {
 	// truth — it is a first-class column, not the display-only
 	// ParametersJSON delegation blob.
 	CapabilityProfileJSON string `json:"capability_profile_json,omitempty"`
-	OutputChannelsJSON    string `json:"output_channels_json"`
-	ExecMode              string `json:"exec_mode"`          // propose|autonomous
-	ConcurrencyPolicy     string `json:"concurrency_policy"` // skip|queue
+	// PreExecuteScript / PostExecuteScript are optional user-authored JS
+	// snippets run in the code-mode sandbox around the model loop. The
+	// pre-script runs BEFORE any model/CLI spend and can BLOCK the run
+	// (throw / call abort(reason)) — e.g. hit an endpoint and gate on the
+	// response. The post-script runs AFTER output is produced and can
+	// REJECT the output (throw on a successful run flips it to "blocked",
+	// suppressing channel emission). Both execute with the worker's own
+	// tool allowlist + capability profile and are audited like any other
+	// execute_code call. Empty string = no hook. See internal/workers/runner/hooks.go.
+	PreExecuteScript   string `json:"pre_execute_script,omitempty"`
+	PostExecuteScript  string `json:"post_execute_script,omitempty"`
+	OutputChannelsJSON string `json:"output_channels_json"`
+	ExecMode           string `json:"exec_mode"`          // propose|autonomous
+	ConcurrencyPolicy  string `json:"concurrency_policy"` // skip|queue
 	// MemoryScopeID is unused in M0 but persisted so future memory work
 	// doesn't need a migration. Empty string when no memory scope is
 	// attached.
