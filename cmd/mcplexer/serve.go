@@ -662,6 +662,39 @@ func buildServerDeps(ctx context.Context, cfg *Config, db *sqlite.DB, settingsSv
 	if err := ensureAuditPruneJob(ctx, db); err != nil {
 		slog.Warn("retention: seed audit_prune job", "error", err)
 	}
+
+	// brw browser-profile auto-discovery (DEFAULT OFF). When enabled, wire the
+	// in-process reconcile executor + seed the interval-fallback and policy
+	// file_watch jobs BEFORE Start so the scheduler's initial Reload arms the
+	// interval job (the FileWatcher, constructed below after Start, picks up
+	// the watch job on its own initial Reload). Both jobs carry the
+	// scheduler.BrwReconcileCommand sentinel so dispatch routes them to the
+	// executor instead of execing. Failures here are non-fatal — a degraded
+	// auto-discovery is better than the daemon refusing to boot.
+	if cfg.BrwAutodiscover {
+		brwExec := newBrwReconcileExecutor(brwReconcileDeps{
+			store:      db,
+			svc:        config.NewService(db),
+			engine:     d.engine,
+			manager:    d.manager,
+			workspaces: cfg.BrwWorkspaces,
+			brwctlPath: cfg.BrwctlPath,
+			policyPath: cfg.BrwPolicyPath,
+			prune:      cfg.BrwPrune,
+		})
+		d.scheduler.SetBrwReconcileExecutor(brwExec)
+		if err := ensureBrwReconcileJobs(ctx, db, cfg.BrwInterval, cfg.BrwPolicyPath); err != nil {
+			slog.Warn("brw autodiscover: seed reconcile jobs", "error", err)
+		}
+		slog.Info("brw autodiscover enabled",
+			"interval", cfg.BrwInterval,
+			"policy", cfg.BrwPolicyPath,
+			"workspaces", cfg.BrwWorkspaces,
+			"prune", cfg.BrwPrune,
+			"brwctl", cfg.BrwctlPath,
+		)
+	}
+
 	if startErr := d.scheduler.Start(ctx); startErr != nil {
 		slog.Warn("guards: scheduler start", "error", startErr)
 	} else {

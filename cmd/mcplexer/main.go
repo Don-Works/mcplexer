@@ -66,7 +66,9 @@ func run() error {
 		return cmdConfig(args)
 	case "doctor":
 		return cmdDoctor(args)
+	case "brw":
+		return cmdBrw(args)
 	default:
-		return fmt.Errorf("unknown command: %s\nUsage: mcplexer [serve|connect|init|status|version|dry-run|secret|skill|migrate-skills|migrate-commands|migrate-ledger|memory|mesh|daemon|setup|control-server|run-job|rules|harness|scrub-audit|config|doctor]", subcmd)
+		return fmt.Errorf("unknown command: %s\nUsage: mcplexer [serve|connect|init|status|version|dry-run|secret|skill|migrate-skills|migrate-commands|migrate-ledger|memory|mesh|daemon|setup|control-server|run-job|rules|harness|scrub-audit|config|doctor|brw]", subcmd)
 	}
 }

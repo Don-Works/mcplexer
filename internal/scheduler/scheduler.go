@@ -43,6 +43,7 @@ type Scheduler struct {
 	workerStor  WorkerLookup
 	pruneExec   PruneExecutor
 	prunePolicy *PrunePolicy
+	brwExec     BrwReconcileExecutor
 
 	// workerRunTimeout, when > 0, overrides the derived worker
 	// goroutine's outer wall-clock cap. Zero means "use the per-worker
@@ -318,6 +319,15 @@ func (s *Scheduler) dispatch(ctx context.Context, j store.ScheduledJob) (string,
 		return s.executeWorkerJob(ctx, j)
 	case KindAuditPrune:
 		return s.executePruneJob(ctx, j)
+	}
+	// brw auto-discovery reuses the existing interval + file_watch firing
+	// machinery rather than a dedicated kind: a single sentinel Command on
+	// otherwise-ordinary KindInterval / KindFileWatch rows routes BOTH the
+	// heap fire and the FileWatcher fire to the wired BrwReconcileExecutor.
+	// This is the only discriminator the dual-trigger design needs — see
+	// BrwReconcileCommand in exec_brwreconcile.go.
+	if j.Command == BrwReconcileCommand {
+		return s.executeBrwReconcileJob(ctx, j)
 	}
 	return s.executeAndApprove(ctx, j)
 }
