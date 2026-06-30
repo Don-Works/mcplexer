@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // Config holds application configuration loaded from environment variables.
@@ -48,6 +49,31 @@ type Config struct {
 	// P2PIdentityPath overrides the default identity location
 	// (~/.mcplexer/p2p/identity.key). Spike-only: stored in cleartext.
 	P2PIdentityPath string
+
+	// brw browser-profile auto-discovery (DEFAULT OFF). When BrwAutodiscover
+	// is set, the running gateway keeps its source="brw" downstream servers +
+	// routes in sync with the live `brwctl daemons` roster — a file_watch on
+	// the policy file plus a periodic interval fallback both reconcile, so
+	// launching a brwd for a new profile makes its namespace appear with no
+	// manual command. Off-by-default leaves existing deployments byte-for-byte
+	// unchanged.
+	BrwAutodiscover bool
+	// BrwWorkspaces are the workspace IDs that get an allow route per daemon.
+	// Empty = sync servers only (no routes).
+	BrwWorkspaces []string
+	// BrwPolicyPath is the browser-profiles.json to watch (file_watch trigger)
+	// and pass as --profile-policy. Empty falls back to the canonical brw
+	// default path for the watch; the reconcile itself relies on brwctl's own
+	// discovery regardless.
+	BrwPolicyPath string
+	// BrwInterval is the periodic reconcile fallback cadence. Default 5m.
+	BrwInterval time.Duration
+	// BrwctlPath is the brwctl binary used to enumerate the roster.
+	BrwctlPath string
+	// BrwPrune deletes source="brw" servers/routes absent from the live roster
+	// on each reconcile. Default off (a transient brwctl failure must not nuke
+	// a working namespace).
+	BrwPrune bool
 }
 
 // defaultDataPath returns ~/.mcplexer/<filename>, falling back to
@@ -88,8 +114,48 @@ func loadConfig() (*Config, error) {
 
 		P2PEnabled:      envBool("MCPLEXER_P2P_ENABLED", false),
 		P2PIdentityPath: envOr("MCPLEXER_P2P_IDENTITY", ""),
+
+		BrwAutodiscover: envBool("MCPLEXER_BRW_AUTODISCOVER", false),
+		BrwWorkspaces:   parseCSVList(envOr("MCPLEXER_BRW_WORKSPACES", "")),
+		BrwPolicyPath:   envOr("MCPLEXER_BRW_POLICY", ""),
+		BrwInterval:     envDuration("MCPLEXER_BRW_INTERVAL", 5*time.Minute),
+		BrwctlPath:      envOr("MCPLEXER_BRWCTL_PATH", "brwctl"),
+		BrwPrune:        envBool("MCPLEXER_BRW_PRUNE", false),
 	}
 	return cfg, nil
+}
+
+// parseCSVList splits a comma-separated value into trimmed, non-empty
+// entries. Returns nil for an empty/blank input.
+func parseCSVList(raw string) []string {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// envDuration reads a Go duration env var, falling back when unset, empty,
+// unparseable, or non-positive.
+func envDuration(key string, fallback time.Duration) time.Duration {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return fallback
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil || d <= 0 {
+		return fallback
+	}
+	return d
 }
 
 func hostFromURL(raw string) []string {
