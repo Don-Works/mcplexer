@@ -151,7 +151,15 @@ export function TasksListPage() {
   const [searchInput, setSearchInput] = useState(params.get('q') ?? '')
   const [searchQuery, setSearchQuery] = useState(params.get('q') ?? '')
   const now = useNow(30_000)
-  const [createOpen, setCreateOpen] = useState(false)
+  const [createOpen, setCreateOpen] = useState(params.get('new') === '1')
+
+  // Clean the ?new=1 param after opening so re-renders don't loop.
+  useEffect(() => {
+    if (params.get('new') === '1') {
+      params.delete('new')
+      setParams(params, { replace: true })
+    }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
   const [collapsed, setCollapsed] = useState<Set<string>>(() => readCollapsed())
   const [viewMode, setViewMode] = useState<ViewMode>(() => readView())
   const [selected, setSelected] = useState<Set<string>>(() => new Set())

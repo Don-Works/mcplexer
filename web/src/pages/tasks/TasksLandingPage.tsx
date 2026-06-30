@@ -12,7 +12,7 @@ import { Navigate, useSearchParams } from 'react-router-dom'
 import { Activity, Inbox, ListTodo } from 'lucide-react'
 
 import { listWorkspaces } from '@/api/client'
-import { listTasks, listTaskOffers, type Task } from '@/api/tasks'
+import { listTasks, listTaskOffers, listTaskStatuses, type Task } from '@/api/tasks'
 import { useApi } from '@/hooks/use-api'
 import { useTasksStream } from '@/hooks/use-tasks-stream'
 import { useRecentTaskActivity } from '@/hooks/use-recent-task-activity'
@@ -45,7 +45,7 @@ export function TasksLandingPage() {
 
 function TasksLandingPageBody() {
   const tasksFetcher = useCallback(
-    () => listTasks({ state: 'all', limit: 500 }),
+    () => listTasks({ state: 'open', limit: 500 }),
     [],
   )
   const { data: tasks, refetch } = useApi<Task[]>(tasksFetcher)
@@ -58,6 +58,13 @@ function TasksLandingPageBody() {
   )
   const { data: offers, refetch: refetchOffers } = useApi(offersFetcher)
 
+  // True open/doing totals — grouped COUNT(*) across all workspaces, uncapped.
+  // The task list below is page-limited to 500 server-side, so its length lies
+  // (saturates to a fake "500") the moment the board is busier than one page.
+  const statusFetcher = useCallback(() => listTaskStatuses({ state: 'open' }), [])
+  const { data: openStatusCounts, refetch: refetchStatusCounts } =
+    useApi(statusFetcher)
+
   const { events, push } = useRecentTaskActivity()
   const [liveCount, setLiveCount] = useState(0)
   useTasksStream({
@@ -66,6 +73,7 @@ function TasksLandingPageBody() {
       setLiveCount((n) => Math.min(n + 1, 50))
       refetch()
       refetchOffers()
+      refetchStatusCounts()
     },
   })
 
@@ -75,9 +83,10 @@ function TasksLandingPageBody() {
     const id = window.setInterval(() => {
       refetch()
       refetchOffers()
+      refetchStatusCounts()
     }, 30_000)
     return () => window.clearInterval(id)
-  }, [refetch, refetchOffers])
+  }, [refetch, refetchOffers, refetchStatusCounts])
 
   const workspaceNameByID = useMemo(() => {
     const m: Record<string, string> = {}
@@ -94,10 +103,7 @@ function TasksLandingPageBody() {
     () => mergeTaskActivityEvents(events, historyEvents),
     [events, historyEvents],
   )
-  const openTasks = useMemo(
-    () => allTasks.filter((t) => !t.closed_at),
-    [allTasks],
-  )
+  const openTasks = allTasks
   const doingTasks = useMemo(
     () => openTasks.filter((t) => isWorkingStatus(t.status)),
     [openTasks],
@@ -120,8 +126,25 @@ function TasksLandingPageBody() {
   }, [openTasks])
 
   const pendingOffers = offers?.length ?? 0
-  const openCount = openTasks.length
-  const doingCount = doingTasks.length
+  // Prefer the uncapped grouped count; fall back to the (capped) list length
+  // only until the count request lands, so the tile never flashes a stale 0.
+  const statusRows = openStatusCounts?.statuses
+  const openCount = useMemo(
+    () =>
+      statusRows
+        ? statusRows.reduce((sum, r) => sum + r.count, 0)
+        : openTasks.length,
+    [statusRows, openTasks.length],
+  )
+  const doingCount = useMemo(
+    () =>
+      statusRows
+        ? statusRows
+            .filter((r) => isWorkingStatus(r.status))
+            .reduce((sum, r) => sum + r.count, 0)
+        : doingTasks.length,
+    [statusRows, doingTasks.length],
+  )
 
   return (
     <div className="space-y-6">

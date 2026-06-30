@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import { Check, Clock, X } from 'lucide-react'
 import {
   Sheet,
@@ -98,6 +99,25 @@ function Body({
   const expired = remaining === 'expired'
   const { reason, setReason, resolving, resolve } = useResolveApproval(a.id, onResolved)
 
+  // Same friction contract as PendingCard: Approve is two-step (it lets
+  // the tool call run), Deny needs a reason. Both surfaces resolve through
+  // the shared hook, so they must gate identically.
+  const [armed, setArmed] = useState(false)
+  useEffect(() => {
+    if (!armed) return
+    const id = window.setTimeout(() => setArmed(false), 4000)
+    return () => window.clearTimeout(id)
+  }, [armed])
+  const denyReady = reason.trim().length > 0
+  function handleApprove() {
+    if (!armed) {
+      setArmed(true)
+      return
+    }
+    setArmed(false)
+    resolve(true)
+  }
+
   return (
     <>
       <SheetHeader className="border-b border-border">
@@ -188,7 +208,7 @@ function Body({
       {pending && (
         <div className="space-y-2 border-t border-border p-4">
           <Input
-            placeholder="Reason (required for deny)"
+            placeholder="Reason (required to deny)"
             value={reason}
             onChange={(e) => setReason(e.target.value)}
             className="text-sm"
@@ -197,25 +217,35 @@ function Body({
           <div className="flex gap-2">
             <Button
               size="sm"
-              variant="success"
-              onClick={() => resolve(true)}
+              variant="outline"
+              onClick={handleApprove}
               disabled={resolving || expired}
-              className="flex-1"
+              className={cn(
+                'flex-1 border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/10 hover:text-emerald-200',
+                armed && 'border-emerald-400 bg-emerald-500/15 text-emerald-100',
+              )}
             >
               <Check className="mr-1 h-3.5 w-3.5" />
-              Approve
+              {armed ? 'Confirm approve' : 'Approve'}
             </Button>
             <Button
               size="sm"
               variant="outline"
               onClick={() => resolve(false)}
-              disabled={resolving || expired}
-              className="border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
+              disabled={resolving || expired || !denyReady}
+              className="flex-1 border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
             >
               <X className="mr-1 h-3.5 w-3.5" />
               Deny
             </Button>
           </div>
+          {armed ? (
+            <p className="text-[11px] text-emerald-300/90" role="status">
+              Click confirm to approve, or wait to cancel.
+            </p>
+          ) : !denyReady ? (
+            <p className="text-[11px] text-muted-foreground">Denying requires a reason.</p>
+          ) : null}
         </div>
       )}
     </>

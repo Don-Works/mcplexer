@@ -27,7 +27,7 @@ export function MemorySearchBar({
     <div
       className={cn(
         'group/search flex items-stretch border border-border bg-card transition-colors',
-        'focus-within:border-primary/60',
+        'focus-within:border-primary/60 focus-within:ring-1 focus-within:ring-primary/30',
       )}
     >
       <div className="flex items-center pl-4 pr-3 text-muted-foreground/70 transition-colors group-focus-within/search:text-primary">

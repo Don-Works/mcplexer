@@ -12,7 +12,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { useSecretPromptStream, type SecretPrompt } from '@/hooks/use-secret-prompt-stream'
 import { toast } from 'sonner'
-import { ShieldAlert } from 'lucide-react'
+import { Eye, EyeOff, ShieldAlert } from 'lucide-react'
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || '/api/v1'
 
@@ -42,6 +42,9 @@ interface PromptFormProps {
 function PromptForm({ prompt, onResolved }: PromptFormProps) {
   const [value, setValue] = useState('')
   const [busy, setBusy] = useState(false)
+  // Reveal toggle — default hidden. Lets you verify a keyed value (esp. on
+  // mobile) before submitting, so a typo doesn't waste the agent's blocked RPC.
+  const [reveal, setReveal] = useState(false)
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -97,16 +100,33 @@ function PromptForm({ prompt, onResolved }: PromptFormProps) {
       </div>
       <div className="space-y-1">
         <Label htmlFor={`secret-${prompt.id}`}>{prompt.label}</Label>
-        <Input
-          id={`secret-${prompt.id}`}
-          type="password"
-          autoFocus
-          autoComplete="off"
-          spellCheck={false}
-          value={value}
-          onChange={(e) => setValue(e.target.value)}
-          placeholder="Paste secret value"
-        />
+        <div className="relative">
+          <Input
+            id={`secret-${prompt.id}`}
+            type={reveal ? 'text' : 'password'}
+            autoFocus
+            autoComplete="off"
+            spellCheck={false}
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            placeholder="Paste secret value"
+            className="pr-10"
+          />
+          <button
+            type="button"
+            onClick={() => setReveal((v) => !v)}
+            aria-label={reveal ? 'Hide secret' : 'Show secret'}
+            aria-pressed={reveal}
+            title={reveal ? 'Hide secret' : 'Show secret'}
+            className="absolute right-0 top-0 grid h-full w-10 place-items-center text-muted-foreground transition-colors hover:text-foreground focus-visible:text-foreground focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0"
+          >
+            {reveal ? (
+              <EyeOff className="h-4 w-4" aria-hidden />
+            ) : (
+              <Eye className="h-4 w-4" aria-hidden />
+            )}
+          </button>
+        </div>
       </div>
       <DialogFooter>
         <Button type="button" variant="outline" onClick={handleCancel} disabled={busy} data-testid="secret-cancel">

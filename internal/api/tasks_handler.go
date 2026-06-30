@@ -259,6 +259,7 @@ type updateTaskRequest struct {
 	Meta        *string    `json:"meta,omitempty"`
 	Terminal    *bool      `json:"terminal,omitempty"`
 	Pinned      *bool      `json:"pinned,omitempty"`
+	WorkspaceID *string    `json:"workspace_id,omitempty"`
 	Clear       []string   `json:"clear,omitempty"`
 	Assignee    *struct {
 		SessionID string `json:"session_id"`
@@ -287,8 +288,9 @@ func (h *tasksHandler) handleUpdate(w http.ResponseWriter, r *http.Request) {
 		Title: body.Title, Description: body.Description, Status: body.Status,
 		Priority: body.Priority, DueAt: body.DueAt, Tags: body.Tags,
 		Meta: body.Meta, Terminal: body.Terminal, Pinned: body.Pinned,
-		Clear:     body.Clear,
-		ActorKind: "user",
+		WorkspaceID: body.WorkspaceID,
+		Clear:       body.Clear,
+		ActorKind:   "user",
 	}
 	if body.Assignee != nil {
 		patch.Assignee = &tasks.Assignee{

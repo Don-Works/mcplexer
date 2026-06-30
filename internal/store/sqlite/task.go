@@ -143,7 +143,7 @@ func (d *DB) UpdateTask(ctx context.Context, t *store.Task) error {
 
 	res, err := d.q.ExecContext(ctx, `
 		UPDATE tasks SET
-			title = ?, description = ?, status = ?, closed_at = ?,
+			workspace_id = ?, title = ?, description = ?, status = ?, closed_at = ?,
 			priority = ?, due_at = ?, tags_json = ?, meta = ?,
 			assignee_session_id = ?, assignee_origin_kind = ?, assignee_peer_id = ?, assignee_user_id = ?,
 			assigned_by_session_id = ?, assigned_by_peer_id = ?, assigned_at = ?,
@@ -151,7 +151,7 @@ func (d *DB) UpdateTask(ctx context.Context, t *store.Task) error {
 			updated_by_session_id = ?,
 			status_history_json = ?, hlc_at = ?, pinned = ?, updated_at = ?
 		WHERE id = ? AND deleted_at IS NULL`,
-		t.Title, t.Description, t.Status, unixOrNil(t.ClosedAt),
+		t.WorkspaceID, t.Title, t.Description, t.Status, unixOrNil(t.ClosedAt),
 		t.Priority, unixOrNil(t.DueAt), tags, t.Meta,
 		nullString(t.AssigneeSessionID), t.AssigneeOriginKind, t.AssigneePeerID, t.AssigneeUserID,
 		nullString(t.AssignedBySessionID), t.AssignedByPeerID, unixOrNil(t.AssignedAt),

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { Search } from 'lucide-react'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import { cn } from '@/lib/utils'
 import type { CommandEntry, CommandGroup } from './commands'
@@ -7,6 +8,19 @@ import { brainCmdEntries, useCommandEntries } from './commands'
 import { IndexTypeahead } from '@/pages/brain/components/IndexTypeahead'
 import { detectMode, type TypeaheadOption } from '@/pages/brain/components/typeaheadRank'
 import { useAuditSearchMode } from './AuditSearchMode'
+
+// Top-level pages surfaced as "Quick Actions" on empty query. The full
+// catalog is still searchable; these are the 6 destinations operators
+// actually jump to, keeping the default view calm.
+const QUICK_ACTION_IDS = [
+  'action-create-task',
+  'page-dashboard',
+  'page-tasks',
+  'page-brain',
+  'page-workers',
+  'page-audit',
+  'page-skills',
+]
 
 interface Props {
   open: boolean
@@ -16,19 +30,15 @@ interface Props {
 // CommandPalette — terminal-native cmd+K surface.
 //
 // Design intent (per /impeccable):
-//   • Looks like a tmux popup, not a Spotlight clone. Mono everywhere,
-//     sharp corners, no decorative gradients, no glassmorphism.
-//   • A real `mcplexer>` prompt prefix instead of the generic search
-//     icon. Matches the terminal-bar moment on the Skills page.
-//   • Matched query characters are bold + primary-tinted in each row
-//     label so you can see why a result ranked where it did.
-//   • Footer is a tmux-style status bar: navigation hints, result
-//     count, "esc to close". Teaches the shortcuts at the same time as
-//     using them.
-//   • Recent jumps are remembered in localStorage and surfaced at the
-//     top when the query is empty.
-//   • Loading state for the dynamic groups (servers/routes/etc.) lands
-//     under a "fetching…" line instead of popping content in.
+//   • Terminal aesthetic: mono, sharp corners, no gradients, no glass.
+//   • Minimal `mcp›` prefix — branding without stealing input width.
+//   • Empty-query view is calm: Recent + Quick Actions + Everything.
+//     Mode chips (`>` `/` `[[` `#` `@`) teach the grammar interactively.
+//   • Matched characters bold + primary-tinted so you see why a result
+//     ranked where it did.
+//   • Status bar teaches shortcuts while you use them.
+//   • Recents remembered in localStorage, surfaced at top.
+//   • Dynamic entries (servers/routes/etc.) refresh on every open.
 
 const RECENT_KEY = 'mcplexer.cmdk.recent'
 const RECENT_MAX = 8
@@ -211,24 +221,27 @@ export function CommandPalette({ open, onOpenChange }: Props) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
+        showCloseButton={false}
         className="max-w-xl gap-0 overflow-hidden border-border bg-card p-0 font-mono shadow-2xl shadow-black/40 sm:max-w-2xl"
         aria-describedby={undefined}
       >
         <DialogTitle className="sr-only">Command palette</DialogTitle>
 
-        {/* Prompt header — terminal-style mcplexer> prefix instead of a
-            search icon. Cursor sits on the input, prefix is decorative. */}
-        <div className="flex items-center gap-2 border-b border-border bg-card px-3.5">
-          <span className="select-none font-mono text-[13px] text-primary/80" aria-hidden>
-            mcplexer
-            <span className="ml-0.5 text-foreground/40">›</span>
-          </span>
+        {/* Prompt header — search-first: a real search affordance instead of a
+            cryptic brand prefix, and the divider rule goes electric on focus so
+            the field reads as the live, intentional surface it is. The active
+            mode is announced in the status bar, not crammed into the prompt. */}
+        <div className="group flex items-center gap-2.5 border-b border-border bg-card px-3.5 transition-colors focus-within:border-primary/50">
+          <Search
+            className="h-4 w-4 shrink-0 text-muted-foreground/50 transition-colors group-focus-within:text-primary"
+            aria-hidden
+          />
           <input
             ref={inputRef}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={onKeyDown}
-            placeholder="jump anywhere   ·   > cmd   / audit   [[ ref   # tag   @ ws"
+            placeholder="Search everything…"
             autoFocus
             // In a typeahead / audit mode the input IS the combobox over the
             // inline listbox; mirror the token-input wiring (§7) so a screen
@@ -241,13 +254,17 @@ export function CommandPalette({ open, onOpenChange }: Props) {
             data-testid="cmdk-input"
             className={cn(
               'h-12 min-w-0 flex-1 border-0 bg-transparent p-0 font-mono text-[14px] text-foreground placeholder:text-muted-foreground/40',
-              'outline-none focus:outline-none focus-visible:ring-0',
+              // Kill BOTH the ring and its offset — the global :focus-visible rule
+              // in index.css paints a 2px ring-offset in the page background
+              // (near-black), which on the lighter card reads as an ugly black box
+              // around the field. The focus signal here is the electric bottom rule.
+              'outline-none focus:outline-none focus-visible:ring-0 focus-visible:ring-offset-0',
             )}
             spellCheck={false}
             autoCorrect="off"
             autoCapitalize="off"
           />
-          <kbd className="hidden shrink-0 border border-border bg-background/40 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground sm:inline-block">
+          <kbd className="hidden shrink-0 border border-border bg-background/40 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground transition-colors group-focus-within:border-primary/30 group-focus-within:text-foreground/80 sm:inline-block">
             esc
           </kbd>
         </div>
@@ -269,7 +286,7 @@ export function CommandPalette({ open, onOpenChange }: Props) {
               onClose={() => onOpenChange(false)}
             />
           ) : flat.length === 0 ? (
-            <EmptyResults query={query} loading={loading} />
+            <EmptyResults query={query} loading={loading} onPrimeQuery={setQuery} />
           ) : parsedMode?.mode === 'cmd' ? (
             <div className="px-1">
               {flat.map((entry, i) => (
@@ -289,7 +306,7 @@ export function CommandPalette({ open, onOpenChange }: Props) {
         </div>
 
         {/* Status bar — tmux-style. Teaches the shortcuts while you use them. */}
-        <div className="flex items-center justify-between border-t border-border bg-muted/20 px-3 py-1.5 font-mono text-[10px] text-muted-foreground/80">
+        <div className="flex items-center justify-between border-t border-border bg-muted/30 px-3 py-1.5 font-mono text-[10px] text-muted-foreground">
           <div className="flex items-center gap-3">
             <ShortcutHint k="↑ ↓" label="navigate" />
             <ShortcutHint k="↵" label="open" />
@@ -297,7 +314,7 @@ export function CommandPalette({ open, onOpenChange }: Props) {
           </div>
           <div className="tabular-nums">
             {loading && !taMode && !auditMode && (
-              <span className="mr-2 animate-pulse text-amber-400/80">fetching…</span>
+              <span className="mr-2 animate-pulse text-muted-foreground">fetching…</span>
             )}
             {auditMode ? (
               <span className="uppercase tracking-wider text-primary/80">audit</span>
@@ -326,36 +343,52 @@ function ShortcutHint({ k, label }: { k: string; label: string }) {
   )
 }
 
-function EmptyResults({ query, loading }: { query: string; loading: boolean }) {
+const MODE_CHIPS = [
+  { prefix: '>', label: 'cmd', desc: 'brain verbs' },
+  { prefix: '/', label: 'audit', desc: 'search logs' },
+  { prefix: '[[', label: 'ref', desc: 'jump to record' },
+  { prefix: '#', label: 'tag', desc: 'filter by tag' },
+  { prefix: '@', label: 'ws', desc: 'switch workspace' },
+]
+
+function EmptyResults({
+  query,
+  loading,
+  onPrimeQuery,
+}: {
+  query: string
+  loading: boolean
+  onPrimeQuery?: (q: string) => void
+}) {
   if (query.trim() === '') {
     return (
-      <div className="px-4 py-12 text-center text-[12px] text-muted-foreground">
+      <div className="px-4 py-10 text-center text-[12px] text-muted-foreground">
         {loading ? (
           <span className="animate-pulse">fetching catalog…</span>
         ) : (
           <>
             <p className="text-foreground/80">Type to jump anywhere.</p>
-            <p className="mt-2 text-muted-foreground/60">
-              try{' '}
-              <span className="border border-border bg-muted/30 px-1.5 py-0.5 text-foreground/80">
-                audit
-              </span>
-              {' · '}
-              <span className="border border-border bg-muted/30 px-1.5 py-0.5 text-foreground/80">
-                pair
-              </span>
-              {' · '}
-              <span className="border border-border bg-muted/30 px-1.5 py-0.5 text-foreground/80">
-                playwright
-              </span>
-            </p>
+            <div className="mt-3 flex flex-wrap items-center justify-center gap-1.5">
+              {MODE_CHIPS.map((m) => (
+                <button
+                  key={m.label}
+                  type="button"
+                  onClick={() => onPrimeQuery?.(m.prefix)}
+                  className="group inline-flex items-center gap-1 border border-border bg-muted/30 px-2 py-0.5 font-mono text-[11px] text-foreground/70 transition-colors hover:border-primary/40 hover:bg-accent/40 hover:text-foreground"
+                  title={`${m.prefix} — ${m.desc}`}
+                >
+                  <span className="text-primary/70 group-hover:text-primary">{m.prefix}</span>
+                  {m.label}
+                </button>
+              ))}
+            </div>
           </>
         )}
       </div>
     )
   }
   return (
-    <div className="px-4 py-12 text-center text-[12px] text-muted-foreground">
+    <div className="px-4 py-10 text-center text-[12px] text-muted-foreground">
       no matches for <span className="text-foreground">"{query}"</span>
     </div>
   )
@@ -380,6 +413,15 @@ function flattenGroups(groups: CommandGroup[], query: string): CommandEntry[] {
   return out
 }
 
+function SectionHeader({ label, count }: { label: string; count: number }) {
+  return (
+    <div className="flex items-baseline justify-between px-3 pb-1 pt-2.5">
+      <span className="text-[11px] font-medium text-muted-foreground/70">{label}</span>
+      <span className="font-mono text-[10px] tabular-nums text-muted-foreground/40">{count}</span>
+    </div>
+  )
+}
+
 function renderResults(
   groups: CommandGroup[],
   query: string,
@@ -389,8 +431,6 @@ function renderResults(
 ): React.ReactNode {
   const q = query.trim().toLowerCase()
   if (q !== '') {
-    // With a query: drop group headings — the flat sorted list reads
-    // better as one unit.
     return (
       <div className="px-1">
         {flat.map((entry, i) => (
@@ -406,43 +446,48 @@ function renderResults(
       </div>
     )
   }
-  // Empty query: grouped layout.
-  let runningIndex = 0
-  const seen = new Set<string>()
-  return groups
-    .filter((g) => g.entries.length > 0)
-    .map((g) => {
-      const fresh = g.entries.filter((e) => !seen.has(e.id))
-      fresh.forEach((e) => seen.add(e.id))
-      if (fresh.length === 0) return null
-      return (
-        <div key={g.id} className="pb-1">
-          <div className="flex items-baseline justify-between px-3 pb-1 pt-2.5">
-            <span className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/60">
-              {g.label}
-            </span>
-            <span className="font-mono text-[10px] tabular-nums text-muted-foreground/40">
-              {fresh.length}
-            </span>
-          </div>
-          <div className="px-1">
-            {fresh.map((entry) => {
-              const i = runningIndex++
-              return (
-                <Row
-                  key={entry.id}
-                  entry={entry}
-                  query=""
-                  index={i}
-                  active={i === activeIndex}
-                  onSelect={() => run(entry)}
-                />
-              )
-            })}
-          </div>
+  // Empty query: 3-section layout using flat as the source of truth for
+  // index alignment (keyboard nav and rendering must agree on order).
+  const recentGroup = groups.find((g) => g.id === 'recent')
+  const recentEntries = recentGroup?.entries ?? []
+  const quickIds = new Set(QUICK_ACTION_IDS)
+  const recentIds = new Set(recentEntries.map((e) => e.id))
+  const quickEntries = flat.filter((e) => quickIds.has(e.id) && !recentIds.has(e.id))
+  const quickAndRecentIds = new Set([...recentIds, ...quickIds])
+  const everythingEntries = flat.filter((e) => !quickAndRecentIds.has(e.id))
+  const indexById = new Map(flat.map((e, i) => [e.id, i]))
+
+  function renderSection(label: string, entries: CommandEntry[]) {
+    if (entries.length === 0) return null
+    return (
+      <div className="pb-1">
+        <SectionHeader label={label} count={entries.length} />
+        <div className="px-1">
+          {entries.map((entry) => {
+            const idx = indexById.get(entry.id) ?? 0
+            return (
+              <Row
+                key={entry.id}
+                entry={entry}
+                query=""
+                index={idx}
+                active={idx === activeIndex}
+                onSelect={() => run(entry)}
+              />
+            )
+          })}
         </div>
-      )
-    })
+      </div>
+    )
+  }
+
+  return (
+    <>
+      {renderSection('Recent', recentEntries)}
+      {renderSection('Quick Actions', quickEntries)}
+      {renderSection('Everything', everythingEntries)}
+    </>
+  )
 }
 
 function Row({

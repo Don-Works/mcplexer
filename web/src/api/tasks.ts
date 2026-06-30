@@ -181,6 +181,7 @@ export interface UpdateTaskBody {
   meta?: string
   terminal?: boolean
   pinned?: boolean
+  workspace_id?: string
   // assignee re-assigns the task in one shot — pass user_id for human
   // owners, session_id for local agents, peer_id (+ session_id) for
   // remote agents. The server rejects ambiguous mixes.
