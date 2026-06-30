@@ -95,6 +95,7 @@ const ACTIONS: CommandEntry[] = [
   // Switches the palette into the `/` audit-search mode by priming the input
   // with a leading slash; the body becomes the AuditSearchMode listbox.
   { id: 'action-search-audit', label: 'Search audit logs', keywords: 'audit log search semantic trail history find tool call error', icon: createElement(Search, { className: iconClass }), hint: '/', run: ({ setQuery }) => setQuery('/') },
+  { id: 'action-create-task', label: 'Create a task', to: '/tasks?new=1', keywords: 'new task todo issue ticket create human', icon: createElement(Plus, { className: iconClass }), hint: 'task' },
   { id: 'action-quick-setup', label: 'Add an integration', to: '/setup', keywords: 'add new server service tool install', icon: createElement(Plus, { className: iconClass }), hint: 'flow' },
   { id: 'action-wire-ide', label: 'Set up an AI harness', to: '/harness-setup', keywords: 'claude cursor codex opencode grok gemini mimo mimocode pi ide', icon: createElement(Zap, { className: iconClass }), hint: 'flow' },
   { id: 'action-custom-mcp',  label: 'Build a custom MCP server',           to: '/create-mcp', keywords: 'openapi wizard custom',            icon: createElement(Package, { className: iconClass }),  hint: 'flow' },

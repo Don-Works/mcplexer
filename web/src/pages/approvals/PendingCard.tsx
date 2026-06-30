@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import { Check, Clock, X } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -31,6 +32,29 @@ export function PendingCard({
   const expired = remaining === 'expired'
   const surface = surfaceMeta(a.surface)
   const kind = kindMeta(a.kind)
+
+  // Approve is the risky action on a security gate: it lets the tool call
+  // run. It carries deliberate friction (a two-step confirm) so an
+  // operator can't rubber-stamp on reflex. Deny carries its own friction
+  // (a required reason). The arm auto-cancels after a few seconds so a
+  // stray first click never leaves the card primed to approve.
+  const [armed, setArmed] = useState(false)
+  useEffect(() => {
+    if (!armed) return
+    const id = window.setTimeout(() => setArmed(false), 4000)
+    return () => window.clearTimeout(id)
+  }, [armed])
+
+  const denyReady = reason.trim().length > 0
+
+  function handleApprove() {
+    if (!armed) {
+      setArmed(true)
+      return
+    }
+    setArmed(false)
+    resolve(true)
+  }
 
   return (
     <Card
@@ -77,14 +101,14 @@ export function PendingCard({
             </div>
           </div>
 
-          <p className="line-clamp-2 bg-amber-500/[0.06] p-2 text-sm leading-relaxed text-foreground/90">
+          <p className="whitespace-pre-wrap break-words bg-amber-500/[0.06] p-2 text-sm leading-relaxed text-foreground/90">
             {a.justification || a.summary || 'No justification provided'}
           </p>
         </button>
 
         <div className="space-y-2">
           <Input
-            placeholder="Reason (required for deny)"
+            placeholder="Reason (required to deny)"
             value={reason}
             onChange={(e) => setReason(e.target.value)}
             className="text-sm"
@@ -94,27 +118,37 @@ export function PendingCard({
           <div className="flex gap-2">
             <Button
               size="sm"
-              variant="success"
-              onClick={() => resolve(true)}
+              variant="outline"
+              onClick={handleApprove}
               disabled={resolving || expired}
-              className="flex-1"
+              className={cn(
+                'flex-1 border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/10 hover:text-emerald-200',
+                armed && 'border-emerald-400 bg-emerald-500/15 text-emerald-100',
+              )}
               data-testid={`approval-approve-${a.id}`}
             >
               <Check className="mr-1 h-3.5 w-3.5" />
-              Approve
+              {armed ? 'Confirm approve' : 'Approve'}
             </Button>
             <Button
               size="sm"
               variant="outline"
               onClick={() => resolve(false)}
-              disabled={resolving || expired}
-              className="border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
+              disabled={resolving || expired || !denyReady}
+              className="flex-1 border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
               data-testid={`approval-deny-${a.id}`}
             >
               <X className="mr-1 h-3.5 w-3.5" />
               Deny
             </Button>
           </div>
+          {armed ? (
+            <p className="text-[11px] text-emerald-300/90" role="status">
+              Click confirm to approve, or wait to cancel.
+            </p>
+          ) : !denyReady ? (
+            <p className="text-[11px] text-muted-foreground">Denying requires a reason.</p>
+          ) : null}
         </div>
       </CardContent>
     </Card>

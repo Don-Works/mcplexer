@@ -126,6 +126,56 @@ func TestLeaseStampViaUpdateCustomWorkingStatus(t *testing.T) {
 	}
 }
 
+// TestCreateInWorkingStatusWithAssigneeStampsLease is a regression for
+// the no-lease working zombie: Create with a working status + session
+// assignee must stamp a lease so the passive sweep does not reclaim the
+// row as a zombie. Without the fix, the sweep appends evt=lease_expired
+// within one minute of creation.
+func TestCreateInWorkingStatusWithAssigneeStampsLease(t *testing.T) {
+	ctx := context.Background()
+	svc, _, wsID := newSvc(t)
+
+	before := time.Now().UTC()
+	got, err := svc.Create(ctx, tasks.CreateOptions{
+		WorkspaceID: wsID, Title: "created in doing", CreatedBySessionID: "agent-a",
+		Status:   "doing",
+		Assignee: &tasks.Assignee{SessionID: "owner-session"},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	after := time.Now().UTC().Add(tasks.LeaseTTL)
+
+	if got.LeaseExpiresAt == nil {
+		t.Fatalf("expected lease stamped on Create in working status with assignee, got nil — " +
+			"passive sweep will reclaim this as a no-lease working zombie")
+	}
+	exp := *got.LeaseExpiresAt
+	if exp.Before(before.Add(tasks.LeaseTTL).Add(-time.Second)) || exp.After(after.Add(time.Second)) {
+		t.Errorf("lease %v outside expected window [%v, %v]",
+			exp, before.Add(tasks.LeaseTTL), after)
+	}
+}
+
+// TestCreateInWorkingStatusWithoutAssigneeNoLease verifies that a task
+// created in a working status but without an assignee does NOT get a
+// lease — there's nobody to hold it.
+func TestCreateInWorkingStatusWithoutAssigneeNoLease(t *testing.T) {
+	ctx := context.Background()
+	svc, _, wsID := newSvc(t)
+
+	got, err := svc.Create(ctx, tasks.CreateOptions{
+		WorkspaceID: wsID, Title: "doing but no owner", CreatedBySessionID: "agent-a",
+		Status: "doing",
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if got.LeaseExpiresAt != nil {
+		t.Fatalf("expected no lease for task without assignee, got %v", got.LeaseExpiresAt)
+	}
+}
+
 // TestServiceHeartbeat covers the Service.Heartbeat primitive end to
 // end: argument guards, the workspace gate, the non-assignee silent
 // no-op, and the owning-session lease extension.

@@ -65,7 +65,7 @@ export function AuditSearchBox({
         className,
       )}
     >
-      <Search className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+      <Search className="h-3.5 w-3.5 shrink-0 text-muted-foreground/70 transition-colors group-focus-within:text-primary" />
       <Input
         type="search"
         value={value}

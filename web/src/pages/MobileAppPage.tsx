@@ -9,17 +9,21 @@ import {
   ListTodo,
   Plus,
   Search,
-  Send,
   ShieldCheck,
-  Smartphone,
-  Wifi,
 } from 'lucide-react'
 import { toast } from 'sonner'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { CopyButton } from '@/components/ui/copy-button'
+import { EmptyState } from '@/components/ui/empty-state'
 import { Input } from '@/components/ui/input'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { PendingCard } from '@/pages/approvals/PendingCard'
 import { ApprovalDetailSheet } from '@/pages/approvals/ApprovalDetailSheet'
 import { TaskEditDialog } from '@/pages/tasks/TaskEditDialog'
@@ -37,7 +41,6 @@ import { getHealth, listApprovals, listUsers, listWorkspaces, type HealthRespons
 import {
   getPushPublicKey,
   getPushStatus,
-  sendTestPush,
   subscribePush,
   unsubscribePush,
   type BrowserPushSubscriptionJSON,
@@ -120,18 +123,6 @@ function secureOrigin(): boolean {
   if (typeof window === 'undefined') return false
   if (window.isSecureContext) return true
   return loopbackHost(window.location.hostname)
-}
-
-function installUrl(publicURL?: string): string {
-  if (typeof window === 'undefined') return '/app'
-  if (publicURL?.trim()) {
-    try {
-      return new URL('/app', publicURL).toString()
-    } catch {
-      // Fall back to the current origin below.
-    }
-  }
-  return `${window.location.origin}/app`
 }
 
 function mergeApprovals(live: ToolApproval[], loaded: ToolApproval[] | null, resolvedIds: string[]): ToolApproval[] {
@@ -258,31 +249,29 @@ export function MobileAppPage() {
     <div className="mx-auto flex min-h-[calc(100dvh-7rem)] w-full max-w-6xl flex-col gap-5 pb-14">
       <header className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div className="min-w-0 space-y-1">
-          <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-widest text-muted-foreground">
-            <Smartphone className="h-3.5 w-3.5" />
-            PWA
-          </div>
-          <h1 className="text-2xl font-semibold tracking-normal text-foreground sm:text-3xl">
+          <h1 className="text-xl font-semibold text-foreground">
             Human inbox
           </h1>
-          <div className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
-            <span className="truncate font-mono" title={installUrl(health?.system?.public_url)}>
-              {installUrl(health?.system?.public_url)}
-            </span>
-            <CopyButton value={installUrl(health?.system?.public_url)} className="shrink-0" />
-          </div>
+          <p className="text-xs text-muted-foreground">
+            Approvals and human-assigned tasks.
+          </p>
         </div>
         <div className="flex gap-2">
-          <Button size="sm" onClick={() => setCreateOpen(true)} disabled={workspaces.length === 0}>
+          <Button size="sm" variant="outline" onClick={() => setCreateOpen(true)} disabled={workspaces.length === 0}>
             <Plus className="h-4 w-4" />
-            New human task
+            New task
           </Button>
         </div>
       </header>
 
-      <PwaStatusPanel health={health} connected={connected} pendingCount={allPending.length} taskCount={filteredTasks.length} />
+      <StatusStrip
+        health={health}
+        connected={connected}
+        pendingCount={allPending.length}
+        taskCount={filteredTasks.length}
+      />
 
-      <section className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(360px,0.85fr)]">
+      <section className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(400px,1fr)]">
         <ApprovalsPanel
           approvals={allPending}
           connected={connected}
@@ -330,7 +319,7 @@ export function MobileAppPage() {
   )
 }
 
-function PwaStatusPanel({
+function StatusStrip({
   health,
   connected,
   pendingCount,
@@ -342,15 +331,11 @@ function PwaStatusPanel({
   taskCount: number
 }) {
   const [standalone, setStandalone] = useState(() => isStandaloneMode())
-  const [notificationPermission, setNotificationPermission] = useState<NotificationPermission | 'unsupported'>(() => {
-    if (typeof window === 'undefined' || !('Notification' in window)) return 'unsupported'
-    return window.Notification.permission
-  })
   const [pushState, setPushState] = useState<'checking' | 'unsupported' | 'needs_https' | 'off' | 'on'>('checking')
   const [pushBusy, setPushBusy] = useState(false)
-  const [pushCount, setPushCount] = useState(0)
-  const trusted = hostnameTrusted(window.location.hostname, health?.system?.trusted_hosts)
+  const [expanded, setExpanded] = useState(false)
   const secure = secureOrigin()
+  const trusted = hostnameTrusted(window.location.hostname, health?.system?.trusted_hosts)
 
   const refreshPushState = useCallback(async () => {
     if (typeof window === 'undefined') return
@@ -358,210 +343,111 @@ function PwaStatusPanel({
       setPushState('unsupported')
       return
     }
-    setNotificationPermission(window.Notification.permission)
-    if (!secureOrigin()) {
-      setPushState('needs_https')
-      return
-    }
+    if (!secureOrigin()) { setPushState('needs_https'); return }
     try {
-      const [registration, status] = await Promise.all([
+      const [registration] = await Promise.all([
         navigator.serviceWorker.ready,
         getPushStatus().catch(() => ({ subscription_count: 0 })),
       ])
       const sub = await registration.pushManager.getSubscription()
-      setPushCount(status.subscription_count)
       setPushState(sub ? 'on' : 'off')
-    } catch {
-      setPushState('off')
-    }
+    } catch { setPushState('off') }
   }, [])
 
   useEffect(() => {
     const mql = window.matchMedia('(display-mode: standalone)')
     const onChange = () => setStandalone(isStandaloneMode())
     mql.addEventListener('change', onChange)
-    return () => {
-      mql.removeEventListener('change', onChange)
-    }
+    return () => mql.removeEventListener('change', onChange)
   }, [])
 
-  useEffect(() => {
-    void refreshPushState()
-  }, [refreshPushState])
+  useEffect(() => { void refreshPushState() }, [refreshPushState])
 
-  async function enablePushNotifications() {
+  async function togglePush() {
     if (!('Notification' in window) || !('serviceWorker' in navigator) || !('PushManager' in window)) {
-      setNotificationPermission('unsupported')
-      setPushState('unsupported')
-      toast.error('Push notifications are not supported in this browser mode')
-      return
+      toast.error('Push notifications are not supported'); return
     }
-    if (!secureOrigin()) {
-      setPushState('needs_https')
-      toast.error('Push notifications need HTTPS or localhost')
-      return
-    }
+    if (!secureOrigin()) { toast.error('Push needs HTTPS or localhost'); return }
     setPushBusy(true)
     try {
-      const result = await window.Notification.requestPermission()
-      setNotificationPermission(result)
-      if (result !== 'granted') {
-        setPushState('off')
-        return
+      if (pushState === 'on') {
+        const registration = await navigator.serviceWorker.ready
+        const sub = await registration.pushManager.getSubscription()
+        if (sub) { await sub.unsubscribe(); await unsubscribePush(sub.endpoint) }
+        await refreshPushState()
+        toast.success('Push disabled')
+      } else {
+        const result = await window.Notification.requestPermission()
+        if (result !== 'granted') { setPushState('off'); return }
+        const registration = await navigator.serviceWorker.ready
+        let sub = await registration.pushManager.getSubscription()
+        if (!sub) {
+          const key = await getPushPublicKey()
+          sub = await registration.pushManager.subscribe({
+            userVisibleOnly: true,
+            applicationServerKey: urlBase64ToArrayBuffer(key.public_key),
+          })
+        }
+        await subscribePush(sub.toJSON() as BrowserPushSubscriptionJSON, isStandaloneMode() ? 'PWA' : 'Browser')
+        await refreshPushState()
+        toast.success('Push enabled')
       }
-      const registration = await navigator.serviceWorker.ready
-      let sub = await registration.pushManager.getSubscription()
-      if (!sub) {
-        const key = await getPushPublicKey()
-        sub = await registration.pushManager.subscribe({
-          userVisibleOnly: true,
-          applicationServerKey: urlBase64ToArrayBuffer(key.public_key),
-        })
-      }
-      await subscribePush(
-        sub.toJSON() as BrowserPushSubscriptionJSON,
-        isStandaloneMode() ? 'Installed PWA' : 'Browser',
-      )
-      await refreshPushState()
-      toast.success('Push notifications enabled')
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Notification permission failed')
-    } finally {
-      setPushBusy(false)
-    }
+      toast.error(err instanceof Error ? err.message : 'Push failed')
+    } finally { setPushBusy(false) }
   }
 
-  async function disablePushNotifications() {
-    if (!('serviceWorker' in navigator)) return
-    setPushBusy(true)
-    try {
-      const registration = await navigator.serviceWorker.ready
-      const sub = await registration.pushManager.getSubscription()
-      if (sub) {
-        const endpoint = sub.endpoint
-        await sub.unsubscribe()
-        await unsubscribePush(endpoint)
-      }
-      await refreshPushState()
-      toast.success('Push notifications disabled')
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Could not disable push notifications')
-    } finally {
-      setPushBusy(false)
-    }
-  }
-
-  async function testPushNotification() {
-    setPushBusy(true)
-    try {
-      await sendTestPush()
-      toast.success('Test notification sent')
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Test push failed')
-    } finally {
-      setPushBusy(false)
-    }
-  }
-
-  const notifyValue = pushState === 'on'
-    ? 'push on'
-    : pushState === 'checking'
-      ? 'checking'
-      : notificationPermission
+  const appLabel = standalone ? 'installed' : secure ? 'browser' : 'no HTTPS'
 
   return (
-    <section className="grid gap-2 sm:grid-cols-2 xl:grid-cols-5" aria-label="PWA status">
-      <StatusTile
-        icon={<ShieldCheck className="h-4 w-4" />}
-        label="Approvals"
-        value={String(pendingCount)}
-        tone={pendingCount > 0 ? 'warn' : 'success'}
-      />
-      <StatusTile
-        icon={<ListTodo className="h-4 w-4" />}
-        label="Tasks"
-        value={String(taskCount)}
-        tone={taskCount > 0 ? 'info' : 'muted'}
-      />
-      <StatusTile
-        icon={<Wifi className="h-4 w-4" />}
-        label="Stream"
-        value={connected ? 'live' : 'syncing'}
-        tone={connected ? 'success' : 'warn'}
-      />
-      <StatusTile
-        icon={<Smartphone className="h-4 w-4" />}
-        label="App"
-        value={standalone ? 'installed' : secure ? 'browser' : 'needs HTTPS'}
-        tone={standalone ? 'success' : secure ? 'info' : 'warn'}
-      />
-      <div className="border border-border bg-card p-3">
-        <div className="flex items-center justify-between gap-3">
-          <div className="min-w-0">
-            <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-              <Bell className="h-3.5 w-3.5" />
-              Notify
-            </div>
-            <div className="mt-1 truncate font-mono text-lg text-foreground">
-              {notifyValue}
-            </div>
+    <div className="space-y-1">
+      <button
+        type="button"
+        onClick={() => setExpanded(!expanded)}
+        className="flex w-full items-center gap-3 border border-border bg-card px-3 py-2 text-left text-sm transition-colors hover:bg-muted/30"
+      >
+        <span className={cn('h-2 w-2', connected ? 'bg-emerald-400' : 'bg-amber-400 animate-pulse')} />
+        <span className="font-mono text-xs text-muted-foreground">{pendingCount > 0 ? `${pendingCount} pending` : 'clear'}</span>
+        <span className="text-border">|</span>
+        <span className="font-mono text-xs text-muted-foreground">{taskCount} tasks</span>
+        <span className="text-border">|</span>
+        <span className="font-mono text-xs text-muted-foreground">{appLabel}</span>
+        <span className="ml-auto text-[10px] text-muted-foreground">{expanded ? 'hide' : 'status'}</span>
+      </button>
+
+      {expanded ? (
+        <div className="flex flex-wrap items-center justify-between gap-3 border border-border bg-card p-3">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <Badge tone={connected ? 'success' : 'warn'} variant="outline" className="font-mono text-[10px]">
+              stream {connected ? 'live' : 'syncing'}
+            </Badge>
+            <Badge tone={standalone ? 'success' : secure ? 'info' : 'warn'} variant="outline" className="font-mono text-[10px]">
+              {appLabel}
+            </Badge>
+            <Badge tone={secure ? 'success' : 'warn'} variant="outline" className="font-mono text-[10px]">
+              {secure ? 'HTTPS' : 'HTTP'}
+            </Badge>
+            <Badge tone={trusted ? 'success' : 'warn'} variant="outline" className="font-mono text-[10px]">
+              {trusted ? 'trusted' : 'untrusted'}
+            </Badge>
           </div>
-          {pushState === 'on' ? (
-            <div className="flex items-center gap-1.5">
-              <Button size="icon-sm" variant="outline" onClick={testPushNotification} disabled={pushBusy} title="Send test push">
-                <Send className="h-4 w-4" />
-              </Button>
-              <Button size="icon-sm" variant="ghost" onClick={disablePushNotifications} disabled={pushBusy} title="Disable push">
-                <CheckCircle2 className="h-4 w-4 text-emerald-400" />
-              </Button>
-            </div>
-          ) : pushState === 'off' || notificationPermission === 'default' || notificationPermission === 'granted' ? (
-            <Button size="sm" onClick={enablePushNotifications} disabled={pushBusy || pushState === 'needs_https'}>
-              <BellRing className="h-4 w-4" />
-              Push
+          <div className="flex items-center gap-2">
+            <span className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+              <Bell className="h-3.5 w-3.5" />
+              Push {pushState === 'on' ? 'on' : 'off'}
+            </span>
+            <Button
+              size="sm"
+              variant={pushState === 'on' ? 'default' : 'outline'}
+              onClick={togglePush}
+              disabled={pushBusy}
+            >
+              {pushState === 'on' ? <CheckCircle2 className="mr-1 h-4 w-4" /> : <BellRing className="mr-1 h-4 w-4" />}
+              {pushState === 'on' ? 'Disable' : 'Enable'}
             </Button>
-          ) : null}
+          </div>
         </div>
-        <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
-          <Badge tone={secure ? 'success' : 'warn'} variant="outline" className="font-mono">
-            {secure ? 'secure origin' : 'http origin'}
-          </Badge>
-          <Badge tone={trusted ? 'success' : 'warn'} variant="outline" className="font-mono">
-            {trusted ? 'trusted host' : 'host not listed'}
-          </Badge>
-          <Badge tone={pushState === 'on' ? 'success' : 'muted'} variant="outline" className="font-mono">
-            {pushCount} sub
-          </Badge>
-        </div>
-      </div>
-    </section>
-  )
-}
-
-function StatusTile({
-  icon,
-  label,
-  value,
-  tone,
-}: {
-  icon: React.ReactNode
-  label: string
-  value: string
-  tone: 'success' | 'warn' | 'info' | 'muted'
-}) {
-  const toneClass = {
-    success: 'text-emerald-300',
-    warn: 'text-amber-300',
-    info: 'text-sky-300',
-    muted: 'text-muted-foreground',
-  }[tone]
-  return (
-    <div className="border border-border bg-card p-3">
-      <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-        {icon}
-        {label}
-      </div>
-      <div className={cn('mt-2 font-mono text-2xl tabular-nums', toneClass)}>{value}</div>
+      ) : null}
     </div>
   )
 }
@@ -609,15 +495,12 @@ function ApprovalsPanel({
           ))}
         </div>
       ) : (
-        <div className="border border-border bg-card p-5 text-sm text-muted-foreground">
-          <div className="flex items-center gap-2 text-foreground">
-            <Inbox className="h-4 w-4" />
-            No approvals waiting
-          </div>
-          <p className="mt-2 text-sm text-muted-foreground">
-            New approval requests appear here with approve and deny actions.
-          </p>
-        </div>
+        <EmptyState
+          icon={<Inbox className="h-6 w-6" />}
+          title="No approvals waiting"
+          description="New approval requests appear here with approve and deny actions."
+          testid="approvals-empty"
+        />
       )}
     </section>
   )
@@ -654,6 +537,15 @@ function TasksPanel({
   usersById: Map<string, User>
   selfUser?: User
 }) {
+  const filtersActive =
+    query.trim() !== '' || workspaceFilter !== 'all' || priorityFilter !== 'all' || taskView !== 'human'
+  const clearFilters = () => {
+    setQuery('')
+    setWorkspaceFilter('all')
+    setPriorityFilter('all')
+    setTaskView('human')
+  }
+
   return (
     <section className="min-w-0 space-y-3">
       <div className="flex items-center justify-between gap-3">
@@ -672,31 +564,16 @@ function TasksPanel({
       </div>
 
       <div className="space-y-2 border border-border bg-card p-3">
-        <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_180px]">
-          <label className="relative block">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search tasks"
-              className="h-10 pl-9 text-base sm:text-sm"
-              aria-label="Search tasks"
-            />
-          </label>
-          <select
-            value={workspaceFilter}
-            onChange={(e) => setWorkspaceFilter(e.target.value)}
-            className="h-10 w-full border border-border bg-background px-2 text-base text-foreground sm:text-sm"
-            aria-label="Workspace filter"
-          >
-            <option value="all">All workspaces</option>
-            {workspaces.map((workspace) => (
-              <option key={workspace.id} value={workspace.id}>
-                {workspace.name}
-              </option>
-            ))}
-          </select>
-        </div>
+        <label className="relative block">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search tasks"
+            className="h-10 pl-9 text-base sm:text-sm"
+            aria-label="Search tasks"
+          />
+        </label>
 
         <SegmentedControl
           icon={<Filter className="h-3.5 w-3.5" />}
@@ -705,11 +582,34 @@ function TasksPanel({
           onChange={setTaskView}
           disabled={(item) => item.id === 'mine' && !selfUser}
         />
-        <SegmentedControl
-          items={PRIORITY_FILTERS}
-          value={priorityFilter}
-          onChange={setPriorityFilter}
-        />
+
+        <div className="grid gap-2 sm:grid-cols-2">
+          <Select value={workspaceFilter} onValueChange={setWorkspaceFilter}>
+            <SelectTrigger className="h-10 w-full" aria-label="Workspace filter">
+              <SelectValue placeholder="All workspaces" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All workspaces</SelectItem>
+              {workspaces.map((workspace) => (
+                <SelectItem key={workspace.id} value={workspace.id}>
+                  {workspace.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select value={priorityFilter} onValueChange={(value) => setPriorityFilter(value as PriorityFilter)}>
+            <SelectTrigger className="h-10 w-full" aria-label="Priority filter">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {PRIORITY_FILTERS.map((p) => (
+                <SelectItem key={p.id} value={p.id}>
+                  {p.id === 'all' ? 'All priorities' : `${p.label} priority`}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
       </div>
 
       {tasksError ? (
@@ -734,9 +634,23 @@ function TasksPanel({
           ))}
         </div>
       ) : (
-        <div className="border border-border bg-card p-5 text-sm text-muted-foreground">
-          No tasks match the current filters.
-        </div>
+        <EmptyState
+          icon={<ListTodo className="h-6 w-6" />}
+          title={filtersActive ? 'No tasks match these filters' : 'No open tasks'}
+          description={
+            filtersActive
+              ? 'Nothing matches the current view, workspace, priority, or search.'
+              : 'Human-assigned tasks and the wider open queue appear here.'
+          }
+          action={
+            filtersActive ? (
+              <Button size="sm" variant="outline" onClick={clearFilters}>
+                Clear filters
+              </Button>
+            ) : undefined
+          }
+          testid="tasks-empty"
+        />
       )}
     </section>
   )
@@ -815,7 +729,7 @@ function TaskRow({
           </div>
           <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
             <span className="font-mono">task:{shortTaskId(task.id)}</span>
-            <span>{workspaceLabel(workspaces, task.workspace_id)}</span>
+            <span className="hidden sm:inline">{workspaceLabel(workspaces, task.workspace_id)}</span>
             <span>{humanLabel(task, usersById)}</span>
             <span title={formatAbsolute(task.updated_at)}>updated {formatRelative(task.updated_at)}</span>
           </div>

@@ -320,6 +320,16 @@ func (s *Service) Create(ctx context.Context, opts CreateOptions) (*store.Task, 
 		t.StatusHistoryJSON, _ = json.Marshal(history)
 	}
 
+	// Stamp a lease if creating directly in a working status with a
+	// session assignee. Without this, the passive sweep treats the
+	// assignee-without-lease row as a "no-lease working zombie" and
+	// reclaims it with evt=lease_expired. Mirrors the stamp in
+	// UpdateWithSignals (line 788) and Claim (line 1252).
+	if t.ClosedAt == nil && t.AssigneeSessionID != "" && s.isWorkingStatus(ctx, opts.WorkspaceID, t.Status) {
+		expires := now.Add(LeaseTTL)
+		t.LeaseExpiresAt = &expires
+	}
+
 	// Stamp closed_at if creating directly in a terminal status.
 	if terminal, _ := s.store.IsTerminalStatus(ctx, opts.WorkspaceID, opts.Status); terminal {
 		t.ClosedAt = &now
@@ -527,6 +537,12 @@ type UpdatePatch struct {
 	Pinned      *bool
 	Clear       []string // field names to clear: assignee, due_at, etc.
 
+	// WorkspaceID, when non-empty, moves the task to a different workspace.
+	// The source workspace is validated from the existing row; the target
+	// workspace is not validated beyond non-empty (foreign-key constraint
+	// in SQLite enforces existence).
+	WorkspaceID *string
+
 	UpdatedBySessionID string
 
 	// Phase-2 mesh plumbing (see CreateOptions).
@@ -629,6 +645,9 @@ func (s *Service) updateWithSignals(ctx context.Context, workspaceID, id string,
 	if p.Tags != nil {
 		b, _ := json.Marshal(*p.Tags)
 		t.TagsJSON = b
+	}
+	if p.WorkspaceID != nil && *p.WorkspaceID != t.WorkspaceID {
+		t.WorkspaceID = *p.WorkspaceID
 	}
 	var signals *UpdateSignals
 	if p.Status != nil && *p.Status != t.Status {

@@ -56,6 +56,24 @@ interface EditProps extends BaseProps {
 
 export type TaskEditDialogProps = CreateProps | EditProps
 
+const LAST_WS_KEY = 'mcplexer.tasks.lastWorkspace'
+
+function getLastWorkspace(): string {
+  try {
+    return localStorage.getItem(LAST_WS_KEY) ?? ''
+  } catch {
+    return ''
+  }
+}
+
+function saveLastWorkspace(id: string) {
+  try {
+    localStorage.setItem(LAST_WS_KEY, id)
+  } catch {
+    // best-effort: ignore localStorage write failures (private mode, quota)
+  }
+}
+
 const PRIORITIES = [
   { id: 'low', label: 'Low' },
   { id: 'normal', label: 'Normal' },
@@ -142,7 +160,7 @@ export function TaskEditDialog(props: TaskEditDialogProps) {
       }
     }
     return {
-      workspaceId: props.defaultWorkspaceId ?? '',
+      workspaceId: props.defaultWorkspaceId || getLastWorkspace() || '',
       title: '',
       description: '',
       status: 'open',
@@ -251,6 +269,7 @@ export function TaskEditDialog(props: TaskEditDialogProps) {
         const origTags = (props.task.tags ?? []).join('\n')
         if (tags.join('\n') !== origTags) patch.tags = tags
         if (meta !== (props.task.meta ?? '')) patch.meta = meta
+        if (workspaceId !== props.task.workspace_id) patch.workspace_id = workspaceId
         // Assignee patching: emit `assignee` only when the operator
         // changed the field, and route to the right column via
         // assigneeKind. The "clear" affordance emits `clear:
@@ -292,6 +311,7 @@ export function TaskEditDialog(props: TaskEditDialogProps) {
           body.assignee = taskAssigneePayload(assignee)
         }
         const created = await createTask(body)
+        saveLastWorkspace(workspaceId)
         props.onSaved(created)
       }
       props.onOpenChange(false)
@@ -315,23 +335,24 @@ export function TaskEditDialog(props: TaskEditDialogProps) {
             </DialogDescription>
           </DialogHeader>
 
-          {!isEdit ? (
-            <Field label="Workspace" hint="Required. Tasks are scoped per workspace.">
-              <select
-                value={workspaceId}
-                onChange={(e) => setWorkspaceId(e.target.value)}
-                className="h-8 w-full border border-border bg-background px-2 text-sm"
-                required
-              >
-                <option value="">— select workspace —</option>
-                {props.workspaces.map((w) => (
-                  <option key={w.id} value={w.id}>
-                    {w.name}
-                  </option>
-                ))}
-              </select>
-            </Field>
-          ) : null}
+          <Field
+            label="Workspace"
+            hint={isEdit ? 'Move this task to a different workspace.' : 'Required. Tasks are scoped per workspace.'}
+          >
+            <select
+              value={workspaceId}
+              onChange={(e) => setWorkspaceId(e.target.value)}
+              className="h-8 w-full border border-border bg-background px-2 text-sm"
+              required
+            >
+              <option value="">— select workspace —</option>
+              {props.workspaces.map((w) => (
+                <option key={w.id} value={w.id}>
+                  {w.name}
+                </option>
+              ))}
+            </select>
+          </Field>
 
           <Field label="Title" hint="One line. Imperative voice plays best.">
             <Input
