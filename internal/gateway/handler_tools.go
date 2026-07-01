@@ -730,7 +730,7 @@ func (h *handler) handleToolsCall(
 	// it applies proven lossless transforms. Skipped for internal code-mode
 	// calls under the same iterability contract as the compactor above.
 	if h.compression != nil && !isInternalCodeModeCall(ctx) {
-		compressed, obs := h.compression.Process(h.compressionMode(ctx), result)
+		compressed, obs := h.compression.Process(h.compressionMode(ctx), h.compressionDisabled(ctx), result)
 		result = compressed
 		h.recordCompression(obs)
 		h.persistCompression(ctx, obs)

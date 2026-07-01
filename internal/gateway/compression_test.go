@@ -30,7 +30,7 @@ func TestCompressionShadowMeasurementIntegration(t *testing.T) {
 		t.Fatalf("fixture too small (%d bytes) to exercise the pipeline", len(env))
 	}
 
-	out, obs := h.compression.Process(compression.ModeShadow, env)
+	out, obs := h.compression.Process(compression.ModeShadow, nil, env)
 	if string(out) != string(env) {
 		t.Fatalf("shadow mode MUST return the tool result untouched")
 	}

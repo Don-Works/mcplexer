@@ -63,9 +63,10 @@ func (p *Pipeline) Transforms() []string {
 
 // Process runs the pipeline over a fully-assembled tool-result envelope for
 // the given mode and returns the (possibly transformed) result plus one
-// Observation per evaluated transform. In Off mode it returns the input
-// unchanged with no observations.
-func (p *Pipeline) Process(mode Mode, result json.RawMessage) (json.RawMessage, []Observation) {
+// Observation per evaluated transform. Transforms whose name is in `disabled`
+// are skipped entirely (no measurement, no apply) — that is the per-transform
+// toggle. In Off mode it returns the input unchanged with no observations.
+func (p *Pipeline) Process(mode Mode, disabled map[string]bool, result json.RawMessage) (json.RawMessage, []Observation) {
 	if p == nil || mode == ModeOff || len(p.transforms) == 0 {
 		return result, nil
 	}
@@ -75,6 +76,9 @@ func (p *Pipeline) Process(mode Mode, result json.RawMessage) (json.RawMessage, 
 	current := result
 	obs := make([]Observation, 0, len(p.transforms))
 	for _, t := range p.transforms {
+		if disabled[t.Name()] {
+			continue
+		}
 		origBytes := len(current)
 		out, changed := safeApply(t, current)
 		o := Observation{

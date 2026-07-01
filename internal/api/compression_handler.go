@@ -36,11 +36,18 @@ func (h *compressionHandler) stats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	mode := string(compression.ModeShadow)
+	disabled := []string{}
 	if h.settings != nil {
-		mode = string(compression.ParseMode(h.settings.Load(r.Context()).CompressionMode))
+		s := h.settings.Load(r.Context())
+		mode = string(compression.ParseMode(s.CompressionMode))
+		if len(s.CompressionDisabledTransforms) > 0 {
+			disabled = s.CompressionDisabledTransforms
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"mode":      mode,
-		"aggregate": agg,
+		"mode":       mode,
+		"transforms": compression.DefaultTransformInfo(),
+		"disabled":   disabled,
+		"aggregate":  agg,
 	})
 }

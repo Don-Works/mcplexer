@@ -13,6 +13,24 @@ func DefaultTransforms() []Transform {
 	return []Transform{jsonMinify{}}
 }
 
+// TransformInfo is the static descriptor the dashboard uses to render a toggle
+// for every transform (even ones with no measured traffic yet).
+type TransformInfo struct {
+	Name     string `json:"name"`
+	Lossless bool   `json:"lossless"`
+}
+
+// DefaultTransformInfo lists the default transforms' names + lossless flags so
+// the settings UI can show a toggle per transform before any data exists.
+func DefaultTransformInfo() []TransformInfo {
+	ts := DefaultTransforms()
+	out := make([]TransformInfo, 0, len(ts))
+	for _, t := range ts {
+		out = append(out, TransformInfo{Name: t.Name(), Lossless: t.Lossless()})
+	}
+	return out
+}
+
 // jsonMinify re-encodes JSON text content blocks in their most compact form
 // (no insignificant whitespace). The JSON value is preserved exactly, so the
 // model parses identical data from fewer bytes — value-lossless. A no-op on
