@@ -3,6 +3,7 @@ import {
   classifySecretEvent,
   isSecretsActor,
   isSuccessStatus,
+  liveRowMatchesLocalFilter,
   normalizeStatus,
 } from '@/lib/audit-semantics'
 
@@ -46,6 +47,57 @@ describe('classifySecretEvent', () => {
     expect(classifySecretEvent('secret.delete')!.op).toBe('delete')
     expect(classifySecretEvent('freeagent__list_invoices')).toBeNull()
     expect(classifySecretEvent('mcpx__execute_code')).toBeNull()
+  })
+})
+
+describe('liveRowMatchesLocalFilter', () => {
+  const row = (over: Partial<{ timestamp: string; latency_ms: number; cache_hit: boolean }> = {}) => ({
+    timestamp: '2026-07-01T12:00:00.000Z',
+    latency_ms: 500,
+    cache_hit: false,
+    ...over,
+  })
+
+  it('passes when no client-only dims are set', () => {
+    expect(liveRowMatchesLocalFilter(row(), {})).toBe(true)
+  })
+
+  it('filters on cache_hit (both directions)', () => {
+    expect(liveRowMatchesLocalFilter(row({ cache_hit: true }), { cache_hit: true })).toBe(true)
+    expect(liveRowMatchesLocalFilter(row({ cache_hit: false }), { cache_hit: true })).toBe(false)
+    expect(liveRowMatchesLocalFilter(row({ cache_hit: false }), { cache_hit: false })).toBe(true)
+    expect(liveRowMatchesLocalFilter(row({ cache_hit: true }), { cache_hit: false })).toBe(false)
+  })
+
+  it('drops rows below the min_latency_ms floor, keeps rows at or above it', () => {
+    expect(liveRowMatchesLocalFilter(row({ latency_ms: 999 }), { min_latency_ms: 1000 })).toBe(false)
+    expect(liveRowMatchesLocalFilter(row({ latency_ms: 1000 }), { min_latency_ms: 1000 })).toBe(true)
+    expect(liveRowMatchesLocalFilter(row({ latency_ms: 1500 }), { min_latency_ms: 1000 })).toBe(true)
+  })
+
+  it('enforces the after/before time bounds', () => {
+    const r = row({ timestamp: '2026-07-01T12:00:00.000Z' })
+    // after = lower bound: row must be >= after
+    expect(liveRowMatchesLocalFilter(r, { after: '2026-07-01T11:00:00.000Z' })).toBe(true)
+    expect(liveRowMatchesLocalFilter(r, { after: '2026-07-01T13:00:00.000Z' })).toBe(false)
+    // before = upper bound: row must be <= before
+    expect(liveRowMatchesLocalFilter(r, { before: '2026-07-01T13:00:00.000Z' })).toBe(true)
+    expect(liveRowMatchesLocalFilter(r, { before: '2026-07-01T11:00:00.000Z' })).toBe(false)
+  })
+
+  it('treats an unparseable bound as no constraint (matches the gateway parse)', () => {
+    expect(liveRowMatchesLocalFilter(row(), { after: 'not-a-date' })).toBe(true)
+    expect(liveRowMatchesLocalFilter(row(), { before: 'not-a-date' })).toBe(true)
+  })
+
+  it('requires every set dim to pass (AND semantics)', () => {
+    // cache matches but latency fails -> overall fail
+    expect(
+      liveRowMatchesLocalFilter(row({ cache_hit: true, latency_ms: 10 }), {
+        cache_hit: true,
+        min_latency_ms: 1000,
+      }),
+    ).toBe(false)
   })
 })
 
