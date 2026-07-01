@@ -724,6 +724,17 @@ func (h *handler) handleToolsCall(
 	// envelope marker is load-bearing and must stay in the text slot.
 	result = surfaceStructuredContent(result)
 
+	// Token-compression pipeline (measure-first). In shadow/dry-run mode this
+	// only MEASURES each candidate transform's would-be saving and returns the
+	// result unchanged — zero accuracy/latency risk to the answer; in on mode
+	// it applies proven lossless transforms. Skipped for internal code-mode
+	// calls under the same iterability contract as the compactor above.
+	if h.compression != nil && !isInternalCodeModeCall(ctx) {
+		compressed, obs := h.compression.Process(h.compressionMode(ctx), result)
+		result = compressed
+		h.recordCompression(obs)
+	}
+
 	// Piggyback mesh notices on successful downstream results.
 	result = h.piggybackMeshNotice(ctx, result)
 
