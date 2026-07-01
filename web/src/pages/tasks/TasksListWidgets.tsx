@@ -4,9 +4,16 @@
 // view without circular imports.
 
 import { Fragment, type ReactNode } from 'react'
-import { CheckCircle2, ListTree, Loader2, Rows3, Trash2, X } from 'lucide-react'
+import { CheckCircle2, FolderInput, ListTree, Loader2, Rows3, Trash2, X } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { cn } from '@/lib/utils'
 
 export type SortMode = 'updated' | 'created' | 'due' | 'priority' | 'status'
@@ -96,20 +103,27 @@ export function ViewModeToggle({
 }
 
 // BulkActionBar — sticky floating bar at the bottom of the viewport
-// when one or more tasks are selected. Lets the operator close or
-// delete many at once instead of clicking through each detail page.
+// when one or more tasks are selected. Lets the operator close, move,
+// or delete many at once instead of clicking through each detail page.
+// The "Move to…" select reassigns every selected task's workspace in
+// one shot (backed by the update patch's workspace_id field); tasks
+// already in the chosen workspace are skipped by the caller.
 export function BulkActionBar({
   count,
   busy,
   onClear,
   onClose,
   onDelete,
+  onMove,
+  workspaces,
 }: {
   count: number
   busy: boolean
   onClear: () => void
   onClose: () => void
   onDelete: () => void
+  onMove?: (targetWorkspaceId: string) => void
+  workspaces?: { id: string; name: string }[]
 }) {
   return (
     <div className="fixed inset-x-0 bottom-4 z-30 flex justify-center px-3">
@@ -122,6 +136,25 @@ export function BulkActionBar({
           {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
           Close
         </Button>
+        {onMove && workspaces && workspaces.length > 0 ? (
+          <Select value="" onValueChange={(v) => v && onMove(v)} disabled={busy}>
+            <SelectTrigger
+              size="sm"
+              className="h-8 gap-1 text-xs"
+              aria-label="Move selected tasks to a workspace"
+            >
+              <FolderInput className="h-3.5 w-3.5" />
+              <SelectValue placeholder="Move to…" />
+            </SelectTrigger>
+            <SelectContent>
+              {workspaces.map((w) => (
+                <SelectItem key={w.id} value={w.id}>
+                  {w.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        ) : null}
         <Button
           variant="ghost"
           size="sm"
