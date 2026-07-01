@@ -5,6 +5,7 @@ import type {
   AuditPage,
   AuditSearchResponse,
   AuthScope,
+  CompressionStatsResponse,
   SavedSearch,
   SavedSearchCreate,
   SavedSearchPatch,
@@ -742,6 +743,11 @@ export function updateSettings(data: Settings): Promise<SettingsResponse> {
     method: 'PUT',
     body: JSON.stringify(data),
   })
+}
+
+// Token compression
+export function getCompressionStats(days = 30): Promise<CompressionStatsResponse> {
+  return request(`/compression/stats?days=${days}`)
 }
 // Description Refinement
 export function listDescriptionVersions(

@@ -47,12 +47,17 @@ type Settings struct {
 	// measurement on upgrade with zero user action; flip to "on" from the
 	// dashboard once the observed savings are trusted. Empty resolves to
 	// "shadow".
-	CompressionMode         string `json:"compression_mode"`
-	ToolsCacheTTLSec        int    `json:"tools_cache_ttl_sec"`
-	LogLevel                string `json:"log_level"`
-	CodeModeTimeoutSec      int    `json:"code_mode_timeout_sec"`
-	CodeModeMaxOutputBytes  int    `json:"code_mode_max_output_bytes"`
-	CodeModeMaxHeapGrowthMB int    `json:"code_mode_max_heap_growth_mb"`
+	CompressionMode string `json:"compression_mode"`
+	// CompressionDisabledTransforms lists compression transforms toggled OFF
+	// by the operator (per-transform toggle in the dashboard). A disabled
+	// transform is skipped entirely — neither measured nor applied — whatever
+	// the global CompressionMode. Empty/absent = all transforms enabled.
+	CompressionDisabledTransforms []string `json:"compression_disabled_transforms,omitempty"`
+	ToolsCacheTTLSec              int      `json:"tools_cache_ttl_sec"`
+	LogLevel                      string   `json:"log_level"`
+	CodeModeTimeoutSec            int      `json:"code_mode_timeout_sec"`
+	CodeModeMaxOutputBytes        int      `json:"code_mode_max_output_bytes"`
+	CodeModeMaxHeapGrowthMB       int      `json:"code_mode_max_heap_growth_mb"`
 	// CodeModeSessionStateMaxBytes caps the total serialized size of the
 	// ephemeral per-session `session` object that mcpx__execute_code snapshots
 	// and rehydrates between calls. Over-cap snapshots are not persisted (the

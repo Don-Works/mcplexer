@@ -634,10 +634,55 @@ export interface ApiError {
   code?: string
 }
 
+export interface CompressionTransformInfo {
+  name: string
+  lossless: boolean
+}
+
+export interface CompressionTransformAggregate {
+  transform: string
+  lossless: boolean
+  samples: number
+  changed: number
+  orig_bytes: number
+  would_save_bytes: number
+  would_save_tokens: number
+  applied: number
+  applied_save_bytes: number
+  applied_save_tokens: number
+}
+
+export interface CompressionDailyPoint {
+  date: string
+  would_save_tokens: number
+  applied_save_tokens: number
+}
+
+export interface CompressionAggregate {
+  days: number
+  samples: number
+  orig_bytes: number
+  would_save_bytes: number
+  would_save_tokens: number
+  applied_save_bytes: number
+  applied_save_tokens: number
+  by_transform: CompressionTransformAggregate[]
+  daily: CompressionDailyPoint[]
+}
+
+export interface CompressionStatsResponse {
+  mode: 'off' | 'shadow' | 'on'
+  transforms: CompressionTransformInfo[]
+  disabled: string[]
+  aggregate: CompressionAggregate
+}
+
 export interface Settings {
   slim_tools: boolean
   slim_surface: boolean
   compact_responses: boolean
+  compression_mode?: 'off' | 'shadow' | 'on'
+  compression_disabled_transforms?: string[]
   tools_cache_ttl_sec: number
   log_level: string
   code_mode_timeout_sec: number

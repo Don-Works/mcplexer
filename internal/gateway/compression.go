@@ -33,6 +33,23 @@ func (h *handler) compressionMode(ctx context.Context) compression.Mode {
 	return compression.ModeShadow
 }
 
+// compressionDisabled returns the set of transform names the operator has
+// toggled off in settings. nil (all enabled) is the common case.
+func (h *handler) compressionDisabled(ctx context.Context) map[string]bool {
+	if h == nil || h.settingsSvc == nil {
+		return nil
+	}
+	list := h.settingsSvc.Load(ctx).CompressionDisabledTransforms
+	if len(list) == 0 {
+		return nil
+	}
+	m := make(map[string]bool, len(list))
+	for _, n := range list {
+		m[n] = true
+	}
+	return m
+}
+
 // persistCompression writes the pipeline's observations to the durable savings
 // ledger so the dashboard sees cross-connection, restart-surviving numbers
 // (the in-memory ContextCostStats only ever sees one socket connection).

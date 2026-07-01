@@ -31,7 +31,7 @@ func TestProcessOffReturnsUnchangedNoObs(t *testing.T) {
 	p := New(identityEstimate, 0)
 	p.Register(fakeTransform{name: "x", lossless: true, out: json.RawMessage(`{}`), changes: true})
 	in := json.RawMessage(`{"content":[{"type":"text","text":"0123456789"}]}`)
-	out, obs := p.Process(ModeOff, in)
+	out, obs := p.Process(ModeOff, nil, in)
 	if string(out) != string(in) {
 		t.Fatalf("off mode mutated result: %s", out)
 	}
@@ -45,7 +45,7 @@ func TestProcessShadowMeasuresButReturnsOriginal(t *testing.T) {
 	shrunk := json.RawMessage(`{}`)
 	p.Register(fakeTransform{name: "shrinker", lossless: true, out: shrunk, changes: true})
 	in := json.RawMessage(`{"content":[{"type":"text","text":"0123456789"}]}`)
-	out, obs := p.Process(ModeShadow, in)
+	out, obs := p.Process(ModeShadow, nil, in)
 	if string(out) != string(in) {
 		t.Fatalf("shadow mode MUST return the original untouched, got: %s", out)
 	}
@@ -72,7 +72,7 @@ func TestProcessOnAppliesLosslessTransform(t *testing.T) {
 	shrunk := json.RawMessage(`{"content":[{"type":"text","text":"x"}]}`)
 	p.Register(fakeTransform{name: "shrinker", lossless: true, out: shrunk, changes: true})
 	in := json.RawMessage(`{"content":[{"type":"text","text":"0123456789abcdef"}]}`)
-	out, obs := p.Process(ModeOn, in)
+	out, obs := p.Process(ModeOn, nil, in)
 	if string(out) != string(shrunk) {
 		t.Fatalf("on mode should apply the transform, got: %s", out)
 	}
@@ -86,7 +86,7 @@ func TestProcessOnSkipsLossyTransform(t *testing.T) {
 	shrunk := json.RawMessage(`{}`)
 	p.Register(fakeTransform{name: "lossy", lossless: false, out: shrunk, changes: true})
 	in := json.RawMessage(`{"content":[{"type":"text","text":"0123456789"}]}`)
-	out, obs := p.Process(ModeOn, in)
+	out, obs := p.Process(ModeOn, nil, in)
 	if string(out) != string(in) {
 		t.Fatalf("on mode must NOT apply a lossy transform without a CCR backing, got: %s", out)
 	}
@@ -99,7 +99,7 @@ func TestProcessSkipsBelowMinBytes(t *testing.T) {
 	p := New(identityEstimate, 1024)
 	p.Register(fakeTransform{name: "x", lossless: true, out: json.RawMessage(`{}`), changes: true})
 	in := json.RawMessage(`{"content":[{"type":"text","text":"small"}]}`)
-	out, obs := p.Process(ModeShadow, in)
+	out, obs := p.Process(ModeShadow, nil, in)
 	if string(out) != string(in) || obs != nil {
 		t.Fatalf("payload below minBytes should be skipped entirely")
 	}
@@ -109,12 +109,25 @@ func TestProcessRecoversFromPanickingTransform(t *testing.T) {
 	p := New(identityEstimate, 0)
 	p.Register(fakeTransform{name: "boom", lossless: true, panics: true})
 	in := json.RawMessage(`{"content":[{"type":"text","text":"0123456789"}]}`)
-	out, obs := p.Process(ModeOn, in)
+	out, obs := p.Process(ModeOn, nil, in)
 	if string(out) != string(in) {
 		t.Fatalf("a panicking transform must leave the result unchanged, got: %s", out)
 	}
 	if obs[0].Changed || obs[0].Applied {
 		t.Errorf("panicking transform must record no change")
+	}
+}
+
+func TestProcessSkipsDisabledTransform(t *testing.T) {
+	p := New(identityEstimate, 0)
+	p.Register(fakeTransform{name: "shrinker", lossless: true, out: json.RawMessage(`{}`), changes: true})
+	in := json.RawMessage(`{"content":[{"type":"text","text":"0123456789"}]}`)
+	out, obs := p.Process(ModeOn, map[string]bool{"shrinker": true}, in)
+	if string(out) != string(in) {
+		t.Fatalf("disabled transform must not be applied, got: %s", out)
+	}
+	if len(obs) != 0 {
+		t.Fatalf("disabled transform must produce no observations, got %d", len(obs))
 	}
 }
 

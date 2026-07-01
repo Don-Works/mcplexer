@@ -6,6 +6,7 @@ import {
   Brain,
   FileText,
   FolderOpen,
+  Gauge,
   GitBranch,
   Inbox,
   Layers,
@@ -140,6 +141,7 @@ const settingsNav: NavItem[] = [
   { label: 'Safety rules', href: '/guards', icon: <ShieldCheck className="h-4 w-4" />, hint: 'Guards and approval rules that protect local tools' },
   { label: 'Backups', href: '/backups', icon: <Archive className="h-4 w-4" />, hint: 'Backup and restore MCPlexer data' },
   { label: 'Advanced', href: '/advanced', icon: <Sliders className="h-4 w-4" />, hint: 'Credentials, OAuth providers, guards, descriptions' },
+  { label: 'Compression', href: '/settings/compression', icon: <Gauge className="h-4 w-4" />, hint: 'Token-compression mode and observed savings' },
   { label: 'Settings', href: '/settings', icon: <Settings className="h-4 w-4" /> },
 ]
 
