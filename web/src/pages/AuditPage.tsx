@@ -13,6 +13,7 @@ import {
   listWorkspaces,
 } from '@/api/client'
 import type { AuditFilter } from '@/api/types'
+import { liveRowMatchesLocalFilter } from '@/lib/audit-semantics'
 import { AuditDetailDialog } from '@/components/AuditDetailDialog'
 import { AuditInspector } from '@/components/audit/AuditInspector'
 import { type FacetOption } from '@/components/audit/AuditFacetRail'
@@ -62,6 +63,10 @@ export function AuditPage() {
   const search = useAuditSearch()
 
   // --- Live stream (dedupe against the loaded keyset feed) ---
+  // Forward every dimension the SSE endpoint matches server-side so the live
+  // tail filters like the keyset feed. The four dims the stream handler can't
+  // match (cache_hit/min_latency_ms/after/before) are applied client-side in
+  // `uniqueLive` below.
   const streamFilter = useMemo(
     () => ({
       workspace_id: filter.workspace_id,
@@ -69,8 +74,20 @@ export function AuditPage() {
       status: filter.status,
       execution_id: filter.execution_id,
       session_id: filter.session_id,
+      actor_kind: filter.actor_kind,
+      actor_id: filter.actor_id,
+      downstream_server_id: filter.downstream_server_id,
+      route_rule_id: filter.route_rule_id,
+      client_type: filter.client_type,
+      error_code: filter.error_code,
+      tier: filter.tier,
     }),
-    [filter.workspace_id, filter.tool_name, filter.status, filter.execution_id, filter.session_id],
+    [
+      filter.workspace_id, filter.tool_name, filter.status, filter.execution_id,
+      filter.session_id, filter.actor_kind, filter.actor_id,
+      filter.downstream_server_id, filter.route_rule_id, filter.client_type,
+      filter.error_code, filter.tier,
+    ],
   )
   const { records: liveRecords, connected, clear, paused, pause, resume, bufferedCount } =
     useAuditStream(streamFilter)
@@ -86,11 +103,14 @@ export function AuditPage() {
   } = useAuditFeed(filter)
   const loadedPages = pages ?? []
 
-  // Live events not yet in the keyset feed, prepended to the top.
+  // Live events not yet in the keyset feed, prepended to the top. Also drop any
+  // live row that fails the four filter dimensions the SSE endpoint can't match
+  // server-side (cache_hit/min_latency_ms/after/before) — without this the tail
+  // keeps showing non-matching events while the historical feed is filtered.
   const uniqueLive = useMemo(() => {
     const ids = new Set(loadedPages.map((r) => r.id))
-    return liveRecords.filter((r) => !ids.has(r.id))
-  }, [loadedPages, liveRecords])
+    return liveRecords.filter((r) => !ids.has(r.id) && liveRowMatchesLocalFilter(r, filter))
+  }, [loadedPages, liveRecords, filter])
 
   // When a search is active, its ranked results replace the feed entirely.
   const searchActive = search.results !== null

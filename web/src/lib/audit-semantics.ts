@@ -56,6 +56,41 @@ export function isSuccessStatus(status: string | undefined | null): boolean {
   return normalizeStatus(status) === 'success'
 }
 
+// Structural subset of AuditRecord that liveRowMatchesLocalFilter reads —
+// kept structural (not the API type) so this lib module stays import-light.
+interface LiveRowFields {
+  timestamp: string
+  latency_ms: number
+  cache_hit: boolean
+}
+
+// The filter dimensions the audit SSE endpoint (audit_sse_handler.go) does NOT
+// match server-side. Everything else is forwarded as a query param and filtered
+// by the gateway; these four have no matchFilter there.
+interface LocalFilterFields {
+  cache_hit?: boolean
+  min_latency_ms?: number
+  after?: string
+  before?: string
+}
+
+/**
+ * liveRowMatchesLocalFilter — client-side predicate for the four filter dims
+ * the live audit stream can't enforce server-side. Applied to each incoming
+ * live row so the tail stays consistent with the keyset feed (which filters all
+ * dims server-side). An unparseable after/before parses to NaN and every
+ * comparison against it is false, so the bound is treated as "no constraint" —
+ * matching the gateway's own lenient time parse.
+ */
+export function liveRowMatchesLocalFilter(r: LiveRowFields, f: LocalFilterFields): boolean {
+  if (f.cache_hit !== undefined && r.cache_hit !== f.cache_hit) return false
+  if (f.min_latency_ms !== undefined && r.latency_ms < f.min_latency_ms) return false
+  const ts = new Date(r.timestamp).getTime()
+  if (f.after && ts < new Date(f.after).getTime()) return false
+  if (f.before && ts > new Date(f.before).getTime()) return false
+  return true
+}
+
 /** The four secret operations, ordered roughly by sensitivity. */
 export type SecretOp = 'enumerate' | 'decrypt' | 'store' | 'delete'
 
