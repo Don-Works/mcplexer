@@ -2,9 +2,12 @@ package gateway
 
 import (
 	"context"
+	"log/slog"
+	"time"
 
 	"github.com/don-works/mcplexer/internal/compression"
 	"github.com/don-works/mcplexer/internal/models"
+	"github.com/don-works/mcplexer/internal/store"
 )
 
 // compressionMinBytes is the smallest tool-result payload worth running the
@@ -28,4 +31,42 @@ func (h *handler) compressionMode(ctx context.Context) compression.Mode {
 		return compression.ParseMode(h.settingsSvc.Load(ctx).CompressionMode)
 	}
 	return compression.ModeShadow
+}
+
+// persistCompression writes the pipeline's observations to the durable savings
+// ledger so the dashboard sees cross-connection, restart-surviving numbers
+// (the in-memory ContextCostStats only ever sees one socket connection).
+// Best-effort: measurement must never fail or meaningfully slow a tool call.
+func (h *handler) persistCompression(ctx context.Context, obs []compression.Observation) {
+	if h == nil || h.store == nil || len(obs) == 0 {
+		return
+	}
+	rows := make([]store.CompressionObservation, 0, len(obs))
+	for _, o := range obs {
+		wb, wt := o.SavedBytes, o.SavedTokens
+		if wb < 0 {
+			wb = 0
+		}
+		if wt < 0 {
+			wt = 0
+		}
+		ab, at := 0, 0
+		if o.Applied {
+			ab, at = wb, wt
+		}
+		rows = append(rows, store.CompressionObservation{
+			Transform:         o.Transform,
+			Lossless:          o.Lossless,
+			Changed:           o.Changed,
+			Applied:           o.Applied,
+			OrigBytes:         o.OrigBytes,
+			WouldSaveBytes:    wb,
+			WouldSaveTokens:   wt,
+			AppliedSaveBytes:  ab,
+			AppliedSaveTokens: at,
+		})
+	}
+	if err := h.store.RecordCompression(ctx, "", time.Now(), rows); err != nil {
+		slog.Debug("persist compression stats", "err", err)
+	}
 }
