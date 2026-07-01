@@ -16,6 +16,7 @@ import (
 	"github.com/don-works/mcplexer/internal/brain"
 	"github.com/don-works/mcplexer/internal/cache"
 	"github.com/don-works/mcplexer/internal/compact"
+	"github.com/don-works/mcplexer/internal/compression"
 	"github.com/don-works/mcplexer/internal/concierge"
 	"github.com/don-works/mcplexer/internal/config"
 	"github.com/don-works/mcplexer/internal/memory"
@@ -81,6 +82,7 @@ type handler struct {
 	bridge         *telegram.Manager // nil = chat bridge disabled
 	settingsSvc    *config.SettingsService
 	compactor      *compact.Compactor
+	compression    *compression.Pipeline
 	toolsListCache *cache.Cache[string, json.RawMessage]
 
 	addonRegistry  *addon.Registry           // nil = no addons loaded
@@ -123,7 +125,7 @@ type handler struct {
 	// notifierMu protects notifier against concurrent access from
 	// background goroutines (e.g. sendToolsListChanged).
 	notifierMu sync.RWMutex
-	notifier    Notifier // set at runtime for sending notifications — guarded by notifierMu
+	notifier   Notifier // set at runtime for sending notifications — guarded by notifierMu
 
 	// bgCtxMu protects bgCtx reads/writes.
 	bgCtxMu sync.RWMutex
@@ -252,6 +254,7 @@ func newHandler(
 		bridge:            telegramMgr,
 		settingsSvc:       settingsSvc,
 		compactor:         compact.New(),
+		compression:       newCompressionPipeline(),
 		toolsListCache:    cache.New[string, json.RawMessage](10, ttl),
 		bgRefreshAt:       map[string]time.Time{},
 		bgRefreshInFlight: map[string]bool{},
