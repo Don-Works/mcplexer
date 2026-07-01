@@ -28,6 +28,7 @@ const ConnectionsPage = lazy(() => import('@/pages/ConnectionsPage').then(m => (
 const ApprovalsPage = lazy(() => import('@/pages/ApprovalsPage').then(m => ({ default: m.ApprovalsPage })))
 const MobileAppPage = lazy(() => import('@/pages/MobileAppPage').then(m => ({ default: m.MobileAppPage })))
 const SettingsPage = lazy(() => import('@/pages/SettingsPage').then(m => ({ default: m.SettingsPage })))
+const CompressionPage = lazy(() => import('@/pages/CompressionPage').then(m => ({ default: m.CompressionPage })))
 const MeshPage = lazy(() => import('@/pages/MeshPage').then(m => ({ default: m.MeshPage })))
 const PairingPage = lazy(() => import('@/pages/Pairing').then(m => ({ default: m.PairingPage })))
 const BackupsPage = lazy(() => import('@/pages/BackupsPage').then(m => ({ default: m.BackupsPage })))
@@ -209,6 +210,7 @@ function App() {
             <Route path="/create-mcp" element={<CreateMCPPage />} />
             <Route path="/dry-run" element={<DryRunPage />} />
             <Route path="/settings" element={<SettingsPage />} />
+            <Route path="/settings/compression" element={<CompressionPage />} />
             <Route path="/backups" element={<BackupsPage />} />
             <Route path="/brain" element={<BrainStatusPage />} />
             <Route path="/brain/browse" element={<BrainGate><BrainBrowserPage /></BrainGate>} />

@@ -163,6 +163,12 @@ func (m *mockStore) CountPendingWorkerApprovals(context.Context) (int, error) { 
 func (m *mockStore) WorkerCostAggregate(context.Context, string, int, time.Time) ([]store.WorkerCostAggregate, error) {
 	return nil, nil
 }
+func (m *mockStore) RecordCompression(context.Context, string, time.Time, []store.CompressionObservation) error {
+	return nil
+}
+func (m *mockStore) CompressionAggregate(context.Context, string, int, time.Time) (store.CompressionAggregate, error) {
+	return store.CompressionAggregate{}, nil
+}
 
 // Retention prune stubs — gateway tests don't exercise them.
 func (m *mockStore) PruneAuditRecords(context.Context, time.Time) (int64, error) {

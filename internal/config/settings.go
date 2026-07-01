@@ -39,13 +39,25 @@ type Settings struct {
 	// via mcpx__search_tools, but doesn't pollute the agent's top-level
 	// tool inventory. Saves ~22k tokens of MCP-tool context per session.
 	// Set false (or MCPLEXER_SLIM_SURFACE=false) to advertise everything.
-	SlimSurface             bool   `json:"slim_surface"`
-	CompactResponses        bool   `json:"compact_responses"`
-	ToolsCacheTTLSec        int    `json:"tools_cache_ttl_sec"`
-	LogLevel                string `json:"log_level"`
-	CodeModeTimeoutSec      int    `json:"code_mode_timeout_sec"`
-	CodeModeMaxOutputBytes  int    `json:"code_mode_max_output_bytes"`
-	CodeModeMaxHeapGrowthMB int    `json:"code_mode_max_heap_growth_mb"`
+	SlimSurface      bool `json:"slim_surface"`
+	CompactResponses bool `json:"compact_responses"`
+	// CompressionMode is the three-state token-compression switch for
+	// downstream MCP tool-result payloads: "off" | "shadow" | "on". Default
+	// "shadow" (measure-only, dry-run) so the feature auto-wires into safe
+	// measurement on upgrade with zero user action; flip to "on" from the
+	// dashboard once the observed savings are trusted. Empty resolves to
+	// "shadow".
+	CompressionMode string `json:"compression_mode"`
+	// CompressionDisabledTransforms lists compression transforms toggled OFF
+	// by the operator (per-transform toggle in the dashboard). A disabled
+	// transform is skipped entirely — neither measured nor applied — whatever
+	// the global CompressionMode. Empty/absent = all transforms enabled.
+	CompressionDisabledTransforms []string `json:"compression_disabled_transforms,omitempty"`
+	ToolsCacheTTLSec              int      `json:"tools_cache_ttl_sec"`
+	LogLevel                      string   `json:"log_level"`
+	CodeModeTimeoutSec            int      `json:"code_mode_timeout_sec"`
+	CodeModeMaxOutputBytes        int      `json:"code_mode_max_output_bytes"`
+	CodeModeMaxHeapGrowthMB       int      `json:"code_mode_max_heap_growth_mb"`
 	// CodeModeSessionStateMaxBytes caps the total serialized size of the
 	// ephemeral per-session `session` object that mcpx__execute_code snapshots
 	// and rehydrates between calls. Over-cap snapshots are not persisted (the
@@ -169,6 +181,7 @@ func DefaultSettings() Settings {
 		SlimTools:                    true,
 		SlimSurface:                  true,
 		CompactResponses:             true,
+		CompressionMode:              "shadow",
 		ToolsCacheTTLSec:             15,
 		LogLevel:                     "info",
 		CodeModeTimeoutSec:           30,
@@ -346,6 +359,15 @@ func validateSettings(s Settings) error {
 		return fmt.Errorf("log_level must be one of: debug, info, warn, error")
 	}
 
+	// Empty compression_mode is tolerated (resolves to the "shadow" default at
+	// read time) so an existing settings PUT that omits the field does not
+	// fail validation.
+	switch strings.ToLower(strings.TrimSpace(s.CompressionMode)) {
+	case "", "off", "shadow", "on":
+	default:
+		return fmt.Errorf("compression_mode must be one of: off, shadow, on")
+	}
+
 	if s.CodeModeTimeoutSec < 1 || s.CodeModeTimeoutSec > 120 {
 		return fmt.Errorf("code_mode_timeout_sec must be between 1 and 120")
 	}
@@ -436,6 +458,14 @@ func applyEnvOverrides(s Settings) Settings {
 	}
 	if v := os.Getenv("MCPLEXER_COMPACT_RESPONSES"); v != "" {
 		s.CompactResponses = envBoolDefaultTrue(v)
+	}
+	if v := os.Getenv("MCPLEXER_COMPRESSION_MODE"); v != "" {
+		// Only accept a canonical mode; junk is ignored so /settings never
+		// echoes a non-canonical value (every consumer resolves via ParseMode).
+		switch m := strings.ToLower(strings.TrimSpace(v)); m {
+		case "off", "shadow", "on":
+			s.CompressionMode = m
+		}
 	}
 	if v := os.Getenv("MCPLEXER_CODE_MODE_MAX_OUTPUT_BYTES"); v != "" {
 		if n, err := parsePositiveInt(v); err == nil {

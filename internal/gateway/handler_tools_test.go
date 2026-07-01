@@ -211,6 +211,9 @@ func TestSlimSurfaceKeepers(t *testing.T) {
 		"mcpx__search_tools": true,
 		"secret__prompt":     true,
 		"secret__list_refs":  true,
+		// mcpx__retrieve is a keeper so the model can always expand a CCR
+		// compression marker even under the slim surface.
+		"mcpx__retrieve": true,
 	}
 
 	if len(slimSurfaceKeepers) != len(want) {
@@ -226,6 +229,7 @@ func TestSlimSurfaceKeepers(t *testing.T) {
 		{Name: "mcpx__execute_code"},
 		{Name: "mcpx__search_tools"},
 		{Name: "mcpx__skill_search"},
+		{Name: "mcpx__retrieve"},
 		{Name: "mesh__send"},
 		{Name: "memory__save"},
 		{Name: "task__create"},

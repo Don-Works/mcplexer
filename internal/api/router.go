@@ -585,6 +585,13 @@ func NewRouter(deps RouterDeps) http.Handler {
 		mux.HandleFunc("PUT /api/v1/settings", sh.update)
 	}
 
+	// Token-compression savings dashboard — reads the durable ledger the
+	// gateway writes per tool result. Store-backed, so no gateway reference.
+	if deps.Store != nil {
+		ch := &compressionHandler{store: deps.Store, settings: deps.SettingsSvc}
+		mux.HandleFunc("GET /api/v1/compression/stats", ch.stats)
+	}
+
 	// Workers (M0.6) — CRUD + lifecycle for in-process AI agents. Same
 	// Service as the mcplexer__*_worker MCP tools. Optional: the routes
 	// only register when the admin svc is wired (stdio-only smoke tests

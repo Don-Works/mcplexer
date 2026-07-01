@@ -32,6 +32,7 @@ var slimSurfaceHarnessAliases = map[string]string{
 	"search_tools": "mcpx__search_tools",
 	"prompt":       "secret__prompt",
 	"list_refs":    "secret__list_refs",
+	"retrieve":     "mcpx__retrieve",
 }
 
 var canonicalToHarnessAlias map[string]string

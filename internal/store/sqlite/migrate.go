@@ -120,6 +120,7 @@ var schemaInvariants = []func(context.Context, *sql.DB) error{
 	ensureWorkerMeshTriggerStatusCols,
 	ensureCrmPerson,
 	ensureWorkerWorkspaceAccess,
+	ensureCompressionStats,
 }
 
 // postMigrationHooks runs extra Go-side fixups after a numbered migration is
@@ -694,6 +695,37 @@ func ensureWorkerCapabilityProfile(ctx context.Context, db *sql.DB) error {
 		`ALTER TABLE workers ADD COLUMN capability_profile_json TEXT NOT NULL DEFAULT ''`,
 	); err != nil {
 		return fmt.Errorf("add workers.capability_profile_json: %w", err)
+	}
+	return nil
+}
+
+// ensureCompressionStats creates the token-compression savings ledger table
+// idempotently on every boot, covering installs whose numbered migration (126)
+// failed to apply. See migrations/126_compression_stats.sql.
+func ensureCompressionStats(ctx context.Context, db *sql.DB) error {
+	if _, err := db.ExecContext(ctx, `
+		CREATE TABLE IF NOT EXISTS compression_stats (
+			workspace_id        TEXT    NOT NULL DEFAULT '',
+			transform           TEXT    NOT NULL,
+			day                 TEXT    NOT NULL,
+			lossless            INTEGER NOT NULL DEFAULT 0,
+			samples             INTEGER NOT NULL DEFAULT 0,
+			changed             INTEGER NOT NULL DEFAULT 0,
+			orig_bytes          INTEGER NOT NULL DEFAULT 0,
+			would_save_bytes    INTEGER NOT NULL DEFAULT 0,
+			would_save_tokens   INTEGER NOT NULL DEFAULT 0,
+			applied             INTEGER NOT NULL DEFAULT 0,
+			applied_save_bytes  INTEGER NOT NULL DEFAULT 0,
+			applied_save_tokens INTEGER NOT NULL DEFAULT 0,
+			updated_at          TEXT    NOT NULL,
+			PRIMARY KEY (workspace_id, transform, day)
+		)`); err != nil {
+		return fmt.Errorf("ensure compression_stats table: %w", err)
+	}
+	if _, err := db.ExecContext(ctx,
+		`CREATE INDEX IF NOT EXISTS idx_compression_stats_day ON compression_stats(day)`,
+	); err != nil {
+		return fmt.Errorf("ensure compression_stats index: %w", err)
 	}
 	return nil
 }

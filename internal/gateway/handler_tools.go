@@ -724,6 +724,42 @@ func (h *handler) handleToolsCall(
 	// envelope marker is load-bearing and must stay in the text slot.
 	result = surfaceStructuredContent(result)
 
+	// Token-compression pipeline (measure-first). In shadow/dry-run mode this
+	// only MEASURES each candidate transform's would-be saving and returns the
+	// result unchanged — zero accuracy/latency risk to the answer; in on mode
+	// it applies proven lossless transforms. Skipped for internal code-mode
+	// calls under the same iterability contract as the compactor above.
+	if h.compression != nil && !isInternalCodeModeCall(ctx) {
+		original := result
+		compressed, obs := h.compression.Process(h.compressionMode(ctx), h.compressionDisabled(ctx), result)
+		// Persistence is best-effort and must never slow or fail the tool call,
+		// so detach from the request ctx (a near-deadline call must not drop the
+		// CCR write / measurement or spuriously trip the kill-switch).
+		pctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
+		defer cancel()
+		if string(compressed) != string(original) {
+			// Persist any stashed originals BEFORE the kill-switch check so the
+			// markers resolve, then verify every marker is recoverable. If any
+			// isn't, bypass compression for this call — the model must never
+			// see a marker it can't expand.
+			h.persistCCR(pctx, obs)
+			if h.ccrMarkersResolve(pctx, compressed) {
+				result = compressed
+			} else {
+				// Kill-switch tripped: the compressed result is NOT delivered.
+				// Clear the applied flags so no realized savings are booked for
+				// output the model never saw (the would-be savings still count).
+				for i := range obs {
+					obs[i].Applied = false
+					obs[i].Stash = nil
+				}
+				slog.Warn("compression kill-switch: unresolvable CCR marker, returning original result")
+			}
+		}
+		h.recordCompression(obs)
+		h.persistCompression(pctx, obs)
+	}
+
 	// Piggyback mesh notices on successful downstream results.
 	result = h.piggybackMeshNotice(ctx, result)
 
@@ -791,6 +827,7 @@ func (h *handler) buildAllBuiltinTools(ctx context.Context) []Tool {
 	tools = append(tools, recipeSearchToolDef())
 	tools = append(tools, recipeStatsToolDef())
 	tools = append(tools, contextCostStatsToolDefinition())
+	tools = append(tools, retrieveToolDefinition())
 	tools = append(tools, reloadServerToolDefinition())
 	if h.addonCreator != nil {
 		tools = append(tools, createAddonToolDefinition())

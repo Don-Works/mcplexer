@@ -86,6 +86,55 @@ func TestUpdateStatusAppendsHistory(t *testing.T) {
 	}
 }
 
+// TestUpdateMovesTaskToAnotherWorkspace locks the cross-workspace move
+// contract the dashboard's bulk "Move to workspace…" action relies on:
+// an update patch carrying a new WorkspaceID reassigns the row, the task
+// disappears from the source workspace (ErrNotFound — no existence leak)
+// and resolves in the target workspace, carrying its id + history.
+func TestUpdateMovesTaskToAnotherWorkspace(t *testing.T) {
+	ctx := context.Background()
+	svc, db, wsA := newSvc(t)
+	wsBRow := &store.Workspace{Name: "ws2", RootPath: "/tmp/ws2", Tags: json.RawMessage("[]")}
+	if err := db.CreateWorkspace(ctx, wsBRow); err != nil {
+		t.Fatalf("seed workspace B: %v", err)
+	}
+	wsB := wsBRow.ID
+
+	created, err := svc.Create(ctx, tasks.CreateOptions{
+		WorkspaceID: wsA, Title: "portable task", CreatedBySessionID: "agent-a",
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	moved, err := svc.Update(ctx, wsA, created.ID, tasks.UpdatePatch{
+		WorkspaceID:        &wsB,
+		UpdatedBySessionID: "agent-a",
+	})
+	if err != nil {
+		t.Fatalf("Update (move): %v", err)
+	}
+	if moved.WorkspaceID != wsB {
+		t.Fatalf("expected task in workspace %q after move, got %q", wsB, moved.WorkspaceID)
+	}
+	if moved.ID != created.ID {
+		t.Fatalf("move must preserve the task id: got %q want %q", moved.ID, created.ID)
+	}
+
+	// Source workspace must no longer resolve the task — cross-workspace
+	// reads are ErrNotFound, not a 403-style leak.
+	if _, err := svc.Get(ctx, wsA, created.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("expected ErrNotFound from source workspace, got %v", err)
+	}
+	got, err := svc.Get(ctx, wsB, created.ID)
+	if err != nil {
+		t.Fatalf("Get from target workspace: %v", err)
+	}
+	if got.WorkspaceID != wsB {
+		t.Fatalf("target Get returned workspace %q, want %q", got.WorkspaceID, wsB)
+	}
+}
+
 // TestUpdateStatusKindWorkingTriggersAutoClaim — migration 070 added
 // `kind` to task_status_vocabulary. The service-layer auto-claim path
 // must now treat ANY status with kind="working" as equivalent to the
