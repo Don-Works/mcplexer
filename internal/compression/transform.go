@@ -22,3 +22,15 @@ type Transform interface {
 	// surprise rather than erroring — a compressor must never break a result.
 	Apply(result json.RawMessage) (out json.RawMessage, changed bool)
 }
+
+// StashingTransform is the optional interface a transform implements when it
+// drops information that must remain recoverable via CCR. The pipeline
+// persists each returned original (keyed by CCRKey) so mcpx__retrieve can
+// return the exact bytes on demand — making an otherwise-lossy transform
+// effectively lossless from the model's perspective. A StashingTransform that
+// changes a payload MUST return the dropped original(s) in stash, or the
+// gimmick gate rejects it as irreversibly lossy.
+type StashingTransform interface {
+	Transform
+	ApplyWithStash(result json.RawMessage) (out json.RawMessage, changed bool, stash [][]byte)
+}
