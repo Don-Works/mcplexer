@@ -18,9 +18,9 @@ function fmt(n: number): string {
 
 export function CompressionPage() {
   const statsFetcher = useCallback(() => getCompressionStats(30), [])
-  const { data: stats, loading: statsLoading } = useApi(statsFetcher)
+  const { data: stats, loading: statsLoading, error: statsError } = useApi(statsFetcher)
   const settingsFetcher = useCallback(() => getSettings(), [])
-  const { data: settingsData, loading: settingsLoading } = useApi(settingsFetcher)
+  const { data: settingsData, loading: settingsLoading, error: settingsError } = useApi(settingsFetcher)
 
   const [mode, setMode] = useState<Mode>('shadow')
   const [disabled, setDisabled] = useState<Set<string>>(new Set())
@@ -43,6 +43,8 @@ export function CompressionPage() {
   const transforms = stats?.transforms ?? []
   const agg = stats?.aggregate
   const loading = statsLoading || settingsLoading
+  const loadError = statsError || settingsError
+  const settingsReady = !settingsLoading && !!settingsData?.settings
 
   function toggleTransform(name: string) {
     setDisabled((prev) => {
@@ -61,7 +63,10 @@ export function CompressionPage() {
   }
 
   async function save() {
-    if (!settingsData?.settings) return
+    if (!settingsData?.settings) {
+      toast.error('Settings have not loaded yet — reload the page and try again.')
+      return
+    }
     setSaving(true)
     try {
       const payload: Settings = {
@@ -91,6 +96,12 @@ export function CompressionPage() {
         ones you trust. Lossless transforms never change the answer; every number below is measured on your real
         traffic.
       </p>
+
+      {loadError && (
+        <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+          Failed to load compression data: {loadError}
+        </div>
+      )}
 
       <Card>
         <CardHeader>
@@ -168,7 +179,7 @@ export function CompressionPage() {
                   type="button"
                   role="switch"
                   aria-checked={enabled}
-                  aria-label={`Enable ${t.name}`}
+                  aria-label={`${enabled ? 'Disable' : 'Enable'} ${t.name}`}
                   data-testid={`compression-toggle-${t.name}`}
                   onClick={() => toggleTransform(t.name)}
                   className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
@@ -188,7 +199,7 @@ export function CompressionPage() {
       </Card>
 
       <div className="flex justify-end">
-        <Button onClick={save} disabled={!dirty || saving}>
+        <Button onClick={save} disabled={!dirty || saving || !settingsReady}>
           {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
           Save
         </Button>

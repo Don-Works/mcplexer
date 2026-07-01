@@ -460,7 +460,12 @@ func applyEnvOverrides(s Settings) Settings {
 		s.CompactResponses = envBoolDefaultTrue(v)
 	}
 	if v := os.Getenv("MCPLEXER_COMPRESSION_MODE"); v != "" {
-		s.CompressionMode = strings.ToLower(strings.TrimSpace(v))
+		// Only accept a canonical mode; junk is ignored so /settings never
+		// echoes a non-canonical value (every consumer resolves via ParseMode).
+		switch m := strings.ToLower(strings.TrimSpace(v)); m {
+		case "off", "shadow", "on":
+			s.CompressionMode = m
+		}
 	}
 	if v := os.Getenv("MCPLEXER_CODE_MODE_MAX_OUTPUT_BYTES"); v != "" {
 		if n, err := parsePositiveInt(v); err == nil {

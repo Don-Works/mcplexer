@@ -34,3 +34,13 @@ type StashingTransform interface {
 	Transform
 	ApplyWithStash(result json.RawMessage) (out json.RawMessage, changed bool, stash [][]byte)
 }
+
+// Verifier is an optional interface a Lossless transform implements to let the
+// pipeline re-check, at apply time, that it actually preserved the payload's
+// model-visible meaning — a runtime backstop against a buggy lossless transform
+// shipping value corruption to the model, beyond the CI gimmick gate.
+type Verifier interface {
+	// Verify reports whether `after` preserves the model-visible information of
+	// `before`. Called only for Lossless transforms about to be applied.
+	Verify(before, after json.RawMessage) bool
+}

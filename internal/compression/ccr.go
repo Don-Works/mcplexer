@@ -31,7 +31,10 @@ func CCRMarker(key string, origBytes int) string {
 	)
 }
 
-var ccrKeyRE = regexp.MustCompile(`key=([0-9a-f]{24})`)
+// Anchored to the full marker prefix so legitimate tool output that merely
+// contains a `key=<hex>` substring (URL params, config dumps, git refs) can't
+// false-positive the kill-switch and needlessly discard a valid compression.
+var ccrKeyRE = regexp.MustCompile(`\[\[ccr key=([0-9a-f]{24}) bytes=`)
 
 // ParseCCRKeys returns the distinct CCR keys referenced in text, in order.
 func ParseCCRKeys(text string) []string {

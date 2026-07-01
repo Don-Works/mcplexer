@@ -699,11 +699,6 @@ func ensureWorkerCapabilityProfile(ctx context.Context, db *sql.DB) error {
 	return nil
 }
 
-// ensureWorkerExecuteScripts adds the pre_execute_script / post_execute_script
-// columns to the workers table when migration 125 either didn't apply or
-// schema_version raced past it (branch swaps, partially-restored backups).
-// Idempotent — adds each column only when missing. Mirrors
-// ensureWorkerCapabilityProfile.
 // ensureCompressionStats creates the token-compression savings ledger table
 // idempotently on every boot, covering installs whose numbered migration (126)
 // failed to apply. See migrations/126_compression_stats.sql.
@@ -735,6 +730,11 @@ func ensureCompressionStats(ctx context.Context, db *sql.DB) error {
 	return nil
 }
 
+// ensureWorkerExecuteScripts adds the pre_execute_script / post_execute_script
+// columns to the workers table when migration 125 either didn't apply or
+// schema_version raced past it (branch swaps, partially-restored backups).
+// Idempotent — adds each column only when missing. Mirrors
+// ensureWorkerCapabilityProfile.
 func ensureWorkerExecuteScripts(ctx context.Context, db *sql.DB) error {
 	rows, err := db.QueryContext(ctx, `PRAGMA table_info(workers)`)
 	if err != nil {

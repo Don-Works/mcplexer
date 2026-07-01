@@ -1,9 +1,48 @@
 package compression
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
+
+func TestParseCCRKeysIgnoresNonMarkerHex(t *testing.T) {
+	// Bare `key=<hex>` substrings (URL params, config dumps, git refs) must NOT
+	// be treated as CCR markers, or they'd falsely trip the kill-switch.
+	noise := `GET /x?key=deadbeefdeadbeefdeadbeef  config: key=aaaaaaaaaaaaaaaaaaaaaaaa`
+	if keys := ParseCCRKeys(noise); len(keys) != 0 {
+		t.Errorf("non-marker key= substrings must be ignored, got %v", keys)
+	}
+	real := CCRMarker(CCRKey([]byte("payload")), 100)
+	if keys := ParseCCRKeys("pre " + real + " post"); len(keys) != 1 {
+		t.Errorf("a real marker must still parse, got %v", keys)
+	}
+}
+
+func TestOversizeTruncatePreservesValidUTF8AtSeams(t *testing.T) {
+	// Multibyte content so the head/tail byte cuts land mid-rune without the fix.
+	big := strings.Repeat("héllo wörld 日本語 ", 2000)
+	out, changed, _ := oversizeTruncate{}.ApplyWithStash(fixtureText(big))
+	if !changed {
+		t.Fatal("expected truncation of an oversize multibyte payload")
+	}
+	var e struct {
+		Content []struct {
+			Text string `json:"text"`
+		} `json:"content"`
+	}
+	if err := json.Unmarshal(out, &e); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	kept := e.Content[0].Text
+	head := kept[:strings.Index(kept, "\n[[ccr")]
+	if !strings.HasPrefix(big, head) {
+		t.Error("head preview is not a byte-exact prefix of the original — a rune was split at the seam")
+	}
+	if strings.ContainsRune(kept, '�') {
+		t.Error("preview contains U+FFFD — a rune was split at a seam")
+	}
+}
 
 func TestCCRKeyStableAndDistinct(t *testing.T) {
 	a := CCRKey([]byte("hello world"))

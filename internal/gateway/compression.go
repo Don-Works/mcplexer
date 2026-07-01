@@ -83,7 +83,9 @@ func (h *handler) persistCompression(ctx context.Context, obs []compression.Obse
 			AppliedSaveTokens: at,
 		})
 	}
-	if err := h.store.RecordCompression(ctx, "", time.Now(), rows); err != nil {
+	// Attribute to the session's workspace so the /stats workspace_id filter is
+	// meaningful; empty (no bound workspace) still aggregates globally.
+	if err := h.store.RecordCompression(ctx, h.currentWorkspaceID(ctx), time.Now(), rows); err != nil {
 		slog.Debug("persist compression stats", "err", err)
 	}
 }
