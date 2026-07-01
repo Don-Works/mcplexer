@@ -11,7 +11,7 @@ import (
 // gateway seam. New transforms are added here as they pass the gimmick-gate
 // harness; each starts life measured in shadow before being flipped on.
 func DefaultTransforms() []Transform {
-	return []Transform{jsonMinify{}, oversizeTruncate{}}
+	return []Transform{jsonMinify{}, structuredDedup{}, logCompressor{}, oversizeTruncate{}}
 }
 
 // oversize truncation window. A single text content block larger than the

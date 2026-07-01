@@ -173,6 +173,8 @@ func GateCorpus() []Fixture {
 		}))},
 		{Name: "compact-json", ExpectJSON: true, Payload: fixtureText(`{"a":1,"b":2,"c":[1,2,3]}`)},
 		{Name: "plain-text-log", Payload: fixtureText("INFO starting\nWARN slow query 1.2s\nERROR connection refused")},
+		{Name: "verbose-log", Payload: fixtureText(logFixtureText())},
+		{Name: "structured-dup", Payload: structuredDupFixture()},
 		{Name: "oversize-text", Payload: fixtureText(strings.Repeat("some log line with structured data here 0123456789\n", 400))},
 		{Name: "error-envelope", Payload: json.RawMessage(`{"isError":true,"content":[{"type":"text","text":"boom"}]}`)},
 		{
@@ -199,4 +201,45 @@ func fixtureText(text string) json.RawMessage {
 func prettyJSON(v any) string {
 	b, _ := json.MarshalIndent(v, "", "  ")
 	return string(b)
+}
+
+// logFixtureText is a representative verbose log: droppable INFO/DEBUG noise
+// interleaved with WARN/ERROR + a stack trace that must be kept.
+func logFixtureText() string {
+	return strings.Join([]string{
+		"INFO  server starting on :8080",
+		"DEBUG loaded config from /etc/app.yaml",
+		"INFO  connected to database",
+		"DEBUG cache warm complete",
+		"INFO  handling request GET /api/x",
+		"DEBUG query took 12ms",
+		"INFO  handling request GET /api/y",
+		"DEBUG query took 8ms",
+		"WARN  slow query detected 1.4s",
+		"ERROR connection refused to upstream:9000",
+		"  at net.Dial (net.go:120)",
+		"  at client.Do (client.go:44)",
+		"INFO  retrying in 2s",
+		"DEBUG retry attempt 1",
+		"ERROR upstream still down",
+		"INFO  request completed with 502",
+		"DEBUG cleanup done",
+		"INFO  metrics flushed",
+	}, "\n")
+}
+
+// structuredDupFixture is a tool result whose content[0].text JSON duplicates
+// its structuredContent — the double-encoding structuredDedup collapses.
+func structuredDupFixture() json.RawMessage {
+	obj := map[string]any{
+		"id": 7, "name": "widget", "active": true, "score": 42,
+		"description": strings.Repeat("a detailed description of the item. ", 8),
+		"tags":        []any{"alpha", "beta", "gamma", "delta", "epsilon"},
+	}
+	objJSON, _ := json.Marshal(obj)
+	env, _ := json.Marshal(map[string]any{
+		"content":           []map[string]any{{"type": "text", "text": string(objJSON)}},
+		"structuredContent": obj,
+	})
+	return env
 }
