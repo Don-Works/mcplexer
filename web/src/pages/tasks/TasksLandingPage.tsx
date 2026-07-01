@@ -166,9 +166,7 @@ function TasksLandingPageBody() {
           label="Open"
           value={String(openCount)}
           detail={
-            openCount === 0
-              ? 'nothing in flight'
-              : `${openCount} task${openCount === 1 ? '' : 's'} on the board`
+            openCount === 0 ? 'nothing in flight' : 'across all workspaces'
           }
           href="/tasks/all"
         />

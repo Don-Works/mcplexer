@@ -8,6 +8,18 @@ interface AuditStreamFilter {
   status?: string
   execution_id?: string
   session_id?: string
+  // Mission Control facets the SSE endpoint (audit_sse_handler.go) also
+  // matches server-side. Kept in lockstep so the live tail filters exactly like
+  // the keyset feed. cache_hit/min_latency_ms/after/before are NOT here — the
+  // stream handler has no matchFilter for them; the page filters those live
+  // rows client-side instead.
+  actor_kind?: string
+  actor_id?: string
+  downstream_server_id?: string
+  route_rule_id?: string
+  client_type?: string
+  error_code?: string
+  tier?: string
 }
 
 const MAX_RECORDS = 200
@@ -67,6 +79,13 @@ export function useAuditStream(filter: AuditStreamFilter) {
       if (filter.status) params.set('status', filter.status)
       if (filter.execution_id) params.set('execution_id', filter.execution_id)
       if (filter.session_id) params.set('session_id', filter.session_id)
+      if (filter.actor_kind) params.set('actor_kind', filter.actor_kind)
+      if (filter.actor_id) params.set('actor_id', filter.actor_id)
+      if (filter.downstream_server_id) params.set('downstream_server_id', filter.downstream_server_id)
+      if (filter.route_rule_id) params.set('route_rule_id', filter.route_rule_id)
+      if (filter.client_type) params.set('client_type', filter.client_type)
+      if (filter.error_code) params.set('error_code', filter.error_code)
+      if (filter.tier) params.set('tier', filter.tier)
 
       const qs = params.toString()
       const apiBase = import.meta.env.VITE_API_BASE_URL?.replace(/\/api\/v1$/, '') || ''
@@ -119,7 +138,12 @@ export function useAuditStream(filter: AuditStreamFilter) {
       esRef.current = null
       setConnected(false)
     }
-  }, [filter.workspace_id, filter.tool_name, filter.status, filter.execution_id, filter.session_id])
+  }, [
+    filter.workspace_id, filter.tool_name, filter.status, filter.execution_id,
+    filter.session_id, filter.actor_kind, filter.actor_id,
+    filter.downstream_server_id, filter.route_rule_id, filter.client_type,
+    filter.error_code, filter.tier,
+  ])
 
   return { records, connected, clear, paused, pause, resume, bufferedCount }
 }

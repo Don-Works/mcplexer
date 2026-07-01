@@ -38,6 +38,11 @@ var slimSurfaceKeepers = map[string]struct{}{
 	"mcpx__search_tools": {},
 	"secret__prompt":     {},
 	"secret__list_refs":  {},
+	// mcpx__retrieve must stay top-level visible even under the slim surface:
+	// when a tool result carries a CCR marker, the model has to be able to
+	// call retrieve to expand it. Hiding it behind discovery would strand
+	// markers it can't resolve.
+	"mcpx__retrieve": {},
 }
 
 // isSlimSurfaceKeeper reports whether the named tool should remain in

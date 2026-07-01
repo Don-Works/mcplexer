@@ -91,6 +91,11 @@ type PriorityFilter = 'all' | 'low' | 'normal' | 'high' | 'critical'
 const SEARCH_DEBOUNCE_MS = 200
 const COLLAPSED_KEY = 'mcplexer.tasksList.collapsed'
 const VIEW_MODE_KEY = 'mcplexer.tasksList.view'
+// Server-side page cap on the row fetch. The list intentionally loads
+// at most this many rows; the authoritative total comes from the
+// grouped COUNT(*) status endpoint (see serverStateTotal below), so a
+// busy board reconciles instead of silently saturating at LIST_LIMIT.
+const LIST_LIMIT = 500
 
 function parseCompositionFilter(v: string | null): TaskCompositionFilter {
   switch (v) {
@@ -237,7 +242,7 @@ export function TasksListPage() {
         assignee_user_id: assigneeUser,
         assignee_origin_kind: assigneeOriginKind ?? (humanFilter ? 'human' : undefined),
         q: searchQuery || undefined,
-        limit: 500,
+        limit: LIST_LIMIT,
       })
     },
     [workspaceFilter, stateFilter, statusFilter, tagFilter, assigneeFilter, humanFilter, searchQuery],
@@ -352,6 +357,36 @@ export function TasksListPage() {
   const totalCount = filtered.length
   const openCount = useMemo(() => filtered.filter((t) => !t.closed_at).length, [filtered])
 
+  // Authoritative total for the current state + workspace scope, sourced
+  // from the same grouped COUNT(*) the landing "Open" tile uses
+  // (listTaskStatuses → CountTaskStatuses). The row list is page-capped
+  // at LIST_LIMIT, so filtered.length under-reports the moment the board
+  // is busier than one page — that mismatch is exactly why the tile and
+  // the list disagree. Surfacing the true number + a truncation notice
+  // makes them reconcile.
+  const serverStateTotal = useMemo(() => {
+    const rows = taskStatusOptions?.statuses
+    if (!rows) return null
+    return rows.reduce((sum, r) => sum + r.count, 0)
+  }, [taskStatusOptions])
+  // The count endpoint honours state + workspace only — not the row
+  // filters (status/tag/q/assignee/human/priority/composition). When any
+  // of those narrow the set, serverStateTotal is a superset of what's
+  // shown, so we don't present it as a reconcilable "of N".
+  const rowNarrowingActive = !!(
+    statusFilter ||
+    tagFilter ||
+    searchQuery ||
+    assigneeFilter ||
+    humanFilter ||
+    priorityFilter !== 'all' ||
+    compositionFilter !== 'all'
+  )
+  const pageCapped = (tasks?.length ?? 0) >= LIST_LIMIT
+  const stateWord = stateFilter === 'all' ? 'total' : stateFilter
+  const showTrueTotal =
+    !rowNarrowingActive && serverStateTotal != null && serverStateTotal !== totalCount
+
   const toggleCollapsed = useCallback((wsId: string) => {
     setCollapsed((prev) => {
       const next = new Set(prev)
@@ -424,6 +459,44 @@ export function TasksListPage() {
       setBulkBusy(false)
     }
   }, [selected, tasks, clearSelected, refetch])
+
+  // Reassign every selected task's workspace in one shot. The move is
+  // just an update patch with a new workspace_id (service.go honours it
+  // + records history), so we reuse updateTask per row. Tasks already in
+  // the target workspace are skipped so the toast count is truthful.
+  const handleBulkMove = useCallback(
+    async (targetWorkspaceId: string) => {
+      if (selected.size === 0 || !targetWorkspaceId) return
+      setBulkBusy(true)
+      try {
+        const ids = Array.from(selected)
+        const byTask = new Map((tasks ?? []).map((t) => [t.id, t.workspace_id] as const))
+        const toMove = ids.filter((id) => {
+          const ws = byTask.get(id)
+          return ws && ws !== targetWorkspaceId
+        })
+        await Promise.all(
+          toMove.map((id) =>
+            updateTask(byTask.get(id) as string, id, { workspace_id: targetWorkspaceId }),
+          ),
+        )
+        const targetName =
+          workspaces?.find((w) => w.id === targetWorkspaceId)?.name ?? 'workspace'
+        const skipped = ids.length - toMove.length
+        toast.success(
+          `Moved ${toMove.length} task${toMove.length === 1 ? '' : 's'} to ${targetName}` +
+            (skipped > 0 ? ` (${skipped} already there)` : ''),
+        )
+        clearSelected()
+        refetch()
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : 'Bulk move failed')
+      } finally {
+        setBulkBusy(false)
+      }
+    },
+    [selected, tasks, workspaces, clearSelected, refetch],
+  )
 
   const handleBulkDelete = useCallback(async () => {
     if (selected.size === 0) return
@@ -505,7 +578,11 @@ export function TasksListPage() {
             onChange={(v) => setFilter('human', v ? '1' : null)}
           />
           <div className="ml-auto text-[11px] text-muted-foreground">
-            {loading && !tasks ? 'loading…' : `${openCount} open / ${totalCount} shown`}
+            {loading && !tasks
+              ? 'loading…'
+              : showTrueTotal
+                ? `${totalCount} shown of ${serverStateTotal} ${stateWord}`
+                : `${openCount} open / ${totalCount} shown`}
           </div>
         </div>
         {(tagFilter || assigneeFilter || humanFilter || knownTags.length > 0 || knownAssignees.length > 0) ? (
@@ -526,6 +603,21 @@ export function TasksListPage() {
 
       {error ? (
         <div className="border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</div>
+      ) : null}
+
+      {pageCapped && !loading ? (
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[12px] text-amber-200/90">
+          <span className="font-mono">
+            Showing the first {LIST_LIMIT} tasks
+            {!rowNarrowingActive && serverStateTotal != null
+              ? ` of ${serverStateTotal} ${stateWord}`
+              : ''}
+            .
+          </span>
+          <span className="text-amber-200/70">
+            The list is page-capped — narrow by workspace, status, or search to see the rest.
+          </span>
+        </div>
       ) : null}
 
       <MilestoneSection milestones={milestones} />
@@ -583,6 +675,8 @@ export function TasksListPage() {
           onClear={clearSelected}
           onClose={handleBulkClose}
           onDelete={handleBulkDelete}
+          onMove={handleBulkMove}
+          workspaces={(workspaces ?? []).map((w) => ({ id: w.id, name: w.name }))}
         />
       ) : null}
 
