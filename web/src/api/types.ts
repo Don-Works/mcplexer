@@ -637,6 +637,7 @@ export interface ApiError {
 export interface CompressionTransformInfo {
   name: string
   lossless: boolean
+  verified: boolean
 }
 
 export interface CompressionTransformAggregate {

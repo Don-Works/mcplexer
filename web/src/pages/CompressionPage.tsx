@@ -152,6 +152,11 @@ export function CompressionPage() {
                     >
                       {t.lossless ? 'lossless' : 'lossy'}
                     </span>
+                    {t.verified && (
+                      <span className="rounded bg-sky-500/15 px-1.5 py-0.5 text-[10px] text-sky-600" title="Passes the gimmick gate: value-lossless, secret-safe, real win">
+                        gate-verified
+                      </span>
+                    )}
                   </div>
                   <div className="text-xs text-muted-foreground">
                     {stat
