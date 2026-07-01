@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"time"
 
@@ -9,6 +10,41 @@ import (
 	"github.com/don-works/mcplexer/internal/models"
 	"github.com/don-works/mcplexer/internal/store"
 )
+
+// applyCompression runs the pipeline over a result the model will read — a
+// downstream tool result OR execute_code output — enforcing the
+// verify-after-compress kill-switch, recording the measurement, and returning
+// the (possibly compressed) result. In shadow it measures and returns the
+// original; when off/disabled it is a no-op. Persistence is detached from the
+// request ctx so it is best-effort and never slows/fails the call. Callers that
+// must NOT compress (downstream results consumed inside the sandbox) gate the
+// call site.
+func (h *handler) applyCompression(ctx context.Context, result json.RawMessage) json.RawMessage {
+	if h == nil || h.compression == nil {
+		return result
+	}
+	original := result
+	compressed, obs := h.compression.Process(h.compressionMode(ctx), h.compressionDisabled(ctx), result)
+	pctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
+	defer cancel()
+	if string(compressed) != string(original) {
+		// Persist stashed originals BEFORE the kill-switch check so markers
+		// resolve; if any is unrecoverable, bypass to the original.
+		h.persistCCR(pctx, obs)
+		if h.ccrMarkersResolve(pctx, compressed) {
+			result = compressed
+		} else {
+			for i := range obs {
+				obs[i].Applied = false
+				obs[i].Stash = nil
+			}
+			slog.Warn("compression kill-switch: unresolvable CCR marker, returning original result")
+		}
+	}
+	h.recordCompression(obs)
+	h.persistCompression(pctx, obs)
+	return result
+}
 
 // compressionMinBytes is the smallest tool-result payload worth running the
 // compression pipeline over. Below this the measurement cost outweighs any

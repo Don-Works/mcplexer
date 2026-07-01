@@ -83,6 +83,31 @@ func TestCCRKillSwitchDetectsMissingMarker(t *testing.T) {
 	}
 }
 
+// TestApplyCompressionMeasuresCodeModeOutput proves the shared helper (now also
+// hooked onto execute_code output) records a measurement in shadow while
+// returning the output unchanged — this is what makes the dashboard populate
+// for slim-surface / code-mode usage, where nothing hits the downstream seam.
+func TestApplyCompressionMeasuresCodeModeOutput(t *testing.T) {
+	h := &handler{compression: newCompressionPipeline()} // nil store+settings → shadow, in-memory only
+	pretty, _ := json.MarshalIndent(map[string]any{
+		"items": []map[string]any{{"id": 1, "name": "alpha"}, {"id": 2, "name": "beta"}, {"id": 3, "name": "gamma"}},
+		"meta":  map[string]any{"total": 3, "page": 1, "note": "a code-mode print() output blob"},
+	}, "", "  ")
+	textJSON, _ := json.Marshal(string(pretty))
+	env := json.RawMessage(`{"content":[{"type":"text","text":` + string(textJSON) + `}]}`)
+	if len(env) < compressionMinBytes {
+		t.Fatalf("fixture too small (%d) to exercise the pipeline", len(env))
+	}
+
+	out := h.applyCompression(context.Background(), env)
+	if string(out) != string(env) {
+		t.Fatal("shadow mode must return the code-mode output unchanged")
+	}
+	if h.ContextCostStats().Compression.Samples == 0 {
+		t.Fatal("applyCompression must record a measurement for code-mode output")
+	}
+}
+
 func retrievedText(t *testing.T, result json.RawMessage) string {
 	t.Helper()
 	var out struct {
