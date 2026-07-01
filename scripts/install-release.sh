@@ -79,6 +79,16 @@ mkdir -p "$BIN_DIR"
 cp "$tmp/mcplexer_${VERSION}_${os}_${arch}/mcplexer" "$BIN_DIR/mcplexer"
 chmod 0755 "$BIN_DIR/mcplexer"
 
+# macOS: a downloaded + copied Go binary carries a quarantine xattr and its
+# ad-hoc code signature is invalidated by the copy, so Gatekeeper SIGKILLs it
+# on first run ("Killed: 9"). Clear quarantine and re-sign ad-hoc so it runs.
+if [[ "$os" == "darwin" ]]; then
+  xattr -cr "$BIN_DIR/mcplexer" 2>/dev/null || true
+  if command -v codesign >/dev/null 2>&1; then
+    codesign --force --sign - "$BIN_DIR/mcplexer" >/dev/null 2>&1 || true
+  fi
+fi
+
 echo "==> Installed $("$BIN_DIR/mcplexer" version)"
 if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
   echo "Add this to PATH if needed: $BIN_DIR"
