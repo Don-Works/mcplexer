@@ -175,6 +175,12 @@ func (m *mockRouteStore) CountPendingWorkerApprovals(context.Context) (int, erro
 func (m *mockRouteStore) WorkerCostAggregate(context.Context, string, int, time.Time) ([]store.WorkerCostAggregate, error) {
 	return nil, nil
 }
+func (m *mockRouteStore) RecordCompression(context.Context, string, time.Time, []store.CompressionObservation) error {
+	return nil
+}
+func (m *mockRouteStore) CompressionAggregate(context.Context, string, int, time.Time) (store.CompressionAggregate, error) {
+	return store.CompressionAggregate{}, nil
+}
 
 // Retention prune stubs — routing tests don't exercise them.
 func (m *mockRouteStore) PruneAuditRecords(context.Context, time.Time) (int64, error) {

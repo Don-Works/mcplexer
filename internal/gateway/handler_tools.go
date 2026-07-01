@@ -733,6 +733,7 @@ func (h *handler) handleToolsCall(
 		compressed, obs := h.compression.Process(h.compressionMode(ctx), result)
 		result = compressed
 		h.recordCompression(obs)
+		h.persistCompression(ctx, obs)
 	}
 
 	// Piggyback mesh notices on successful downstream results.
