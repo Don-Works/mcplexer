@@ -19,6 +19,9 @@ func TestGimmickGate(t *testing.T) {
 		if !m.SecretSafe {
 			t.Errorf("%s: dropped a must-survive token: %s", m.Transform, m.FirstViolation)
 		}
+		if !m.RecoverableOK {
+			t.Errorf("%s: dropped content irreversibly (lossy without stash): %s", m.Transform, m.FirstViolation)
+		}
 		if m.MaxLatency > 100*time.Millisecond {
 			t.Errorf("%s: exceeded per-payload latency budget: %v", m.Transform, m.MaxLatency)
 		}

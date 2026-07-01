@@ -730,8 +730,20 @@ func (h *handler) handleToolsCall(
 	// it applies proven lossless transforms. Skipped for internal code-mode
 	// calls under the same iterability contract as the compactor above.
 	if h.compression != nil && !isInternalCodeModeCall(ctx) {
+		original := result
 		compressed, obs := h.compression.Process(h.compressionMode(ctx), h.compressionDisabled(ctx), result)
-		result = compressed
+		if string(compressed) != string(original) {
+			// Persist any stashed originals BEFORE the kill-switch check so the
+			// markers resolve, then verify every marker is recoverable. If any
+			// isn't, bypass compression for this call — the model must never
+			// see a marker it can't expand.
+			h.persistCCR(ctx, obs)
+			if h.ccrMarkersResolve(ctx, compressed) {
+				result = compressed
+			} else {
+				slog.Warn("compression kill-switch: unresolvable CCR marker, returning original result")
+			}
+		}
 		h.recordCompression(obs)
 		h.persistCompression(ctx, obs)
 	}
@@ -803,6 +815,7 @@ func (h *handler) buildAllBuiltinTools(ctx context.Context) []Tool {
 	tools = append(tools, recipeSearchToolDef())
 	tools = append(tools, recipeStatsToolDef())
 	tools = append(tools, contextCostStatsToolDefinition())
+	tools = append(tools, retrieveToolDefinition())
 	tools = append(tools, reloadServerToolDefinition())
 	if h.addonCreator != nil {
 		tools = append(tools, createAddonToolDefinition())

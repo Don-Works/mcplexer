@@ -10,7 +10,49 @@ import (
 // gateway seam. New transforms are added here as they pass the gimmick-gate
 // harness; each starts life measured in shadow before being flipped on.
 func DefaultTransforms() []Transform {
-	return []Transform{jsonMinify{}}
+	return []Transform{jsonMinify{}, oversizeTruncate{}}
+}
+
+// oversize truncation window. A single text content block larger than the
+// threshold is replaced with its head + a CCR marker + its tail; the full
+// original is stashed so mcpx__retrieve returns the exact bytes. Big MCP tool
+// outputs (DOM dumps, large logs/JSON) are the target of the biggest wins.
+const (
+	oversizeThresholdBytes = 8 * 1024
+	oversizeHeadBytes      = 2 * 1024
+	oversizeTailBytes      = 1 * 1024
+)
+
+// oversizeTruncate is a lossy-but-recoverable transform: it only ever drops
+// content it has stashed in CCR, so from the model's perspective nothing is
+// lost (it can expand the marker on demand). It runs only in On mode with CCR
+// backing; the plain Apply path is a deliberate no-op so a caller that can't
+// persist never drops anything.
+type oversizeTruncate struct{}
+
+func (oversizeTruncate) Name() string   { return "oversize_truncate" }
+func (oversizeTruncate) Lossless() bool { return false }
+
+func (oversizeTruncate) Apply(result json.RawMessage) (json.RawMessage, bool) {
+	return result, false
+}
+
+func (oversizeTruncate) ApplyWithStash(result json.RawMessage) (json.RawMessage, bool, [][]byte) {
+	var stash [][]byte
+	out, changed := walkTextBlocks(result, func(text string) (string, bool) {
+		if len(text) <= oversizeThresholdBytes {
+			return text, false
+		}
+		original := []byte(text)
+		stash = append(stash, original)
+		head := text[:oversizeHeadBytes]
+		tail := text[len(text)-oversizeTailBytes:]
+		return head + "\n" + CCRMarker(CCRKey(original), len(original)) + "\n" + tail, true
+	})
+	if !changed {
+		return result, false, nil
+	}
+	return out, true, stash
 }
 
 // TransformInfo is the descriptor the dashboard uses to render a toggle for
@@ -32,7 +74,7 @@ func DefaultTransformInfo() []TransformInfo {
 	ts := DefaultTransforms()
 	verified := make(map[string]bool, len(ts))
 	for _, m := range RunGate(ts, GateCorpus(), nil) {
-		verified[m.Transform] = (!m.Lossless || m.LosslessOK) && m.SecretSafe &&
+		verified[m.Transform] = (!m.Lossless || m.LosslessOK) && m.SecretSafe && m.RecoverableOK &&
 			!(m.Changed > 0 && m.TotalSavedBytes <= 0)
 	}
 	out := make([]TransformInfo, 0, len(ts))

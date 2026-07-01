@@ -43,6 +43,9 @@ func (h *handler) handleBuiltinCall(
 	case "mcpx__context_cost_stats":
 		return h.handleContextCostStats(ctx)
 
+	case "mcpx__retrieve":
+		return h.handleRetrieve(ctx, req.Arguments)
+
 	case "mcpx__delegate_worker":
 		return h.handleDelegateWorker(ctx, req.Arguments)
 

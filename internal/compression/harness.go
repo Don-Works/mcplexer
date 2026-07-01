@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"reflect"
+	"strings"
 	"time"
 )
 
@@ -46,8 +47,13 @@ type GateMetrics struct {
 	MaxLatency      time.Duration
 	// LosslessOK is false if a Lossless transform altered a JSON value.
 	LosslessOK bool
-	// SecretSafe is false if any must-survive token was dropped.
+	// SecretSafe is false if any must-survive token was dropped from the
+	// inline output (see note in RunGate — stashing transforms are exempt
+	// because the token remains recoverable via CCR).
 	SecretSafe bool
+	// RecoverableOK is false if a non-lossless transform changed a payload
+	// without stashing the original — i.e. it dropped information irreversibly.
+	RecoverableOK bool
 	// FirstViolation is a human-readable description of the first failure.
 	FirstViolation string
 }
@@ -60,10 +66,10 @@ func RunGate(transforms []Transform, fixtures []Fixture, estimate TokenEstimator
 	}
 	out := make([]GateMetrics, 0, len(transforms))
 	for _, t := range transforms {
-		m := GateMetrics{Transform: t.Name(), Lossless: t.Lossless(), LosslessOK: true, SecretSafe: true}
+		m := GateMetrics{Transform: t.Name(), Lossless: t.Lossless(), LosslessOK: true, SecretSafe: true, RecoverableOK: true}
 		for _, f := range fixtures {
 			start := time.Now()
-			res, changed := safeApply(t, f.Payload)
+			res, changed, stash := safeApply(t, f.Payload)
 			if lat := time.Since(start); lat > m.MaxLatency {
 				m.MaxLatency = lat
 			}
@@ -75,10 +81,21 @@ func RunGate(transforms []Transform, fixtures []Fixture, estimate TokenEstimator
 			m.TotalOrigBytes += len(f.Payload)
 			m.TotalSavedBytes += len(f.Payload) - len(res)
 
-			for _, s := range f.MustSurvive {
-				if !bytes.Contains(res, []byte(s)) {
-					m.SecretSafe = false
-					m.setViolation("dropped must-survive token " + s + " in " + f.Name)
+			// A non-lossless transform must hand back the original it dropped,
+			// or the loss is irreversible.
+			if !t.Lossless() && len(stash) == 0 {
+				m.RecoverableOK = false
+				m.setViolation("lossy transform changed payload without stashing the original in " + f.Name)
+			}
+			// Must-survive tokens are checked inline only for lossless
+			// transforms; a stashing transform may legitimately move a token
+			// into CCR (still recoverable), so we don't require it inline.
+			if len(stash) == 0 {
+				for _, s := range f.MustSurvive {
+					if !bytes.Contains(res, []byte(s)) {
+						m.SecretSafe = false
+						m.setViolation("dropped must-survive token " + s + " in " + f.Name)
+					}
 				}
 			}
 			if t.Lossless() && f.ExpectJSON && !jsonTextValuesEqual(f.Payload, res) {
@@ -156,6 +173,7 @@ func GateCorpus() []Fixture {
 		}))},
 		{Name: "compact-json", ExpectJSON: true, Payload: fixtureText(`{"a":1,"b":2,"c":[1,2,3]}`)},
 		{Name: "plain-text-log", Payload: fixtureText("INFO starting\nWARN slow query 1.2s\nERROR connection refused")},
+		{Name: "oversize-text", Payload: fixtureText(strings.Repeat("some log line with structured data here 0123456789\n", 400))},
 		{Name: "error-envelope", Payload: json.RawMessage(`{"isError":true,"content":[{"type":"text","text":"boom"}]}`)},
 		{
 			Name:        "secrets-and-ids",

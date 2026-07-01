@@ -22,6 +22,10 @@ type Observation struct {
 	SavedTokens int
 	Changed     bool
 	Applied     bool
+	// Stash holds the original bytes a stashing transform dropped, set only
+	// when the transform was Applied. The gateway persists these to CCR so
+	// mcpx__retrieve can return them.
+	Stash [][]byte
 }
 
 // Pipeline evaluates registered transforms over tool-result payloads. It is
@@ -80,7 +84,7 @@ func (p *Pipeline) Process(mode Mode, disabled map[string]bool, result json.RawM
 			continue
 		}
 		origBytes := len(current)
-		out, changed := safeApply(t, current)
+		out, changed, stash := safeApply(t, current)
 		o := Observation{
 			Transform:  t.Name(),
 			Lossless:   t.Lossless(),
@@ -92,11 +96,15 @@ func (p *Pipeline) Process(mode Mode, disabled map[string]bool, result json.RawM
 			Changed:    changed,
 		}
 		o.SavedTokens = o.OrigTokens - o.OutTokens
-		// Apply for real only in On mode, only when the transform is lossless
-		// and actually shrank the payload. Shadow measures but never applies.
-		if mode == ModeOn && changed && t.Lossless() && o.SavedBytes > 0 {
+		// Apply for real only in On mode, only when the transform actually
+		// shrank the payload AND the result is recoverable — either lossless,
+		// or lossy-but-stashed (the original is preserved in CCR). Shadow
+		// measures but never applies.
+		recoverable := t.Lossless() || len(stash) > 0
+		if mode == ModeOn && changed && recoverable && o.SavedBytes > 0 {
 			current = out
 			o.Applied = true
+			o.Stash = stash
 		}
 		obs = append(obs, o)
 	}
@@ -104,13 +112,19 @@ func (p *Pipeline) Process(mode Mode, disabled map[string]bool, result json.RawM
 }
 
 // safeApply guards against a buggy transform panicking on the gateway hot
-// path: on panic it returns the input unchanged. A first-line kill-switch;
-// the full verify-after-compress breaker lands in a later task.
-func safeApply(t Transform, in json.RawMessage) (out json.RawMessage, changed bool) {
+// path: on panic it returns the input unchanged with no stash. A first-line
+// kill-switch (the full verify-after-compress breaker lives in the gateway).
+// A StashingTransform's ApplyWithStash is preferred so lossy-but-recoverable
+// transforms can hand back the originals to persist.
+func safeApply(t Transform, in json.RawMessage) (out json.RawMessage, changed bool, stash [][]byte) {
 	defer func() {
 		if r := recover(); r != nil {
-			out, changed = in, false
+			out, changed, stash = in, false, nil
 		}
 	}()
-	return t.Apply(in)
+	if st, ok := t.(StashingTransform); ok {
+		return st.ApplyWithStash(in)
+	}
+	o, c := t.Apply(in)
+	return o, c, nil
 }
