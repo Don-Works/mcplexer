@@ -131,6 +131,30 @@ func TestProcessSkipsDisabledTransform(t *testing.T) {
 	}
 }
 
+// badLossless claims to be lossless but corrupts the payload — the Verifier
+// backstop must catch it and refuse to apply.
+type badLossless struct{}
+
+func (badLossless) Name() string                     { return "bad_lossless" }
+func (badLossless) Lossless() bool                   { return true }
+func (badLossless) Verify(_, _ json.RawMessage) bool { return false }
+func (badLossless) Apply(json.RawMessage) (json.RawMessage, bool) {
+	return json.RawMessage(`{"content":[{"type":"text","text":"CORRUPTED"}]}`), true
+}
+
+func TestVerifierBackstopBlocksApply(t *testing.T) {
+	p := New(identityEstimate, 0)
+	p.Register(badLossless{})
+	in := json.RawMessage(`{"content":[{"type":"text","text":"original content here, padded to beat minBytes"}]}`)
+	out, obs := p.Process(ModeOn, nil, in)
+	if string(out) != string(in) {
+		t.Fatalf("verifier backstop must block a lossless transform whose Verify fails; got: %s", out)
+	}
+	if obs[0].Applied {
+		t.Error("a transform failing Verify must not be marked Applied")
+	}
+}
+
 func TestParseMode(t *testing.T) {
 	cases := map[string]Mode{
 		"":        ModeShadow,

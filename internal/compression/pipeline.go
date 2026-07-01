@@ -101,7 +101,16 @@ func (p *Pipeline) Process(mode Mode, disabled map[string]bool, result json.RawM
 		// or lossy-but-stashed (the original is preserved in CCR). Shadow
 		// measures but never applies.
 		recoverable := t.Lossless() || len(stash) > 0
-		if mode == ModeOn && changed && recoverable && o.SavedBytes > 0 {
+		apply := mode == ModeOn && changed && recoverable && o.SavedBytes > 0
+		// Runtime backstop: a Lossless transform that implements Verifier must
+		// prove it preserved the value before we commit its output — a hot-path
+		// guard against value corruption, independent of the CI gimmick gate.
+		if apply && t.Lossless() {
+			if v, ok := t.(Verifier); ok && !v.Verify(current, out) {
+				apply = false
+			}
+		}
+		if apply {
 			current = out
 			o.Applied = true
 			o.Stash = stash

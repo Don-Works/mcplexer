@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"strings"
+	"unicode/utf8"
 )
 
 // DefaultTransforms returns the transforms registered by default at the
@@ -45,8 +46,8 @@ func (oversizeTruncate) ApplyWithStash(result json.RawMessage) (json.RawMessage,
 		}
 		original := []byte(text)
 		stash = append(stash, original)
-		head := text[:oversizeHeadBytes]
-		tail := text[len(text)-oversizeTailBytes:]
+		head := text[:runeSafeEnd(text, oversizeHeadBytes)]
+		tail := text[runeSafeStart(text, len(text)-oversizeTailBytes):]
 		return head + "\n" + CCRMarker(CCRKey(original), len(original)) + "\n" + tail, true
 	})
 	if !changed {
@@ -93,6 +94,12 @@ type jsonMinify struct{}
 func (jsonMinify) Name() string   { return "json_minify" }
 func (jsonMinify) Lossless() bool { return true }
 
+// Verify confirms the minified output parses to the same JSON value — the
+// runtime backstop the pipeline calls before applying a lossless transform.
+func (jsonMinify) Verify(before, after json.RawMessage) bool {
+	return jsonTextValuesEqual(before, after)
+}
+
 func (jsonMinify) Apply(result json.RawMessage) (json.RawMessage, bool) {
 	return walkTextBlocks(result, func(text string) (string, bool) {
 		trimmed := strings.TrimSpace(text)
@@ -108,6 +115,30 @@ func (jsonMinify) Apply(result json.RawMessage) (json.RawMessage, bool) {
 		}
 		return buf.String(), true
 	})
+}
+
+// runeSafeEnd returns an offset <= n where s[:offset] does not split a UTF-8
+// rune (so json.Marshal won't substitute U+FFFD at the seam).
+func runeSafeEnd(s string, n int) int {
+	if n >= len(s) {
+		return len(s)
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return n
+}
+
+// runeSafeStart returns an offset >= n where s[offset:] begins on a UTF-8 rune
+// boundary.
+func runeSafeStart(s string, n int) int {
+	if n <= 0 {
+		return 0
+	}
+	for n < len(s) && !utf8.RuneStart(s[n]) {
+		n++
+	}
+	return n
 }
 
 // walkTextBlocks applies fn to every text content block in an MCP tool-result

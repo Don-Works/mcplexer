@@ -732,20 +732,32 @@ func (h *handler) handleToolsCall(
 	if h.compression != nil && !isInternalCodeModeCall(ctx) {
 		original := result
 		compressed, obs := h.compression.Process(h.compressionMode(ctx), h.compressionDisabled(ctx), result)
+		// Persistence is best-effort and must never slow or fail the tool call,
+		// so detach from the request ctx (a near-deadline call must not drop the
+		// CCR write / measurement or spuriously trip the kill-switch).
+		pctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
+		defer cancel()
 		if string(compressed) != string(original) {
 			// Persist any stashed originals BEFORE the kill-switch check so the
 			// markers resolve, then verify every marker is recoverable. If any
 			// isn't, bypass compression for this call — the model must never
 			// see a marker it can't expand.
-			h.persistCCR(ctx, obs)
-			if h.ccrMarkersResolve(ctx, compressed) {
+			h.persistCCR(pctx, obs)
+			if h.ccrMarkersResolve(pctx, compressed) {
 				result = compressed
 			} else {
+				// Kill-switch tripped: the compressed result is NOT delivered.
+				// Clear the applied flags so no realized savings are booked for
+				// output the model never saw (the would-be savings still count).
+				for i := range obs {
+					obs[i].Applied = false
+					obs[i].Stash = nil
+				}
 				slog.Warn("compression kill-switch: unresolvable CCR marker, returning original result")
 			}
 		}
 		h.recordCompression(obs)
-		h.persistCompression(ctx, obs)
+		h.persistCompression(pctx, obs)
 	}
 
 	// Piggyback mesh notices on successful downstream results.

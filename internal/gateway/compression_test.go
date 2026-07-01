@@ -2,10 +2,46 @@ package gateway
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/don-works/mcplexer/internal/compression"
 )
+
+// TestCompressionKillSwitchClearsAppliedAccounting proves that when the
+// kill-switch reverts a compressed result (unresolvable marker), no realized
+// ("applied") savings are booked — only the would-be savings remain.
+func TestCompressionKillSwitchClearsAppliedAccounting(t *testing.T) {
+	h := &handler{compression: newCompressionPipeline()}
+	big := strings.Repeat("x", 20000)
+	textJSON, _ := json.Marshal(big)
+	env := json.RawMessage(`{"content":[{"type":"text","text":` + string(textJSON) + `}]}`)
+
+	_, obs := h.compression.Process(compression.ModeOn, nil, env)
+	appliedFound := false
+	for _, o := range obs {
+		if o.Applied {
+			appliedFound = true
+		}
+	}
+	if !appliedFound {
+		t.Fatal("expected oversize_truncate to apply in on-mode")
+	}
+	// Simulate the gateway kill-switch revert (unresolvable-marker path).
+	for i := range obs {
+		obs[i].Applied = false
+		obs[i].Stash = nil
+	}
+	h.recordCompression(obs)
+	stats := h.ContextCostStats()
+	if stats.Compression.AppliedSaveBytes != 0 || stats.Compression.AppliedSaveTokens != 0 {
+		t.Errorf("reverted compression booked applied savings: bytes=%d tokens=%d",
+			stats.Compression.AppliedSaveBytes, stats.Compression.AppliedSaveTokens)
+	}
+	if stats.Compression.ByTransform["oversize_truncate"].WouldSaveBytes == 0 {
+		t.Error("would-be savings should still be recorded for a reverted transform")
+	}
+}
 
 // TestCompressionShadowMeasurementIntegration proves the measure-first path
 // end-to-end within the gateway: in shadow mode the pipeline returns the tool

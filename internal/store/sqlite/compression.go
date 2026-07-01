@@ -25,6 +25,7 @@ func (d *DB) RecordCompression(
 	}
 	day := now.UTC().Format("2006-01-02")
 	ts := formatTime(now.UTC())
+	var firstErr error
 	for _, o := range obs {
 		if o.Transform == "" {
 			continue
@@ -49,11 +50,13 @@ func (d *DB) RecordCompression(
 			workspaceID, o.Transform, day, boolToInt(o.Lossless),
 			boolToInt(o.Changed), o.OrigBytes, o.WouldSaveBytes, o.WouldSaveTokens,
 			boolToInt(o.Applied), o.AppliedSaveBytes, o.AppliedSaveTokens, ts,
-		); err != nil {
-			return fmt.Errorf("record compression: %w", err)
+		); err != nil && firstErr == nil {
+			// Best-effort: keep upserting the remaining observations rather than
+			// dropping them on the first failure; surface the first error.
+			firstErr = fmt.Errorf("record compression: %w", err)
 		}
 	}
-	return nil
+	return firstErr
 }
 
 // CompressionAggregate rolls up the ledger over the last `days` UTC days.
