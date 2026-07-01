@@ -590,6 +590,8 @@ func NewRouter(deps RouterDeps) http.Handler {
 	if deps.Store != nil {
 		ch := &compressionHandler{store: deps.Store, settings: deps.SettingsSvc}
 		mux.HandleFunc("GET /api/v1/compression/stats", ch.stats)
+		csse := &compressionSSEHandler{store: deps.Store, settings: deps.SettingsSvc}
+		mux.HandleFunc("GET /api/v1/compression/stream", csse.stream)
 	}
 
 	// Workers (M0.6) — CRUD + lifecycle for in-process AI agents. Same

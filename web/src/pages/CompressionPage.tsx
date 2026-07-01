@@ -3,7 +3,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { useApi } from '@/hooks/use-api'
-import { getCompressionStats, getSettings, updateSettings } from '@/api/client'
+import { useCompressionStream } from '@/hooks/use-compression-stream'
+import { getSettings, updateSettings } from '@/api/client'
 import type { CompressionTransformAggregate, Settings } from '@/api/types'
 import { Gauge, Loader2, Save } from 'lucide-react'
 import { toast } from 'sonner'
@@ -17,8 +18,7 @@ function fmt(n: number): string {
 }
 
 export function CompressionPage() {
-  const statsFetcher = useCallback(() => getCompressionStats(30), [])
-  const { data: stats, loading: statsLoading, error: statsError } = useApi(statsFetcher)
+  const { stats, connected } = useCompressionStream()
   const settingsFetcher = useCallback(() => getSettings(), [])
   const { data: settingsData, loading: settingsLoading, error: settingsError } = useApi(settingsFetcher)
 
@@ -42,8 +42,8 @@ export function CompressionPage() {
 
   const transforms = stats?.transforms ?? []
   const agg = stats?.aggregate
-  const loading = statsLoading || settingsLoading
-  const loadError = statsError || settingsError
+  const loading = !stats || settingsLoading
+  const loadError = settingsError
   const settingsReady = !settingsLoading && !!settingsData?.settings
 
   function toggleTransform(name: string) {
@@ -89,6 +89,15 @@ export function CompressionPage() {
       <div className="flex items-center gap-2">
         <Gauge className="h-5 w-5" />
         <h1 className="text-xl font-semibold">Token compression</h1>
+        <span
+          className={`ml-2 inline-flex items-center gap-1.5 text-xs ${connected ? 'text-emerald-600' : 'text-muted-foreground'}`}
+          title={connected ? 'Live — updating every 2s' : 'Reconnecting…'}
+        >
+          <span
+            className={`inline-block h-2 w-2 rounded-full ${connected ? 'animate-pulse bg-emerald-500' : 'bg-muted-foreground'}`}
+          />
+          {connected ? 'Live' : 'Connecting…'}
+        </span>
       </div>
       <p className="max-w-2xl text-sm text-muted-foreground">
         Compresses downstream MCP tool-result payloads before they reach the model. Start in{' '}

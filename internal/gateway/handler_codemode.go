@@ -316,8 +316,13 @@ func (h *handler) handleCodeExecute(
 		}
 	}
 
-	// Format the result as MCP tool output.
-	return marshalCodeResult(result), nil
+	// Format the result as MCP tool output, then compress the OUTPUT the model
+	// will read. This is the code-mode compression seam: the downstream results
+	// consumed inside the sandbox are intentionally left uncompressed (for JS
+	// iterability), but the final execute_code output is fair game and is the
+	// bulk of what a slim-surface harness ever puts into model context.
+	out := marshalCodeResult(result)
+	return h.applyCompression(ctx, out), nil
 }
 
 // gatherCodeModeTools collects all tools available through execute_code.
