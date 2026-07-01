@@ -13,20 +13,31 @@ func DefaultTransforms() []Transform {
 	return []Transform{jsonMinify{}}
 }
 
-// TransformInfo is the static descriptor the dashboard uses to render a toggle
-// for every transform (even ones with no measured traffic yet).
+// TransformInfo is the descriptor the dashboard uses to render a toggle for
+// every transform (even ones with no measured traffic yet). Verified reflects
+// whether the transform currently passes the gimmick gate, so the UI can tell
+// the operator which transforms are proven safe to turn On.
 type TransformInfo struct {
 	Name     string `json:"name"`
 	Lossless bool   `json:"lossless"`
+	Verified bool   `json:"verified"`
 }
 
-// DefaultTransformInfo lists the default transforms' names + lossless flags so
-// the settings UI can show a toggle per transform before any data exists.
+// DefaultTransformInfo lists the default transforms with their lossless flag and
+// live gimmick-gate verdict so the settings UI can show a toggle + a "verified"
+// badge per transform before any traffic exists. The gate runs against the
+// small synthetic GateCorpus (microseconds), so recomputing per call is cheap
+// and keeps the flag honest rather than hard-coded.
 func DefaultTransformInfo() []TransformInfo {
 	ts := DefaultTransforms()
+	verified := make(map[string]bool, len(ts))
+	for _, m := range RunGate(ts, GateCorpus(), nil) {
+		verified[m.Transform] = (!m.Lossless || m.LosslessOK) && m.SecretSafe &&
+			!(m.Changed > 0 && m.TotalSavedBytes <= 0)
+	}
 	out := make([]TransformInfo, 0, len(ts))
 	for _, t := range ts {
-		out = append(out, TransformInfo{Name: t.Name(), Lossless: t.Lossless()})
+		out = append(out, TransformInfo{Name: t.Name(), Lossless: t.Lossless(), Verified: verified[t.Name()]})
 	}
 	return out
 }
