@@ -70,8 +70,10 @@ var wsCollapse = regexp.MustCompile(`\s+`)
 // caps the result at max runes (0 = no cap).
 func collapseWS(s string, max int) string {
 	s = strings.TrimSpace(wsCollapse.ReplaceAllString(s, " "))
-	if max > 0 && len(s) > max {
-		return strings.TrimSpace(s[:max])
+	if max > 0 {
+		if r := []rune(s); len(r) > max {
+			return strings.TrimSpace(string(r[:max]))
+		}
 	}
 	return s
 }

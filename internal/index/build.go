@@ -228,9 +228,14 @@ func (br *buildRun) oldSymbolCount(ctx context.Context, rel string) int {
 }
 
 // pruneRemoved deletes rows for stored files that were not re-enumerated.
+// A scoped build (req.Paths non-empty) only enumerated in-scope files, so
+// out-of-scope rows are never prune candidates.
 func (br *buildRun) pruneRemoved(ctx context.Context) {
 	var gone []string
 	for p := range br.storedPaths {
+		if !matchesPrefixes(p, br.req.Paths) {
+			continue
+		}
 		if !br.enumSet[p] {
 			gone = append(gone, p)
 			if !br.req.Force {
@@ -272,10 +277,18 @@ func (br *buildRun) finish(ctx context.Context, start time.Time) (*BuildResult, 
 	}
 	br.res.DurationMS = int(time.Since(start).Milliseconds())
 	br.res.GitHead = head
+	fileCount := len(br.enumSet)
+	if len(br.req.Paths) > 0 {
+		// A scoped build only enumerated part of the workspace; the build row
+		// must still report whole-index totals.
+		if stats, err := br.svc.store.ListCodeIndexFileStats(ctx, br.req.WorkspaceID); err == nil {
+			fileCount = len(stats)
+		}
+	}
 	build := &store.CodeIndexBuild{
 		WorkspaceID: br.req.WorkspaceID, RootPath: br.req.Root, GitHead: head, DirtyCount: dirty,
 		BuiltAt: time.Now().UTC(), DurationMS: br.res.DurationMS,
-		FileCount: len(br.enumSet), SymbolCount: br.symbolTotal, WarningsJSON: warningsJSON(br.res.Warnings),
+		FileCount: fileCount, SymbolCount: br.symbolTotal, WarningsJSON: warningsJSON(br.res.Warnings),
 	}
 	if err := br.svc.store.PutCodeIndexBuild(ctx, build); err != nil {
 		return nil, fmt.Errorf("index: put build row: %w", err)

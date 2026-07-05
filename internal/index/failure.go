@@ -177,7 +177,7 @@ func (fs *failureScorer) identifierHarvest(ctx context.Context, text string) {
 			scores = append(scores, h.Score)
 		}
 	}
-	norm := normalizeLowerBetter(scores)
+	norm := normalizeScores(scores)
 	for i, h := range hits {
 		fs.add(h.path, 1.0*norm[i], "symbol match: "+h.name)
 	}

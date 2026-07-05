@@ -159,7 +159,8 @@ func (m *memStore) SearchCodeIndexSymbols(ctx context.Context, q store.CodeIndex
 				continue
 			}
 			if n := tokenOverlap(terms, s.NameTokens+" "+strings.ToLower(s.Name)); n > 0 {
-				hits = append(hits, store.CodeIndexSymbolHit{Symbol: s, Path: mf.file.Path, Score: -float64(n)})
+				// Real store convention: negated BM25, higher = better.
+				hits = append(hits, store.CodeIndexSymbolHit{Symbol: s, Path: mf.file.Path, Score: float64(n)})
 			}
 		}
 	}
@@ -177,10 +178,10 @@ func (m *memStore) SearchCodeIndexFiles(ctx context.Context, ws, query string, l
 		}
 		hay := mf.file.PathTokens + " " + mf.file.Package + " " + strings.ToLower(mf.file.DocSummary)
 		if n := tokenOverlap(terms, hay); n > 0 {
-			hits = append(hits, store.CodeIndexFileHit{File: mf.file, Score: -float64(n)})
+			hits = append(hits, store.CodeIndexFileHit{File: mf.file, Score: float64(n)})
 		}
 	}
-	sort.Slice(hits, func(i, j int) bool { return hits[i].Score < hits[j].Score })
+	sort.Slice(hits, func(i, j int) bool { return hits[i].Score > hits[j].Score })
 	if limit > 0 && len(hits) > limit {
 		hits = hits[:limit]
 	}
@@ -242,9 +243,10 @@ func tokenOverlap(terms []string, haystack string) int {
 	return n
 }
 
-// limitSymbolHits sorts by score (lower better) and truncates.
+// limitSymbolHits sorts by score (higher better, real-store convention) and
+// truncates.
 func limitSymbolHits(hits []store.CodeIndexSymbolHit, limit int) []store.CodeIndexSymbolHit {
-	sort.Slice(hits, func(i, j int) bool { return hits[i].Score < hits[j].Score })
+	sort.Slice(hits, func(i, j int) bool { return hits[i].Score > hits[j].Score })
 	if limit > 0 && len(hits) > limit {
 		hits = hits[:limit]
 	}

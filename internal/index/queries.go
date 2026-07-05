@@ -40,7 +40,9 @@ func (s *Service) Deps(ctx context.Context, req DepsRequest) (*DepsResult, error
 		dir = "imports"
 	}
 	limit := clampLimit(req.Limit, 50, 500)
-	res := &DepsResult{File: req.File}
+	// Both lists stay non-nil so single-direction responses marshal the unused
+	// direction as [] rather than null.
+	res := &DepsResult{File: req.File, Imports: []DepEntry{}, Importers: []DepEntry{}}
 	if dir == "imports" || dir == "both" {
 		edges, err := s.store.ListCodeIndexEdges(ctx, store.CodeIndexEdgeFilter{
 			WorkspaceID: req.WorkspaceID, FromPath: req.File, Limit: limit,

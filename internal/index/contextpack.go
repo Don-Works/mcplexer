@@ -62,7 +62,7 @@ func (s *Service) rankBySymbols(ctx context.Context, req ContextRequest, cands m
 	for i, h := range hits {
 		scores[i] = h.Score
 	}
-	norm := normalizeLowerBetter(scores)
+	norm := normalizeScores(scores)
 	maxSym := map[string]float64{}
 	count := map[string]int{}
 	for i, h := range hits {
@@ -90,7 +90,7 @@ func (s *Service) rankByFiles(ctx context.Context, req ContextRequest, cands map
 	for i, h := range hits {
 		scores[i] = h.Score
 	}
-	norm := normalizeLowerBetter(scores)
+	norm := normalizeScores(scores)
 	for i, h := range hits {
 		c := candFor(cands, h.File.Path)
 		c.score += ctxFileFTSCoeff * norm[i]
@@ -233,9 +233,10 @@ func orderCandidates(cands map[string]*ctxCand) []*ctxCand {
 	return out
 }
 
-// normalizeLowerBetter maps a slice of BM25 scores (lower = better) to [0,1]
-// with the best hit at 1.0 and the worst at 0.0. All-equal inputs map to 1.0.
-func normalizeLowerBetter(scores []float64) []float64 {
+// normalizeScores maps store relevance scores (negated BM25: higher = better)
+// to [0,1] with the best hit at 1.0 and the worst at 0.0. All-equal inputs
+// map to 1.0.
+func normalizeScores(scores []float64) []float64 {
 	out := make([]float64, len(scores))
 	if len(scores) == 0 {
 		return out
@@ -254,7 +255,7 @@ func normalizeLowerBetter(scores []float64) []float64 {
 		if span == 0 {
 			out[i] = 1.0
 		} else {
-			out[i] = (max - s) / span
+			out[i] = (s - min) / span
 		}
 	}
 	return out

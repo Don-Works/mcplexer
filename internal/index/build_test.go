@@ -135,6 +135,50 @@ func TestBuildDeletion(t *testing.T) {
 	}
 }
 
+// TestBuildScopedPreservesOutOfScope guards against the scoped-deletion bug:
+// a paths-restricted build must never prune rows outside its scope, and its
+// build row must still report whole-index totals.
+func TestBuildScopedPreservesOutOfScope(t *testing.T) {
+	svc, ms := testService(t)
+	dir := newWorkspace(t)
+	ctx := context.Background()
+	if _, err := svc.Build(ctx, BuildRequest{WorkspaceID: "ws", Root: dir}); err != nil {
+		t.Fatal(err)
+	}
+	res, err := svc.Build(ctx, BuildRequest{WorkspaceID: "ws", Root: dir, Paths: []string{"web"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.FilesRemoved != 0 {
+		t.Errorf("scoped build removed %d out-of-scope files, want 0", res.FilesRemoved)
+	}
+	if _, err := ms.GetCodeIndexFile(ctx, "ws", "a.go"); err != nil {
+		t.Errorf("out-of-scope a.go pruned by scoped build: %v", err)
+	}
+	build, err := ms.GetCodeIndexBuild(ctx, "ws")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if build.FileCount != 2 {
+		t.Errorf("scoped build row FileCount = %d, want whole-index 2", build.FileCount)
+	}
+
+	// A file deleted inside the scope is still pruned by a scoped build.
+	if err := os.Remove(filepath.Join(dir, "web/b.ts")); err != nil {
+		t.Fatal(err)
+	}
+	res, err = svc.Build(ctx, BuildRequest{WorkspaceID: "ws", Root: dir, Paths: []string{"web"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.FilesRemoved != 1 {
+		t.Errorf("FilesRemoved = %d, want 1", res.FilesRemoved)
+	}
+	if _, err := ms.GetCodeIndexFile(ctx, "ws", "a.go"); err != nil {
+		t.Errorf("out-of-scope a.go pruned on second scoped build: %v", err)
+	}
+}
+
 func TestBuildForce(t *testing.T) {
 	svc, _ := testService(t)
 	dir := newWorkspace(t)
