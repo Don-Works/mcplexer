@@ -182,6 +182,17 @@ var defaultRouteRules = []store.RouteRule{
 		Source:             "default",
 	},
 	{
+		ID:                 "index-allow",
+		Name:               "Allow code-index tools",
+		Priority:           95,
+		WorkspaceID:        "global",
+		PathGlob:           "**",
+		ToolMatch:          json.RawMessage(`["index__*"]`),
+		DownstreamServerID: "index-builtin",
+		Policy:             "allow",
+		Source:             "default",
+	},
+	{
 		ID:        "global-deny",
 		Priority:  0,
 		PathGlob:  "**",
@@ -247,6 +258,7 @@ func ensureRequiredDefaultRouteRules(ctx context.Context, s store.Store, existin
 		"brain-allow",
 		"data-allow",
 		"kv-allow",
+		"index-allow",
 		hammerspoonRouteID,
 	}
 

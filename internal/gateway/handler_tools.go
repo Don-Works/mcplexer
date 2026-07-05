@@ -836,6 +836,7 @@ func (h *handler) buildAllBuiltinTools(ctx context.Context) []Tool {
 	}
 	if h.store != nil {
 		tools = append(tools, dataToolDefinitions()...)
+		tools = append(tools, indexToolDefinitions()...)
 	}
 	if h.tasksSvc != nil {
 		tools = append(tools, taskToolDefinitions()...)
@@ -1000,6 +1001,7 @@ var builtinDownstreamIDs = map[string]struct{}{
 	"brain-builtin":  {},
 	"data-builtin":   {},
 	"kv-builtin":     {},
+	"index-builtin":  {},
 }
 
 // isMeshTool returns true if the tool is a mesh tool (mesh__ prefix).

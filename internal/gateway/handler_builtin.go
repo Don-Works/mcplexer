@@ -220,6 +220,12 @@ func (h *handler) handleBuiltinCall(
 		resp, rpcErr, _ := h.dispatchKVTool(ctx, req.Name, req.Arguments)
 		return resp, rpcErr
 
+	case "index__build", "index__status", "index__symbols", "index__deps",
+		"index__tests_for", "index__summary", "index__recent_changes",
+		"index__map_failure", "index__context":
+		resp, rpcErr, _ := h.dispatchIndexTool(ctx, req.Name, req.Arguments)
+		return resp, rpcErr
+
 	case "concierge__record_signal":
 		return h.handleConciergeRecordSignal(ctx, req.Arguments)
 

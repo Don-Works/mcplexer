@@ -717,4 +717,12 @@ var defaultDownstreamServers = []store.DownstreamServer{
 		Discovery:     "static",
 		Source:        "default",
 	},
+	{
+		ID:            "index-builtin",
+		Name:          "Code Index (local codebase indexer: build/symbols/deps/tests/context)",
+		Transport:     "internal",
+		ToolNamespace: "index",
+		Discovery:     "static",
+		Source:        "default",
+	},
 }

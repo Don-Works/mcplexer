@@ -807,6 +807,10 @@ func newTestHandler(lister ToolLister, servers []store.DownstreamServer) (*handl
 			ID: "kv-builtin", Name: "Code-mode KV",
 			Transport: "internal", ToolNamespace: "kv", Discovery: "static",
 		},
+		store.DownstreamServer{
+			ID: "index-builtin", Name: "Code Index",
+			Transport: "internal", ToolNamespace: "index", Discovery: "static",
+		},
 	)
 	ms := &mockStore{
 		servers:    allServers,
@@ -837,6 +841,12 @@ func newTestHandler(lister ToolLister, servers []store.DownstreamServer) (*handl
 					Priority: 95, PathGlob: "**", Policy: "allow",
 					ToolMatch:          json.RawMessage(`["kv__*"]`),
 					DownstreamServerID: "kv-builtin",
+				},
+				{
+					ID: "index-allow", WorkspaceID: "ws-global",
+					Priority: 95, PathGlob: "**", Policy: "allow",
+					ToolMatch:          json.RawMessage(`["index__*"]`),
+					DownstreamServerID: "index-builtin",
 				},
 				{
 					ID: "allow-all", WorkspaceID: "ws-global",

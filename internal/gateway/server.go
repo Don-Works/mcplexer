@@ -20,6 +20,7 @@ import (
 	"github.com/don-works/mcplexer/internal/cache"
 	"github.com/don-works/mcplexer/internal/concierge"
 	"github.com/don-works/mcplexer/internal/config"
+	"github.com/don-works/mcplexer/internal/index"
 	"github.com/don-works/mcplexer/internal/memory"
 	"github.com/don-works/mcplexer/internal/mesh"
 	"github.com/don-works/mcplexer/internal/p2p"
@@ -82,6 +83,9 @@ func NewServer(
 	if sopts.brainEditor != nil {
 		h.setBrainEditor(sopts.brainEditor)
 	}
+	if sopts.codeIndex != nil {
+		h.setCodeIndex(sopts.codeIndex)
+	}
 	if sopts.secretTransferKey != nil {
 		h.setSecretTransferKey(sopts.secretTransferKey)
 	}
@@ -115,6 +119,7 @@ type serverOptions struct {
 	workerAdmin        *workersadmin.Service
 	conciergeSvc       *concierge.Service
 	brainEditor        *brain.Editor
+	codeIndex          *index.Service
 	adminGate          *AdminCWDGate
 	secretTransferKey  *age.X25519Identity
 	readiness          *readiness.Tracker
@@ -305,6 +310,16 @@ func (o withBrainEditor) apply(opts *serverOptions) { opts.brainEditor = o.e }
 // nil (or omit) to disable; the tools then return "brain subsystem is not
 // enabled" replies.
 func WithBrainEditor(e *brain.Editor) ServerOption { return withBrainEditor{e: e} }
+
+type withCodeIndex struct{ s *index.Service }
+
+func (o withCodeIndex) apply(opts *serverOptions) { opts.codeIndex = o.s }
+
+// WithCodeIndex enables the agent-facing index__* tools (build/status/symbols/
+// deps/tests_for/summary/recent_changes/map_failure/context) backed by the
+// local codebase indexer. Pass nil (or omit) to disable; the tools then return
+// "code index is unavailable on this build" replies.
+func WithCodeIndex(s *index.Service) ServerOption { return withCodeIndex{s: s} }
 
 type withSecretTransferKey struct{ k *age.X25519Identity }
 

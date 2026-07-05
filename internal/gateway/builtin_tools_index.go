@@ -5,9 +5,9 @@ import "encoding/json"
 // indexToolDefinitions returns the full 9-tool `index__*` surface for the
 // local codebase indexer: build/status/symbols/deps here, plus the query
 // tools (tests_for/summary/recent_changes/map_failure/context) from
-// indexQueryToolDefinitions. Stage 1 Agent C wires this into
-// codeModeBuiltinTools + buildAllBuiltinTools; until then it is intentionally
-// unreferenced (see the sink at the bottom of this file).
+// indexQueryToolDefinitions. Registered (gated on h.store != nil) in both
+// codeModeBuiltinTools and buildAllBuiltinTools so the tools dispatch and are
+// slim-surface discoverable.
 func indexToolDefinitions() []Tool {
 	core := []Tool{
 		{
@@ -92,8 +92,3 @@ func indexToolDefinitions() []Tool {
 	}
 	return append(core, indexQueryToolDefinitions()...)
 }
-
-// var _ is a stage-0 sink so the `unused` linter does not flag
-// indexToolDefinitions before Stage 1 Agent C wires it into the registration
-// lists. Remove this line when wiring the tool surface.
-var _ = indexToolDefinitions

@@ -708,6 +708,7 @@ func (h *handler) codeModeBuiltinTools() []Tool {
 	if h.store != nil {
 		tools = append(tools, dataToolDefinitions()...)
 		tools = append(tools, kvToolDefinitions()...)
+		tools = append(tools, indexToolDefinitions()...)
 	}
 	if h.tasksSvc != nil {
 		tools = append(tools, taskToolDefinitions()...)

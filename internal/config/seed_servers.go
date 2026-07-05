@@ -70,6 +70,7 @@ func ensureRequiredDefaultServers(ctx context.Context, s store.Store, existing [
 		"brain-builtin",
 		"data-builtin",
 		"kv-builtin",
+		"index-builtin",
 		"notion",
 		obsidianServerID,
 		aikidoServerID,

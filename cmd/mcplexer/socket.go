@@ -16,6 +16,7 @@ import (
 	"github.com/don-works/mcplexer/internal/config"
 	"github.com/don-works/mcplexer/internal/downstream"
 	"github.com/don-works/mcplexer/internal/gateway"
+	"github.com/don-works/mcplexer/internal/index"
 	"github.com/don-works/mcplexer/internal/memory"
 	"github.com/don-works/mcplexer/internal/mesh"
 	"github.com/don-works/mcplexer/internal/p2p"
@@ -58,6 +59,7 @@ func serveSocket(
 	tasksSvc *tasks.Service,
 	workerAdmin *workersadmin.Service,
 	brainEditor *brain.Editor,
+	codeIndex *index.Service,
 	adminGate *gateway.AdminCWDGate,
 	secretTransferKey *age.X25519Identity,
 	repoBrainDiscovery func(ctx context.Context, clientRoot, workspaceID string),
@@ -80,7 +82,7 @@ func serveSocket(
 			}
 			return fmt.Errorf("accept: %w", err)
 		}
-		go handleSocketConn(ctx, conn, s, engine, lister, auditor, manager, approvalMgr, meshMgr, telegramMgr, settingsSvc, addonReg, addonExec, addonCreator, sessionBus, secretMgr, secretsMgr, skillShare, registryShare, skillRegistry, memorySvc, memoryShare, tasksSvc, workerAdmin, brainEditor, adminGate, secretTransferKey, repoBrainDiscovery, rdy)
+		go handleSocketConn(ctx, conn, s, engine, lister, auditor, manager, approvalMgr, meshMgr, telegramMgr, settingsSvc, addonReg, addonExec, addonCreator, sessionBus, secretMgr, secretsMgr, skillShare, registryShare, skillRegistry, memorySvc, memoryShare, tasksSvc, workerAdmin, brainEditor, codeIndex, adminGate, secretTransferKey, repoBrainDiscovery, rdy)
 	}
 }
 
@@ -110,6 +112,7 @@ func handleSocketConn(
 	tasksSvc *tasks.Service,
 	workerAdmin *workersadmin.Service,
 	brainEditor *brain.Editor,
+	codeIndex *index.Service,
 	adminGate *gateway.AdminCWDGate,
 	secretTransferKey *age.X25519Identity,
 	repoBrainDiscovery func(ctx context.Context, clientRoot, workspaceID string),
@@ -166,6 +169,9 @@ func handleSocketConn(
 	}
 	if brainEditor != nil {
 		gwOpts = append(gwOpts, gateway.WithBrainEditor(brainEditor))
+	}
+	if codeIndex != nil {
+		gwOpts = append(gwOpts, gateway.WithCodeIndex(codeIndex))
 	}
 	if secretTransferKey != nil {
 		gwOpts = append(gwOpts, gateway.WithSecretTransferKey(secretTransferKey))

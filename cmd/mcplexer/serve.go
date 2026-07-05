@@ -32,6 +32,7 @@ import (
 	"github.com/don-works/mcplexer/internal/gateway"
 	"github.com/don-works/mcplexer/internal/googlechat"
 	"github.com/don-works/mcplexer/internal/hammerspoon"
+	"github.com/don-works/mcplexer/internal/index"
 	"github.com/don-works/mcplexer/internal/install"
 	"github.com/don-works/mcplexer/internal/lmstudio"
 	"github.com/don-works/mcplexer/internal/memory"
@@ -375,6 +376,7 @@ type serverDeps struct {
 	brainCfg        brain.Config
 	brainGit        *brain.Git
 	brainAutoCommit *brain.AutoCommitter
+	codeIndex       *index.Service
 	// brainRepoDiscovery is the per-repo .mcplexer/ discovery callback (M6 —
 	// federation). Nil when the brain is off. Threaded into every gateway
 	// session so a session bound to a repo with a .mcplexer/ folder registers
@@ -1128,6 +1130,11 @@ func buildServerDeps(ctx context.Context, cfg *Config, db *sqlite.DB, settingsSv
 	d.tasksSvc.SetPeerScopeLookup(db)
 	bridgeHumanTaskNotifications(ctx, d.tasksSvc.Bus(), d.notifyBus)
 
+	// Code index (migration 127) — local codebase indexer backing the
+	// index__* tools. Always wired; construction just wraps the store, and
+	// leaving it nil would advertise the tools but reply "unavailable".
+	d.codeIndex = index.NewService(db, nil)
+
 	// Concierge — chat turn signal classifier + log (epic
 	// 01KSGKFZMVFZRWVDSZMK8W9JN1). Always wired alongside the tasks
 	// service; the store has no fail-mode and the surface is read-only
@@ -1475,6 +1482,9 @@ func buildServerDeps(ctx context.Context, cfg *Config, db *sqlite.DB, settingsSv
 		if d.brainEditor != nil {
 			workerGWOpts = append(workerGWOpts, gateway.WithBrainEditor(d.brainEditor))
 		}
+		if d.codeIndex != nil {
+			workerGWOpts = append(workerGWOpts, gateway.WithCodeIndex(d.codeIndex))
+		}
 		d.workerGateway = gateway.NewServer(db, d.engine, d.manager, d.auditor, gateway.TransportInternal, workerGWOpts...)
 		if d.addonCreator != nil {
 			d.workerGateway.SetAddonCreator(d.addonCreator)
@@ -1636,7 +1646,7 @@ func runServer(ctx context.Context, cfg *Config, db *sqlite.DB, cfgSvc *config.S
 			return serveSocket(ctx, ln, cfg.SocketPath, db, d.engine, d.cachingLister, d.auditor,
 				d.manager, d.approvalMgr, d.meshMgr, d.telegramMgr, settingsSvc,
 				d.addonReg, d.addonExec, d.addonCreator, d.sessionBus,
-				d.secretPromptMgr, d.secretsMgr, d.skillShare, d.registryShare, d.skillRegistry, d.memorySvc, d.memoryShare, d.tasksSvc, d.workerAdmin, d.brainEditor, adminGate,
+				d.secretPromptMgr, d.secretsMgr, d.skillShare, d.registryShare, d.skillRegistry, d.memorySvc, d.memoryShare, d.tasksSvc, d.workerAdmin, d.brainEditor, d.codeIndex, adminGate,
 				d.secretTransferKey, d.brainRepoDiscovery, rdy)
 		})
 	}
@@ -1783,6 +1793,7 @@ func runStdio(ctx context.Context, cfg *Config, db *sqlite.DB, settingsSvc *conf
 	if meshMgr != nil {
 		stdioTasksSvc.SetEmitter(tasks.NewEmitter(meshMgr))
 	}
+	stdioCodeIndex := index.NewService(db, nil)
 
 	gwOpts := []gateway.ServerOption{
 		gateway.WithApprovals(approvalMgr),
@@ -1790,6 +1801,7 @@ func runStdio(ctx context.Context, cfg *Config, db *sqlite.DB, settingsSvc *conf
 		gateway.WithAdminGate(gateway.NewAdminCWDGate(filepath.Dir(cfg.DBDSN))),
 		gateway.WithTasks(stdioTasksSvc),
 		gateway.WithWorkerAdmin(stdioWorkerAdmin),
+		gateway.WithCodeIndex(stdioCodeIndex),
 	}
 	if meshMgr != nil {
 		gwOpts = append(gwOpts, gateway.WithMesh(meshMgr))
