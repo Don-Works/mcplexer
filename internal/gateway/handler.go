@@ -19,6 +19,7 @@ import (
 	"github.com/don-works/mcplexer/internal/compression"
 	"github.com/don-works/mcplexer/internal/concierge"
 	"github.com/don-works/mcplexer/internal/config"
+	"github.com/don-works/mcplexer/internal/index"
 	"github.com/don-works/mcplexer/internal/memory"
 	"github.com/don-works/mcplexer/internal/mesh"
 	"github.com/don-works/mcplexer/internal/p2p"
@@ -99,6 +100,7 @@ type handler struct {
 	workerAdmin    *workersadmin.Service     // nil = worker delegation disabled
 	conciergeSvc   *concierge.Service        // nil = concierge surface disabled
 	brainEditor    *brain.Editor             // nil = brain subsystem disabled
+	codeIndex      *index.Service            // nil = code index subsystem disabled
 	adminGate      *AdminCWDGate             // CWD-based gate for admin tools; nil = open
 	scopeRegistry  *ScopeRegistry
 	errTracker     errorTracker
@@ -202,6 +204,13 @@ func (h *handler) setConciergeSvc(svc *concierge.Service) {
 // brain__* tool surface.
 func (h *handler) setBrainEditor(e *brain.Editor) {
 	h.brainEditor = e
+}
+
+// setCodeIndex wires the local codebase indexer post-construction. Same
+// rationale as setBrainEditor — keeps the constructor signature bounded. nil
+// disables the index__* tool surface (the tools then report "unavailable").
+func (h *handler) setCodeIndex(svc *index.Service) {
+	h.codeIndex = svc
 }
 
 // setSecretTransferKey wires the local age X25519 identity used for
