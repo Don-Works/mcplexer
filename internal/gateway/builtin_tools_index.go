@@ -1,0 +1,99 @@
+package gateway
+
+import "encoding/json"
+
+// indexToolDefinitions returns the full 9-tool `index__*` surface for the
+// local codebase indexer: build/status/symbols/deps here, plus the query
+// tools (tests_for/summary/recent_changes/map_failure/context) from
+// indexQueryToolDefinitions. Stage 1 Agent C wires this into
+// codeModeBuiltinTools + buildAllBuiltinTools; until then it is intentionally
+// unreferenced (see the sink at the bottom of this file).
+func indexToolDefinitions() []Tool {
+	core := []Tool{
+		{
+			Name:        "index__build",
+			Description: "Build or incrementally refresh the code index for this workspace's repo. Enumerates files via git (honoring .gitignore), extracts symbols/imports for Go and TS/JS, and stores a searchable map. Incremental: unchanged files (size+mtime+hash) are skipped, so rebuilds are cheap — run it after big edits or branch switches. `force:true` drops and rebuilds from scratch. Freshness is reported by index__status.",
+			InputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"paths": {"type": "array", "items": {"type": "string"}, "description": "Restrict the build to these root-relative path prefixes (e.g. [\"internal/gateway\"]). Omit to index the whole repo."},
+					"force": {"type": "boolean", "description": "Drop the existing index for this workspace and rebuild from scratch. Default false (incremental)."},
+					"workspace_id": {"type": "string", "description": "Override current workspace."}
+				}
+			}`),
+			Extras: withAnnotations(ToolAnnotations{
+				Title:           "Build Code Index",
+				ReadOnlyHint:    boolPtr(false),
+				DestructiveHint: boolPtr(false),
+				IdempotentHint:  boolPtr(true),
+				OpenWorldHint:   boolPtr(false),
+			}),
+		},
+		{
+			Name:        "index__status",
+			Description: "Freshness check for the code index: last build time, indexed git HEAD vs current HEAD, dirty-file count, file/symbol totals, and a staleness verdict. Call this when unsure whether index__symbols / index__deps / index__context results are trustworthy; run index__build to refresh.",
+			InputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"workspace_id": {"type": "string", "description": "Override current workspace."}
+				}
+			}`),
+			Extras: withAnnotations(ToolAnnotations{
+				Title:           "Code Index Status",
+				ReadOnlyHint:    boolPtr(true),
+				DestructiveHint: boolPtr(false),
+				IdempotentHint:  boolPtr(true),
+				OpenWorldHint:   boolPtr(false),
+			}),
+		},
+		{
+			Name:        "index__symbols",
+			Description: "Search the symbol map (functions, methods, types, consts, classes, components) by name or words — camelCase is word-split, so 'kv set' finds HandleKVSet. Returns file:line hits with signatures. Results reflect the last index__build (check index__status if unsure). For a whole-task, multi-file context pack use index__context instead.",
+			InputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"query": {"type": "string", "description": "Name or space-separated words to match. Required."},
+					"kind": {"type": "string", "enum": ["func", "method", "type", "const", "var", "class", "interface", "enum", "component"], "description": "Restrict to one symbol kind."},
+					"exported_only": {"type": "boolean", "description": "Only exported/public symbols."},
+					"limit": {"type": "integer", "description": "Default 20, max 100."},
+					"workspace_id": {"type": "string", "description": "Override current workspace."}
+				},
+				"required": ["query"]
+			}`),
+			Extras: withAnnotations(ToolAnnotations{
+				Title:           "Search Code Symbols",
+				ReadOnlyHint:    boolPtr(true),
+				DestructiveHint: boolPtr(false),
+				IdempotentHint:  boolPtr(true),
+				OpenWorldHint:   boolPtr(false),
+			}),
+		},
+		{
+			Name:        "index__deps",
+			Description: "File-level import graph. direction=imports: what this file imports (Go: package dirs; TS: resolved files; externals flagged). direction=importers: which files import this one — the blast-radius question before a change. Not a call graph. To find owning tests use index__tests_for.",
+			InputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"file": {"type": "string", "description": "Root-relative file path. Required."},
+					"direction": {"type": "string", "enum": ["imports", "importers", "both"], "description": "Default imports."},
+					"limit": {"type": "integer", "description": "Default 50."},
+					"workspace_id": {"type": "string", "description": "Override current workspace."}
+				},
+				"required": ["file"]
+			}`),
+			Extras: withAnnotations(ToolAnnotations{
+				Title:           "Code Import Graph",
+				ReadOnlyHint:    boolPtr(true),
+				DestructiveHint: boolPtr(false),
+				IdempotentHint:  boolPtr(true),
+				OpenWorldHint:   boolPtr(false),
+			}),
+		},
+	}
+	return append(core, indexQueryToolDefinitions()...)
+}
+
+// var _ is a stage-0 sink so the `unused` linter does not flag
+// indexToolDefinitions before Stage 1 Agent C wires it into the registration
+// lists. Remove this line when wiring the tool surface.
+var _ = indexToolDefinitions
