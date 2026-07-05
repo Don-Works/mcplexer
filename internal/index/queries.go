@@ -2,6 +2,7 @@ package index
 
 import (
 	"context"
+	"fmt"
 	"path"
 	"strings"
 
@@ -38,6 +39,9 @@ func (s *Service) Deps(ctx context.Context, req DepsRequest) (*DepsResult, error
 	dir := req.Direction
 	if dir == "" {
 		dir = "imports"
+	}
+	if dir != "imports" && dir != "importers" && dir != "both" {
+		return nil, fmt.Errorf("index: unknown direction %q (want imports, importers, or both)", req.Direction)
 	}
 	limit := clampLimit(req.Limit, 50, 500)
 	// Both lists stay non-nil so single-direction responses marshal the unused

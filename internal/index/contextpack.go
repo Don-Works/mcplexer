@@ -39,12 +39,12 @@ func (s *Service) contextPack(ctx context.Context, req ContextRequest, git *gitR
 	s.rankBySymbols(ctx, req, cands)
 	s.rankByFiles(ctx, req, cands)
 	applyChurn(ctx, git, cands)
-	s.applyGraphProximity(ctx, req.WorkspaceID, cands)
+	filePaths, _ := s.filePathSet(ctx, req.WorkspaceID)
+	s.applyGraphProximity(ctx, req.WorkspaceID, cands, filePaths)
 	ordered := orderCandidates(cands)
 	if len(ordered) > ctxAssembleCap {
 		ordered = ordered[:ctxAssembleCap]
 	}
-	filePaths, _ := s.filePathSet(ctx, req.WorkspaceID)
 	pack := &ContextPack{Query: req.Query, BudgetTokens: req.BudgetTokens, BuiltAt: builtAt}
 	s.fillBudget(ctx, req, git, ordered, filePaths, pack)
 	return pack, nil
@@ -115,14 +115,19 @@ func applyChurn(ctx context.Context, git *gitRunner, cands map[string]*ctxCand) 
 }
 
 // applyGraphProximity pulls in 1-hop import neighbors of the top-3 files at
-// 0.3·parent_score, so directly-related files ride along.
-func (s *Service) applyGraphProximity(ctx context.Context, ws string, cands map[string]*ctxCand) {
+// 0.3·parent_score, so directly-related files ride along. Neighbors are
+// filtered to indexed files — Go import edges target package DIRECTORIES,
+// which must never become pack entries.
+func (s *Service) applyGraphProximity(ctx context.Context, ws string, cands map[string]*ctxCand, filePaths map[string]bool) {
 	top := orderCandidates(cands)
 	if len(top) > 3 {
 		top = top[:3]
 	}
 	for _, parent := range top {
 		for _, nb := range s.neighbors(ctx, ws, parent.path) {
+			if !filePaths[nb] {
+				continue
+			}
 			if _, exists := cands[nb]; exists {
 				continue
 			}

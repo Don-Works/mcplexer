@@ -34,8 +34,15 @@ func isExcludedGoTestBase(base string) bool {
 	return false
 }
 
+// maxMediumOwners caps the same-package/medium blast radius: a big Go package
+// has dozens of _test.go siblings and listing them all buries the direct
+// matches (and bloats context packs).
+const maxMediumOwners = 10
+
 // ownerTests returns the tests that own a source file, deduped and preferring
 // higher confidence. filePaths is the set of indexed root-relative paths.
+// Medium-confidence owners are ranked by name affinity to the source file and
+// capped at maxMediumOwners.
 func ownerTests(ctx context.Context, st store.CodeIndexStore, ws, file string, filePaths map[string]bool) []TestOwner {
 	owners := map[string]TestOwner{}
 	switch languageForPath(file) {
@@ -45,7 +52,43 @@ func ownerTests(ctx context.Context, st store.CodeIndexStore, ws, file string, f
 		tsOwners(file, filePaths, owners)
 		importEdgeOwners(ctx, st, ws, file, owners)
 	}
-	return sortedOwners(owners)
+	return capMediums(file, sortedOwners(owners))
+}
+
+// capMediums keeps every high-confidence owner and the maxMediumOwners medium
+// owners whose basenames share the most tokens with the source file.
+func capMediums(file string, owners []TestOwner) []TestOwner {
+	var high, medium []TestOwner
+	for _, o := range owners {
+		if o.Confidence == "high" {
+			high = append(high, o)
+		} else {
+			medium = append(medium, o)
+		}
+	}
+	if len(medium) <= maxMediumOwners {
+		return owners
+	}
+	want := map[string]bool{}
+	for _, tok := range splitIdent(path.Base(file)) {
+		want[tok] = true
+	}
+	affinity := func(o TestOwner) int {
+		n := 0
+		for _, tok := range splitIdent(path.Base(o.Path)) {
+			if want[tok] {
+				n++
+			}
+		}
+		return n
+	}
+	sortStable(medium, func(a, b TestOwner) bool {
+		if av, bv := affinity(a), affinity(b); av != bv {
+			return av > bv
+		}
+		return a.Path < b.Path
+	})
+	return append(high, medium[:maxMediumOwners]...)
 }
 
 // goOwners applies the Go naming heuristic: base_test.go is a high-confidence

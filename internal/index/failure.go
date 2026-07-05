@@ -32,12 +32,17 @@ var failureStopwords = map[string]bool{
 
 // failureScorer accumulates per-file evidence scores from a pasted failure.
 type failureScorer struct {
-	st        store.CodeIndexStore
-	ws, root  string
-	filePaths map[string]bool
-	scores    map[string]*FailureCandidate
-	frameHits map[string]int
+	st          store.CodeIndexStore
+	ws, root    string
+	filePaths   map[string]bool
+	scores      map[string]*FailureCandidate
+	frameHits   map[string]int
+	suffixScans int
 }
+
+// maxSuffixScans bounds the O(files) suffix-resolution fallback so hostile
+// input full of unresolvable path mentions cannot make mapping quadratic.
+const maxSuffixScans = 50
 
 // mapFailure parses failure text and returns the top-`limit` candidate files.
 func (s *Service) mapFailure(ctx context.Context, ws, root, text string, limit int) ([]FailureCandidate, error) {
@@ -59,9 +64,18 @@ func (s *Service) mapFailure(ctx context.Context, ws, root, text string, limit i
 
 // add applies a score delta + reason to a file, but only when the (normalized)
 // path is actually in the index — candidates must be real files to open.
+// Mentions that miss exactly are suffix-resolved: tools report paths relative
+// to their own working dir (vitest emits src/… from inside web/), so a unique
+// indexed path ending in the mention still counts.
 func (fs *failureScorer) add(p string, delta float64, reason string) {
 	p = normalizeRel(p, fs.root)
-	if p == "" || !fs.filePaths[p] {
+	if p == "" {
+		return
+	}
+	if !fs.filePaths[p] {
+		p = fs.resolveSuffix(p)
+	}
+	if p == "" {
 		return
 	}
 	c := fs.scores[p]
@@ -73,6 +87,25 @@ func (fs *failureScorer) add(p string, delta float64, reason string) {
 	if !containsStr(c.Reasons, reason) {
 		c.Reasons = append(c.Reasons, reason)
 	}
+}
+
+// resolveSuffix maps a mention to the unique indexed path that ends with it
+// ("" when zero or several match, or the scan budget is spent).
+func (fs *failureScorer) resolveSuffix(p string) string {
+	if fs.suffixScans >= maxSuffixScans || strings.Contains(p, "..") {
+		return ""
+	}
+	fs.suffixScans++
+	match := ""
+	for indexed := range fs.filePaths {
+		if strings.HasSuffix(indexed, "/"+p) {
+			if match != "" {
+				return "" // ambiguous
+			}
+			match = indexed
+		}
+	}
+	return match
 }
 
 // pathMentions scores explicit `file.go:line` mentions (+3.0, once per file).
@@ -103,10 +136,23 @@ func (fs *failureScorer) stackFrames(text string) {
 }
 
 // goTestFailures maps `--- FAIL: TestX` lines to the test's file (+2.0) and the
-// source files that test owns (+1.5).
+// source files that test owns (+1.5). Names are deduped and capped so pasted
+// output with thousands of FAIL lines costs at most 20 store lookups.
 func (fs *failureScorer) goTestFailures(ctx context.Context, text string) {
+	seen := map[string]bool{}
+	var names []string
 	for _, m := range reGoTestFail.FindAllStringSubmatch(text, -1) {
 		name := strings.SplitN(m[1], "/", 2)[0]
+		if seen[name] {
+			continue
+		}
+		seen[name] = true
+		names = append(names, name)
+		if len(names) >= 20 {
+			break
+		}
+	}
+	for _, name := range names {
 		hits, err := fs.st.SearchCodeIndexSymbols(ctx, store.CodeIndexSymbolQuery{
 			WorkspaceID: fs.ws, Query: tokenString(name), Limit: 5,
 		})
