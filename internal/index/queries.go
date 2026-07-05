@@ -2,6 +2,7 @@ package index
 
 import (
 	"context"
+	"path"
 	"strings"
 
 	"github.com/don-works/mcplexer/internal/store"
@@ -50,15 +51,36 @@ func (s *Service) Deps(ctx context.Context, req DepsRequest) (*DepsResult, error
 		res.Imports = importEntries(edges)
 	}
 	if dir == "importers" || dir == "both" {
-		edges, err := s.store.ListCodeIndexEdges(ctx, store.CodeIndexEdgeFilter{
-			WorkspaceID: req.WorkspaceID, ToPath: req.File, Limit: limit,
-		})
+		edges, err := s.importerEdges(ctx, req.WorkspaceID, req.File, limit)
 		if err != nil {
 			return nil, err
 		}
 		res.Importers = importerEntries(edges)
 	}
 	return res, nil
+}
+
+// importerEdges finds edges targeting the file directly (TS resolves imports
+// to files) and, for Go, edges targeting the file's package directory —
+// Go import edges point at package dirs, never individual files.
+func (s *Service) importerEdges(ctx context.Context, workspaceID, file string, limit int) ([]store.CodeIndexEdgeHit, error) {
+	edges, err := s.store.ListCodeIndexEdges(ctx, store.CodeIndexEdgeFilter{
+		WorkspaceID: workspaceID, ToPath: file, Limit: limit,
+	})
+	if err != nil {
+		return nil, err
+	}
+	pkgDir := path.Dir(file)
+	if !strings.HasSuffix(file, ".go") || pkgDir == "." || len(edges) >= limit {
+		return edges, nil
+	}
+	dirEdges, err := s.store.ListCodeIndexEdges(ctx, store.CodeIndexEdgeFilter{
+		WorkspaceID: workspaceID, ToPath: pkgDir, Limit: limit - len(edges),
+	})
+	if err != nil {
+		return nil, err
+	}
+	return append(edges, dirEdges...), nil
 }
 
 // importEntries projects imports-of edges: the endpoint is the imported file

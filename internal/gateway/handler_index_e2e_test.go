@@ -14,11 +14,8 @@ import (
 )
 
 // TestIndexE2ESmoke indexes this repository through the real dispatch path and
-// asserts the headline queries answer correctly. It is skipped until the core
-// index pipeline (Agent A) lands to replace the stage-0 stub Service; the body
-// is the acceptance contract those bodies must satisfy.
+// asserts the headline queries answer correctly.
 func TestIndexE2ESmoke(t *testing.T) {
-	t.Skip("integration: enable after core lands")
 	if testing.Short() {
 		t.Skip("skipping index e2e in short mode")
 	}
@@ -33,8 +30,9 @@ func TestIndexE2ESmoke(t *testing.T) {
 	h.sessions.wsChain = []routing.WorkspaceAncestor{{ID: "ws-repo", RootPath: root}}
 	h.codeIndex = index.NewService(db, nil)
 
-	// Build just the gateway package to keep the smoke test fast.
-	if buildOut := indexOK(t, h, "index__build", `{"paths":["internal/gateway"]}`); !strings.Contains(buildOut, "files_indexed") {
+	// Scope the build to two packages to keep the smoke test fast while still
+	// having cross-package import edges (cmd/mcplexer imports internal/gateway).
+	if buildOut := indexOK(t, h, "index__build", `{"paths":["internal/gateway","cmd/mcplexer"]}`); !strings.Contains(buildOut, "files_indexed") {
 		t.Fatalf("build result missing counters: %s", buildOut)
 	}
 
@@ -43,9 +41,10 @@ func TestIndexE2ESmoke(t *testing.T) {
 		t.Fatalf("symbols did not find dispatchKVTool: %s", symOut)
 	}
 
-	// Importers of handler_kv.go must be non-empty (dispatch + tests reference it).
-	if depOut := indexOK(t, h, "index__deps", `{"file":"internal/gateway/handler_kv.go","direction":"importers"}`); !strings.Contains(depOut, "importers") {
-		t.Fatalf("deps importers missing: %s", depOut)
+	// Importers of a gateway file resolve via its package dir: cmd/mcplexer
+	// files import internal/gateway, so the list must name them.
+	if depOut := indexOK(t, h, "index__deps", `{"file":"internal/gateway/handler_kv.go","direction":"importers"}`); !strings.Contains(depOut, "cmd/mcplexer") {
+		t.Fatalf("deps importers missing cmd/mcplexer edge: %s", depOut)
 	}
 
 	// The context pack must respect its token budget.

@@ -94,8 +94,8 @@ type DepEntry struct {
 // DepsResult holds the imports-of and/or importers-of a file.
 type DepsResult struct {
 	File      string     `json:"file"`
-	Imports   []DepEntry `json:"imports,omitempty"`
-	Importers []DepEntry `json:"importers,omitempty"`
+	Imports   []DepEntry `json:"imports"`
+	Importers []DepEntry `json:"importers"`
 }
 
 // TestOwner is one test file that owns a source file, with a confidence band.

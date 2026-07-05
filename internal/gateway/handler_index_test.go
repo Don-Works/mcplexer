@@ -12,9 +12,8 @@ import (
 )
 
 // newHandlerWithIndex builds a test handler whose workspace root is an existing
-// temp directory (so the D8 root-safety gate passes) and whose codeIndex is
-// wired to the stage-0 stub Service — every query reports ErrNotBuilt, which is
-// exactly what these dispatch tests assert the handler surfaces cleanly.
+// (empty) temp directory, so the D8 root-safety gate passes and auto-builds
+// produce an empty-but-valid index.
 func newHandlerWithIndex(t *testing.T) *handler {
 	t.Helper()
 	db, err := sqlite.New(context.Background(), ":memory:")
@@ -56,16 +55,22 @@ func indexErrText(t *testing.T, h *handler, name, args string) string {
 	return env.Content[0].Text
 }
 
-// TestIndexDispatchSurfacesNotBuilt proves dispatch reaches the stub service and
-// maps its ErrNotBuilt sentinel to an agent-readable message for both a status
-// and a symbols call.
-func TestIndexDispatchSurfacesNotBuilt(t *testing.T) {
+// TestIndexStatusSurfacesNotBuilt proves index__status does NOT auto-build: on
+// a never-built workspace it maps ErrNotBuilt to an agent-readable message.
+func TestIndexStatusSurfacesNotBuilt(t *testing.T) {
 	h := newHandlerWithIndex(t)
 	if msg := indexErrText(t, h, "index__status", `{}`); !strings.Contains(msg, "not built") {
 		t.Fatalf("status: expected not-built message, got %q", msg)
 	}
-	if msg := indexErrText(t, h, "index__symbols", `{"query":"dispatch"}`); !strings.Contains(msg, "not built") {
-		t.Fatalf("symbols: expected not-built message, got %q", msg)
+}
+
+// TestIndexSymbolsAutoBuilds proves the D3 contract: a query on a never-built
+// workspace triggers a build instead of erroring, then answers (here: empty).
+func TestIndexSymbolsAutoBuilds(t *testing.T) {
+	h := newHandlerWithIndex(t)
+	out := indexOK(t, h, "index__symbols", `{"query":"dispatch"}`)
+	if !strings.Contains(out, `"count": 0`) {
+		t.Fatalf("expected empty auto-built symbol result, got %q", out)
 	}
 }
 

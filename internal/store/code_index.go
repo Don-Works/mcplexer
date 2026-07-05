@@ -42,7 +42,7 @@ type CodeIndexStore interface {
 	SearchCodeIndexSymbols(ctx context.Context, q CodeIndexSymbolQuery) ([]CodeIndexSymbolHit, error)
 
 	// SearchCodeIndexFiles runs an FTS5 BM25 query over the file mirror
-	// (path/package/doc_summary). Lower BM25 = better; returned as Score.
+	// (path/package/doc_summary). Score is negated BM25: higher = better.
 	SearchCodeIndexFiles(ctx context.Context, workspaceID, query string, limit int) ([]CodeIndexFileHit, error)
 
 	// ListCodeIndexEdges returns import edges. A FromPath filter yields the

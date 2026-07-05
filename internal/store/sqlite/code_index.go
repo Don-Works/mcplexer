@@ -14,9 +14,6 @@ const codeIndexFileCols = `id, workspace_id, path, path_tokens, language, packag
 	size_bytes, line_count, mtime_unix, content_hash, doc_summary,
 	is_test, skipped_reason, indexed_at`
 
-const codeIndexSymbolCols = `id, file_id, workspace_id, name, name_tokens, kind,
-	receiver, signature, doc, start_line, end_line, exported`
-
 func codeIndexSymbolColsPrefixed(alias string) string {
 	return alias + `.id, ` + alias + `.file_id, ` + alias + `.workspace_id, ` +
 		alias + `.name, ` + alias + `.name_tokens, ` + alias + `.kind, ` +
