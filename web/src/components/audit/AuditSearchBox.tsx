@@ -83,7 +83,7 @@ export function AuditSearchBox({
         placeholder={resolvedPlaceholder}
         aria-label="Search audit log"
         data-testid="audit-search-input"
-        className="h-9 min-w-0 flex-1 border-0 bg-transparent px-0 font-mono text-sm shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 [&::-webkit-search-cancel-button]:appearance-none"
+        className="h-9 min-w-0 flex-1 border-0 bg-transparent pl-1 pr-0 font-mono text-sm shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 [&::-webkit-search-cancel-button]:appearance-none"
       />
       {value && (
         <button

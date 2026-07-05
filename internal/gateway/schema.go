@@ -52,9 +52,11 @@ func isSlimSurfaceKeeper(name string) bool {
 	return ok
 }
 
-// minifyToolSchemas strips non-essential metadata from each tool's InputSchema
-// to reduce context window consumption. Preserves type structure and constraints
-// but removes property descriptions, defaults, examples, and other noise.
+// minifyToolSchemas strips true-noise metadata from each tool's InputSchema.
+// Quality-first (2026-07): the old allowlist also dropped property
+// descriptions, defaults, examples, and additionalProperties — all of which
+// materially help a model call the tool correctly. Now only genuinely inert
+// keys are removed; semantic content always survives.
 func minifyToolSchemas(tools []Tool) []Tool {
 	out := make([]Tool, len(tools))
 	for i, t := range tools {
@@ -66,19 +68,22 @@ func minifyToolSchemas(tools []Tool) []Tool {
 	return out
 }
 
-// minifySchema strips non-essential fields from a JSON schema.
+// schemaNoiseKeys are the only keys minification removes: they carry no
+// information a model uses to construct a call. "title" almost always
+// restates the property name; "$schema"/"$id"/"$comment" are validator
+// plumbing. Everything else — description, default, examples, enum, format,
+// additionalProperties, numeric bounds — is load-bearing and preserved.
+var schemaNoiseKeys = []string{"$schema", "$id", "$comment", "title"}
+
+// minifySchema removes noise keys from a JSON schema, recursing into
+// properties, items, and combinators. Structure and semantics are preserved
+// exactly; on any parse surprise the input is returned untouched.
 func minifySchema(raw json.RawMessage) json.RawMessage {
 	var obj map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &obj); err != nil {
 		return raw
 	}
-
-	stripTopLevel(obj)
-
-	if props, ok := obj["properties"]; ok {
-		obj["properties"] = minifyProperties(props)
-	}
-
+	minifySchemaObj(obj)
 	out, err := json.Marshal(obj)
 	if err != nil {
 		return raw
@@ -86,65 +91,51 @@ func minifySchema(raw json.RawMessage) json.RawMessage {
 	return out
 }
 
-// stripTopLevel removes non-essential top-level schema fields.
-func stripTopLevel(obj map[string]json.RawMessage) {
-	delete(obj, "description")
-	delete(obj, "additionalProperties")
-	delete(obj, "examples")
-	delete(obj, "default")
-	delete(obj, "title")
-	delete(obj, "$schema")
+func minifySchemaObj(obj map[string]json.RawMessage) {
+	for _, k := range schemaNoiseKeys {
+		delete(obj, k)
+	}
+	if props, ok := obj["properties"]; ok {
+		obj["properties"] = minifyProperties(props)
+	}
+	for _, k := range []string{"items", "additionalProperties", "not"} {
+		if sub, ok := obj[k]; ok {
+			obj[k] = minifySchema(sub)
+		}
+	}
+	for _, k := range []string{"oneOf", "anyOf", "allOf"} {
+		if list, ok := obj[k]; ok {
+			obj[k] = minifySchemaList(list)
+		}
+	}
 }
 
-// keysToKeep is the set of property-level keys to preserve in minification.
-var keysToKeep = map[string]bool{
-	"type": true, "properties": true, "required": true,
-	"enum": true, "items": true, "const": true,
-	"oneOf": true, "anyOf": true, "allOf": true,
-	"minimum": true, "maximum": true,
-	"minLength": true, "maxLength": true, "pattern": true,
-}
-
-// minifyProperties strips descriptions and other noise from each property.
 func minifyProperties(raw json.RawMessage) json.RawMessage {
 	var props map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &props); err != nil {
 		return raw
 	}
-
 	for name, propRaw := range props {
-		var prop map[string]json.RawMessage
-		if err := json.Unmarshal(propRaw, &prop); err != nil {
-			continue
-		}
-
-		cleaned := make(map[string]json.RawMessage, len(prop))
-		for k, v := range prop {
-			if keysToKeep[k] {
-				cleaned[k] = v
-			}
-		}
-
-		// Recurse into nested object properties.
-		if nested, ok := cleaned["properties"]; ok {
-			cleaned["properties"] = minifyProperties(nested)
-		}
-
-		// Recurse into items for arrays.
-		if items, ok := cleaned["items"]; ok {
-			cleaned["items"] = minifySchema(items)
-		}
-
-		out, err := json.Marshal(cleaned)
-		if err != nil {
-			continue
-		}
-		props[name] = out
+		props[name] = minifySchema(propRaw)
 	}
-
 	result, err := json.Marshal(props)
 	if err != nil {
 		return raw
 	}
 	return result
+}
+
+func minifySchemaList(raw json.RawMessage) json.RawMessage {
+	var list []json.RawMessage
+	if err := json.Unmarshal(raw, &list); err != nil {
+		return raw
+	}
+	for i, sub := range list {
+		list[i] = minifySchema(sub)
+	}
+	out, err := json.Marshal(list)
+	if err != nil {
+		return raw
+	}
+	return out
 }

@@ -858,31 +858,6 @@ func metaInSQL(key string, opts []string, alias string) (string, []any) {
 	return "(" + strings.Join(clauses, " OR ") + ")", args
 }
 
-func filterTasksByTags(in []store.Task, want []string) []store.Task {
-	if len(want) == 0 {
-		return in
-	}
-	out := in[:0]
-outer:
-	for _, t := range in {
-		var have []string
-		if err := json.Unmarshal(t.TagsJSON, &have); err != nil {
-			continue
-		}
-		set := map[string]struct{}{}
-		for _, h := range have {
-			set[h] = struct{}{}
-		}
-		for _, w := range want {
-			if _, ok := set[w]; !ok {
-				continue outer
-			}
-		}
-		out = append(out, t)
-	}
-	return out
-}
-
 func scanTasks(rows *sql.Rows) ([]store.Task, error) {
 	var out []store.Task
 	for rows.Next() {

@@ -46,8 +46,19 @@ func (h *compressionHandler) stats(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"mode":       mode,
-		"transforms": compression.DefaultTransformInfo(),
+		"transforms": transformInfoWithGatewaySteps(),
 		"disabled":   disabled,
 		"aggregate":  agg,
+	})
+}
+
+// transformInfoWithGatewaySteps appends gateway-level compression steps that
+// live outside the pure-transform pipeline (and therefore outside the gimmick
+// gate) so the dashboard renders their toggle + savings too. session_dedup is
+// safe-by-construction: it only ever replaces a payload it has stashed in CCR
+// (same recoverability contract the gate enforces on stashing transforms).
+func transformInfoWithGatewaySteps() []compression.TransformInfo {
+	return append(compression.DefaultTransformInfo(), compression.TransformInfo{
+		Name: "session_dedup", Lossless: false, Verified: true,
 	})
 }

@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"log/slog"
 	"path"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/don-works/mcplexer/internal/codemode"
+	"github.com/don-works/mcplexer/internal/compression"
 	"github.com/don-works/mcplexer/internal/store"
 	"github.com/don-works/mcplexer/internal/toolgate"
 	"github.com/don-works/mcplexer/internal/workers/writeclass"
@@ -316,13 +318,43 @@ func (h *handler) handleCodeExecute(
 		}
 	}
 
+	// Make the print-output cap recoverable: stash the full stream in CCR and
+	// point the truncation notice at it. Must run BEFORE applyCompression so
+	// the kill-switch sees a resolvable marker.
+	h.stashOverflowOutput(ctx, result)
+
 	// Format the result as MCP tool output, then compress the OUTPUT the model
 	// will read. This is the code-mode compression seam: the downstream results
 	// consumed inside the sandbox are intentionally left uncompressed (for JS
 	// iterability), but the final execute_code output is fair game and is the
 	// bulk of what a slim-surface harness ever puts into model context.
 	out := marshalCodeResult(result)
-	return h.applyCompression(ctx, out), nil
+	return h.applyCompressionForTool(ctx, "mcpx__execute_code", out), nil
+}
+
+// stashOverflowOutput converts the hard print-output cap into a recoverable
+// truncation (T-F, 2026-07 audit): the full print stream (displayed prefix +
+// retained overflow) is stashed in CCR and a marker is appended to the
+// truncation notice so the model can expand it on demand. Before this, capped
+// bytes were counted and discarded — the one hard-lossy seam left in code
+// mode. No marker is emitted unless the stash write succeeded.
+func (h *handler) stashOverflowOutput(ctx context.Context, result *codemode.ExecutionResult) {
+	if result == nil || !result.OutputTruncated || len(result.OutputOverflow) == 0 {
+		return
+	}
+	full := append([]byte(result.OutputRaw), result.OutputOverflow...)
+	pctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
+	defer cancel()
+	key, ok := h.ccrPut(pctx, full)
+	if !ok {
+		return
+	}
+	note := "\n" + compression.CCRMarker(key, len(full))
+	if !result.OutputOverflowComplete {
+		note += " (retention cap reached: the stashed copy holds the first " +
+			fmt.Sprintf("%d", len(full)) + " bytes; the rest was discarded)"
+	}
+	result.Output += note
 }
 
 // gatherCodeModeTools collects all tools available through execute_code.
@@ -844,30 +876,31 @@ func (h *handler) buildCodeExecuteTool(ctx context.Context) (Tool, bool) {
 	}, false
 }
 
-// buildNamespaceSummary produces a compact "github (12), slack (8)" summary
-// of available tool namespaces and their counts.
+// buildNamespaceSummary produces a compact, sorted "github, memory, slack"
+// summary of available tool namespaces. Deliberately NO per-namespace tool
+// counts: Anthropic-style prompt caches invalidate on ANY byte change to a
+// tool definition, so embedding live counts meant one downstream tool
+// appearing anywhere re-billed the whole cached prefix. Names change only
+// when a namespace is genuinely added or removed — a change worth paying
+// for. Exact counts remain available in-sandbox via help().
 func (h *handler) buildNamespaceSummary(ctx context.Context) string {
 	tools, err := h.gatherCodeModeTools(ctx)
 	if err != nil || len(tools) == 0 {
 		return ""
 	}
 
-	counts := make(map[string]int)
-	var order []string
+	seen := make(map[string]bool)
+	names := make([]string, 0, 32)
 	for _, t := range tools {
 		ns, _, ok := splitNamespace(t.Name)
 		if !ok {
 			ns = t.Name
 		}
-		if counts[ns] == 0 {
-			order = append(order, ns)
+		if !seen[ns] {
+			seen[ns] = true
+			names = append(names, ns)
 		}
-		counts[ns]++
 	}
-
-	parts := make([]string, 0, len(order))
-	for _, ns := range order {
-		parts = append(parts, fmt.Sprintf("%s (%d)", ns, counts[ns]))
-	}
-	return strings.Join(parts, ", ")
+	sort.Strings(names)
+	return strings.Join(names, ", ")
 }

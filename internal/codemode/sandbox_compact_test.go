@@ -3,7 +3,6 @@ package codemode
 import (
 	"context"
 	"encoding/json"
-	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -234,78 +233,33 @@ func TestExtractCacheMeta(t *testing.T) {
 	}
 }
 
-// TestCompactForSandbox asserts nulls/empties are pruned from text content
-// while isError envelopes pass through unchanged.
-func TestCompactForSandbox(t *testing.T) {
-	t.Run("prunes nulls and empties from text content", func(t *testing.T) {
-		raw := json.RawMessage(`{"content":[{"type":"text","text":"{\"keep\":\"v\",\"drop\":null,\"blank\":\"\"}"}],"isError":false}`)
-		out := compactForSandbox(raw)
-
-		var env struct {
-			Content []map[string]any `json:"content"`
-		}
-		if err := json.Unmarshal(out, &env); err != nil {
-			t.Fatal(err)
-		}
-		text, _ := env.Content[0]["text"].(string)
-		var parsed map[string]any
-		if err := json.Unmarshal([]byte(text), &parsed); err != nil {
-			t.Fatalf("text not valid json: %q", text)
-		}
-		if _, present := parsed["drop"]; present {
-			t.Errorf("null should be pruned: %#v", parsed)
-		}
-		if _, present := parsed["blank"]; present {
-			t.Errorf("empty string should be pruned: %#v", parsed)
-		}
-		if parsed["keep"] != "v" {
-			t.Errorf("kept value lost: %#v", parsed)
-		}
-	})
-
-	t.Run("isError envelope passes through unchanged", func(t *testing.T) {
-		raw := json.RawMessage(`{"content":[{"type":"text","text":"{\"drop\":null}"}],"isError":true}`)
-		out := compactForSandbox(raw)
-		if !reflect.DeepEqual([]byte(out), []byte(raw)) {
-			t.Errorf("isError envelope should be untouched.\n want: %s\n got:  %s", raw, out)
-		}
-	})
-
-	t.Run("unchanged content returns input verbatim", func(t *testing.T) {
-		raw := json.RawMessage(`{"content":[{"type":"text","text":"plain"}],"isError":false}`)
-		out := compactForSandbox(raw)
-		if !reflect.DeepEqual([]byte(out), []byte(raw)) {
-			t.Errorf("nothing-to-prune should return input verbatim.\n want: %s\n got:  %s", raw, out)
-		}
-	})
-
-	t.Run("preserves structuredContent and metadata when compacting text", func(t *testing.T) {
-		raw := json.RawMessage(`{"content":[{"type":"text","text":"{\"keep\":\"fallback\",\"drop\":null}"}],"structuredContent":{"keep":"structured","drop":null},"_meta":{"cache":{"cached":true}}}`)
-		out := compactForSandbox(raw)
-
-		var env struct {
-			Content           []map[string]any `json:"content"`
-			StructuredContent map[string]any   `json:"structuredContent"`
-			Meta              map[string]any   `json:"_meta"`
-		}
-		if err := json.Unmarshal(out, &env); err != nil {
-			t.Fatal(err)
-		}
-		if env.StructuredContent["keep"] != "structured" {
-			t.Fatalf("structuredContent was not preserved: %s", out)
-		}
-		if env.Meta["cache"] == nil {
-			t.Fatalf("_meta was not preserved: %s", out)
-		}
-		text, _ := env.Content[0]["text"].(string)
-		var fallback map[string]any
-		if err := json.Unmarshal([]byte(text), &fallback); err != nil {
-			t.Fatalf("compacted fallback text is not JSON: %q", text)
-		}
-		if _, present := fallback["drop"]; present {
-			t.Fatalf("fallback text was not compacted: %s", text)
-		}
-	})
+// TestSandboxValuePathExact guards the value contract after the lossy
+// compactForSandbox pass was removed (2026-07): the JS sandbox receives the
+// EXACT downstream value — nulls, empty strings, empty arrays, and pagination
+// cursors all present — so `.map` on empty lists, `=== null` checks, and
+// cursor-following code behave truthfully.
+func TestSandboxValuePathExact(t *testing.T) {
+	raw := json.RawMessage(`{"content":[{"type":"text","text":"{\"keep\":\"v\",\"drop\":null,\"blank\":\"\",\"items\":[],\"next_cursor\":\"abc123\",\"has_more\":true}"}],"isError":false}`)
+	val, errText := parseToolResultValue(raw)
+	if errText != "" {
+		t.Fatalf("parse error: %s", errText)
+	}
+	m, ok := val.(map[string]any)
+	if !ok {
+		t.Fatalf("want map, got %T", val)
+	}
+	if v, present := m["drop"]; !present || v != nil {
+		t.Errorf("null field must survive on the value path: %#v", m)
+	}
+	if v, present := m["blank"]; !present || v != "" {
+		t.Errorf("empty string must survive on the value path: %#v", m)
+	}
+	if arr, ok := m["items"].([]any); !ok || len(arr) != 0 {
+		t.Errorf("empty array must survive as [] (JS .map depends on it): %#v", m["items"])
+	}
+	if m["next_cursor"] != "abc123" || m["has_more"] != true {
+		t.Errorf("pagination metadata must survive on the value path: %#v", m)
+	}
 }
 
 // ensure the cache-meta path exercised end-to-end via Execute keeps working.
@@ -374,14 +328,14 @@ print("isArray=" + Array.isArray(r) + " len=" + r.length + " first=" + r[0].name
 }
 
 // TestSandbox_ArrayValuePathNeverColumnar asserts the property directly at the
-// value-conversion seam: compactForSandbox + parseToolResultValue must hand
-// back a plain []any for an array-of-objects payload, never a columnar map.
-// This is the unit-level backstop for the Execute-level test above.
+// value-conversion seam: parseToolResultValue must hand back a plain []any for
+// an array-of-objects payload, never a columnar map. This is the unit-level
+// backstop for the Execute-level test above.
 func TestSandbox_ArrayValuePathNeverColumnar(t *testing.T) {
 	raw := json.RawMessage(
 		`{"content":[{"type":"text","text":"[{\"id\":1,\"name\":\"a\"},{\"id\":2,\"name\":\"b\"},{\"id\":3,\"name\":\"c\"}]"}]}`,
 	)
-	val, errText := parseToolResultValue(compactForSandbox(raw))
+	val, errText := parseToolResultValue(raw)
 	if errText != "" {
 		t.Fatalf("parse error: %s", errText)
 	}

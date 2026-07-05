@@ -33,7 +33,7 @@ func delegationToolDefinitions() []Tool {
 					"review_required": {"type":"boolean","description":"When true, the delegation remains needs_review until mcpx__review_delegation records a parent score. Default false; set true only when parent review must gate completion or feed model-ranking telemetry."},
 					"model_profile_id": {"type":"string","description":"Reusable model profile id. If set, fills provider, endpoint, secret scope, and default model when omitted."},
 					"model_provider": {"type":"string","description":"anthropic | openai | openai_compat | claude_cli | opencode_cli | grok_cli | mimo_cli | gemini_cli | codex_cli | pi_cli. For native Xiaomi MiMo via the host CLI, use mimo_cli. For the Pi coding harness (pi.dev) via the host 'pi' CLI, use pi_cli."},
-					"model_id": {"type":"string","description":"Provider-specific model id, e.g. grok-build, xiaomi/mimo-v2.5, minimax/MiniMax-M3, or zai-coding-plan/glm-5.1. For pi_cli, the model id Pi resolves from ~/.pi/agent/models.json."},
+					"model_id": {"type":"string","description":"Provider-specific model id, e.g. grok-build, xiaomi/mimo-v2.5-pro, minimax/MiniMax-M3, or zai-coding-plan/glm-5.1. For pi_cli, the model id Pi resolves from ~/.pi/agent/models.json."},
 					"model_endpoint_url": {"type":"string","description":"Optional endpoint or binary path override; required for openai_compat unless supplied by a model profile. For opencode_cli, prefer a running opencode server URL such as http://127.0.0.1:4096 so parallel workers attach through one server instead of racing the CLI database. For grok_cli, leave blank to discover 'grok' or set an absolute binary path. For mimo_cli, leave blank to discover 'mimo', set an absolute binary path, or set an HTTP(S) mimocode server URL for --attach. For pi_cli, leave blank to discover 'pi' or set an absolute binary path."},
 					"secret_scope_id": {"type":"string","description":"Auth scope for direct API providers. Optional for claude_cli/opencode_cli/grok_cli/mimo_cli/gemini_cli/codex_cli/pi_cli when any placeholder scope exists."},
 					"model_selection_mode": {"type":"string","enum":["single","ranked","random","side_by_side","capacity"],"description":"single chooses model_candidate_index, ranked chooses the best reviewed supplied candidate, random samples supplied candidates, side_by_side runs every supplied candidate, capacity expands registered model profiles and load-balances by quality/reliability/load/cost/speed."},
@@ -214,7 +214,7 @@ func delegationToolDefinitions() []Tool {
 			}, []string{
 				`{"objective":"translate this go error string to plain English: 'context deadline exceeded'", "model_provider":"opencode_cli", "model_id":"minimax/MiniMax-M3", "wait_seconds":25, "max_wall_clock_seconds":120}`,
 				`{"objective":"classify this customer message as billing|bug|feature_request|other", "model_provider":"grok_cli", "model_id":"grok-build", "wait_seconds":25}`,
-				`{"objective":"summarise this short note in one sentence", "model_provider":"mimo_cli", "model_id":"xiaomi/mimo-v2.5", "wait_seconds":25}`,
+				`{"objective":"summarise this short note in one sentence", "model_provider":"mimo_cli", "model_id":"xiaomi/mimo-v2.5-pro", "wait_seconds":25}`,
 			}),
 		},
 		{

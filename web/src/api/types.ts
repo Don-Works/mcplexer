@@ -681,6 +681,7 @@ export interface CompressionStatsResponse {
 export interface Settings {
   slim_tools: boolean
   slim_surface: boolean
+  /** DEPRECATED (2026-07): ignored by the gateway; kept for settings-file compat. */
   compact_responses: boolean
   compression_mode?: 'off' | 'shadow' | 'on'
   compression_disabled_transforms?: string[]

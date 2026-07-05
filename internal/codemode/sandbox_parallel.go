@@ -141,8 +141,9 @@ func collectParallelResults(
 			record.Error = buildToolErrorMessage(toolName, argsJSON, cr.err.Error(), nil, nil, toolNames)
 			_ = jsResults.Set(strconv.Itoa(cr.index), nil)
 		} else {
-			compacted := compactForSandbox(cr.result)
-			val, errText := parseToolResultValue(compacted)
+			// Exact value, same contract as the sequential path: JS consumers
+			// see the true downstream result, never a pruned copy.
+			val, errText := parseToolResultValue(cr.result)
 			if errText != "" {
 				record.Error = buildToolErrorMessage(toolName, argsJSON, errText, nil, nil, toolNames)
 				record.Result = cr.result

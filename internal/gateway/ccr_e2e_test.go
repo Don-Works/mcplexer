@@ -6,8 +6,11 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/don-works/mcplexer/internal/codemode"
 	"github.com/don-works/mcplexer/internal/compression"
+	"github.com/don-works/mcplexer/internal/store"
 	"github.com/don-works/mcplexer/internal/store/sqlite"
 )
 
@@ -105,6 +108,117 @@ func TestApplyCompressionMeasuresCodeModeOutput(t *testing.T) {
 	}
 	if h.ContextCostStats().Compression.Samples == 0 {
 		t.Fatal("applyCompression must record a measurement for code-mode output")
+	}
+}
+
+// TestCCRTouchOnReadExtendsTTL (F5): each ccrGet hit renews the entry's TTL,
+// so markers in long or resumed sessions keep resolving as long as they are
+// actually being used.
+func TestCCRTouchOnReadExtendsTTL(t *testing.T) {
+	ctx := context.Background()
+	db, err := sqlite.New(ctx, filepath.Join(t.TempDir(), "ttl.db"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+	h := &handler{store: db}
+
+	original := []byte("touch me")
+	key := compression.CCRKey(original)
+	// Seed with a nearly-expired TTL, as if the entry were 118 minutes old.
+	soon := time.Now().Add(2 * time.Minute)
+	if err := db.SetCodeState(ctx, &store.CodeStateEntry{
+		WorkspaceID: ccrWorkspace, Key: key,
+		ValueJSON: original, TTLExpiresAt: &soon,
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	if _, ok := h.ccrGet(ctx, key); !ok {
+		t.Fatal("expected a hit on the unexpired entry")
+	}
+	e, err := db.GetCodeState(ctx, ccrWorkspace, key)
+	if err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if e.TTLExpiresAt == nil || time.Until(*e.TTLExpiresAt) < 100*time.Minute {
+		t.Fatalf("TTL was not renewed on read: expires %v", e.TTLExpiresAt)
+	}
+}
+
+// TestStructuredDedupHarnessGate (F3): structured_dedup only runs for clients
+// known to forward structuredContent into the model context; anything
+// unrecognized keeps the text copy.
+func TestStructuredDedupHarnessGate(t *testing.T) {
+	for client, forwards := range map[string]bool{
+		"claude-code":          true,
+		"Claude Code (cli)":    true,
+		"claude-ai-web":        true,
+		"chatgpt-desktop":      true,
+		"cursor":               false,
+		"windsurf":             false,
+		"grok-cli":             false,
+		"gemini-cli":           false,
+		"pi-coding-agent":      false,
+		"":                     false,
+		"some-unknown-harness": false,
+	} {
+		if got := clientForwardsStructuredContent(client); got != forwards {
+			t.Errorf("clientForwardsStructuredContent(%q) = %v, want %v", client, got, forwards)
+		}
+	}
+}
+
+// TestStashOverflowOutputRoundTrip (T-F): a capped execute_code print stream
+// is stashed in CCR, a marker is appended to the output, and mcpx__retrieve
+// returns the full original bytes.
+func TestStashOverflowOutputRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	db, err := sqlite.New(ctx, filepath.Join(t.TempDir(), "ovf.db"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+	h := &handler{store: db}
+
+	displayed := strings.Repeat("visible ", 100)
+	overflow := strings.Repeat("hidden ", 300)
+	result := &codemode.ExecutionResult{
+		Output:                 displayed + "\n[output truncated]",
+		OutputTruncated:        true,
+		OutputRaw:              displayed,
+		OutputOverflow:         []byte(overflow),
+		OutputOverflowComplete: true,
+	}
+	h.stashOverflowOutput(ctx, result)
+
+	keys := compression.ParseCCRKeys(result.Output)
+	if len(keys) != 1 {
+		t.Fatalf("expected exactly 1 overflow marker in output, got %d:\n%s", len(keys), result.Output)
+	}
+	res, rpcErr := h.handleRetrieve(ctx, json.RawMessage(`{"key":"`+keys[0]+`"}`))
+	if rpcErr != nil {
+		t.Fatalf("retrieve error: %v", rpcErr)
+	}
+	if retrievedText(t, res) != displayed+overflow {
+		t.Fatal("retrieved bytes must reconstruct the full print stream")
+	}
+}
+
+// TestStashOverflowOutputNoMarkerWithoutStore: when the stash cannot be
+// persisted, NO marker may be emitted — a dangling marker is worse than a
+// plain truncation notice.
+func TestStashOverflowOutputNoMarkerWithoutStore(t *testing.T) {
+	h := &handler{} // nil store → ccrPut fails
+	result := &codemode.ExecutionResult{
+		Output:          "x\n[output truncated]",
+		OutputTruncated: true,
+		OutputRaw:       "x",
+		OutputOverflow:  []byte("lost"),
+	}
+	h.stashOverflowOutput(context.Background(), result)
+	if len(compression.ParseCCRKeys(result.Output)) != 0 {
+		t.Fatalf("marker emitted without a persisted stash:\n%s", result.Output)
 	}
 }
 

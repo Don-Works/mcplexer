@@ -10,7 +10,11 @@ type TokenEstimator func(nBytes int) int
 // Observation is the measured effect of one transform on one payload. In
 // shadow mode Applied is always false (the output is discarded); the saving
 // figures are the WOULD-BE saving. In on mode Applied is true when the output
-// was actually used.
+// was actually used. Savings are MARGINAL: shadow threads the would-apply
+// state through the chain exactly as On mode would, so each transform is
+// measured against what the payload would look like after its predecessors —
+// summing per-transform savings yields the true end-to-end saving instead of
+// double-counting overlapping wins.
 type Observation struct {
 	Transform   string
 	Lossless    bool
@@ -96,26 +100,32 @@ func (p *Pipeline) Process(mode Mode, disabled map[string]bool, result json.RawM
 			Changed:    changed,
 		}
 		o.SavedTokens = o.OrigTokens - o.OutTokens
-		// Apply for real only in On mode, only when the transform actually
-		// shrank the payload AND the result is recoverable — either lossless,
-		// or lossy-but-stashed (the original is preserved in CCR). Shadow
-		// measures but never applies.
-		recoverable := t.Lossless() || len(stash) > 0
-		apply := mode == ModeOn && changed && recoverable && o.SavedBytes > 0
+		// A transform's output counts only when it actually shrank the payload
+		// AND the result is recoverable — either lossless, or lossy-but-stashed
+		// (the original is preserved in CCR).
+		wouldApply := changed && (t.Lossless() || len(stash) > 0) && o.SavedBytes > 0
 		// Runtime backstop: a Lossless transform that implements Verifier must
 		// prove it preserved the value before we commit its output — a hot-path
 		// guard against value corruption, independent of the CI gimmick gate.
-		if apply && t.Lossless() {
+		if wouldApply && t.Lossless() {
 			if v, ok := t.(Verifier); ok && !v.Verify(current, out) {
-				apply = false
+				wouldApply = false
 			}
 		}
-		if apply {
+		if wouldApply {
+			// Thread the chain in shadow AND on modes so every measurement is
+			// marginal (see Observation). Only On mode commits the output to
+			// the caller or hands back stashes to persist.
 			current = out
-			o.Applied = true
-			o.Stash = stash
+			if mode == ModeOn {
+				o.Applied = true
+				o.Stash = stash
+			}
 		}
 		obs = append(obs, o)
+	}
+	if mode != ModeOn {
+		return result, obs
 	}
 	return current, obs
 }

@@ -45,7 +45,7 @@ func spawnSubagentToolDef() gateway.Tool {
 				"secret_scope_id NOT needed (grok login / XAI_API_KEY owns auth). " +
 				"Requires MCPLEXER_ALLOW_GROK_CLI=1 on the daemon.\n" +
 				"  • mimo_cli       — Host's `mimo` binary (Xiaomi MiMo / mimocode). " +
-				"Models: xiaomi/mimo-v2.5, xiaomi/mimo-v2.5-pro, mimo/mimo-auto. " +
+				"Models: xiaomi/mimo-v2.5-pro (preferred), xiaomi/mimo-v2.5, mimo/mimo-auto. " +
 				"secret_scope_id NOT needed (mimo providers login owns auth). " +
 				"Requires MCPLEXER_ALLOW_MIMO_CLI=1 on the daemon.\n" +
 				"  • pi_cli         — Host's `pi` binary (the Pi coding harness, pi.dev). " +
@@ -68,7 +68,7 @@ func spawnSubagentToolDef() gateway.Tool {
 				"  • opencode_cli:  anthropic/claude-opus-4-7 | minimax/MiniMax-M3 | " +
 				"openrouter/meta-llama/llama-3.3-70b | mlx/llama-3.2-3b\n" +
 				"  • grok_cli:      grok-build | grok-composer-2.5-fast\n" +
-				"  • mimo_cli:      xiaomi/mimo-v2.5 | xiaomi/mimo-v2.5-pro | mimo/mimo-auto\n" +
+				"  • mimo_cli:      xiaomi/mimo-v2.5-pro | xiaomi/mimo-v2.5 | mimo/mimo-auto\n" +
 				"  • pi_cli:        whatever model id is registered in ~/.pi/agent/models.json\n" +
 				"  • anthropic:     claude-opus-4-7 | claude-sonnet-4-6 | claude-haiku-4-5\n" +
 				"  • openai:        gpt-4o | gpt-4.1 | o1 | o3-mini\n" +

@@ -407,32 +407,6 @@ export function SettingsPage() {
                   </button>
                 </div>
 
-                <div className="flex items-center justify-between border-t pt-4">
-                  <div className="space-y-1">
-                    <Label>Compact tool responses</Label>
-                    <p className="text-xs text-muted-foreground">
-                      Compresses verbose JSON tool responses into a token-efficient format.
-                      Prunes empty fields and converts arrays to columnar layout.
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-checked={settings.compact_responses}
-                    aria-label="Compact tool responses"
-                    data-testid="settings-toggle-compact-responses"
-                    onClick={() => patch({ compact_responses: !settings.compact_responses })}
-                    className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
-                      settings.compact_responses ? 'bg-primary' : 'bg-muted'
-                    }`}
-                  >
-                    <span
-                      className={`pointer-events-none block h-5 w-5 rounded-full bg-background shadow-lg ring-0 transition-transform ${
-                        settings.compact_responses ? 'translate-x-5' : 'translate-x-0'
-                      }`}
-                    />
-                  </button>
-                </div>
               </CardContent>
             </Card>
           )}

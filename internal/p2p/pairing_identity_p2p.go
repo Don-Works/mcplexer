@@ -66,7 +66,8 @@ func readIdentityFrame(r *bufio.Reader) remoteIdentity {
 
 func isAlphanumericHyphen(s string) bool {
 	for _, c := range s {
-		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-') {
+		ok := (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-'
+		if !ok {
 			return false
 		}
 	}

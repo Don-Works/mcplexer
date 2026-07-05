@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/don-works/mcplexer/internal/compression"
@@ -20,11 +21,30 @@ import (
 // must NOT compress (downstream results consumed inside the sandbox) gate the
 // call site.
 func (h *handler) applyCompression(ctx context.Context, result json.RawMessage) json.RawMessage {
+	return h.applyCompressionForTool(ctx, "", result)
+}
+
+// applyCompressionForTool is applyCompression with the originating tool name,
+// which the session-dedup step uses to label its pointer envelopes.
+func (h *handler) applyCompressionForTool(ctx context.Context, toolName string, result json.RawMessage) json.RawMessage {
 	if h == nil || h.compression == nil {
 		return result
 	}
+	mode := h.compressionMode(ctx)
+	disabled := h.compressionDisabled(ctx)
 	original := result
-	compressed, obs := h.compression.Process(h.compressionMode(ctx), h.compressionDisabled(ctx), result)
+	var obs []compression.Observation
+	// Session-dedup runs before the pipeline: a byte-identical repeat of an
+	// earlier delivery collapses to a pointer envelope, leaving the pipeline
+	// (almost) nothing to chew on.
+	if h.sessionDedup != nil && !disabled[sessionDedupName] {
+		deduped, dobs := h.sessionDedup.Process(
+			mode, models.EstimateContextTokens, h.currentSessionID(), toolName, result)
+		result = deduped
+		obs = append(obs, dobs...)
+	}
+	compressed, pobs := h.compression.Process(mode, disabled, result)
+	obs = append(obs, pobs...)
 	pctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
 	defer cancel()
 	if string(compressed) != string(original) {
@@ -38,12 +58,24 @@ func (h *handler) applyCompression(ctx context.Context, result json.RawMessage) 
 				obs[i].Applied = false
 				obs[i].Stash = nil
 			}
+			result = original
 			slog.Warn("compression kill-switch: unresolvable CCR marker, returning original result")
 		}
+	} else {
+		result = original
 	}
 	h.recordCompression(obs)
 	h.persistCompression(pctx, obs)
 	return result
+}
+
+// currentSessionID returns the MCP session id, or "" when unbound (tests,
+// pre-initialize calls) — session-dedup skips silently in that case.
+func (h *handler) currentSessionID() string {
+	if h == nil || h.sessions == nil {
+		return ""
+	}
+	return h.sessions.sessionID()
 }
 
 // compressionMinBytes is the smallest tool-result payload worth running the
@@ -69,21 +101,47 @@ func (h *handler) compressionMode(ctx context.Context) compression.Mode {
 	return compression.ModeShadow
 }
 
-// compressionDisabled returns the set of transform names the operator has
-// toggled off in settings. nil (all enabled) is the common case.
+// compressionDisabled returns the set of transform names disabled for this
+// call: the operator's settings toggles, plus harness-conditional gates.
 func (h *handler) compressionDisabled(ctx context.Context) map[string]bool {
-	if h == nil || h.settingsSvc == nil {
-		return nil
+	m := map[string]bool{}
+	if h != nil && h.settingsSvc != nil {
+		for _, n := range h.settingsSvc.Load(ctx).CompressionDisabledTransforms {
+			m[n] = true
+		}
 	}
-	list := h.settingsSvc.Load(ctx).CompressionDisabledTransforms
-	if len(list) == 0 {
-		return nil
+	// structured_dedup replaces content[].text with a marker and relies on the
+	// client forwarding structuredContent to the model. Client behavior is
+	// inconsistent (Claude Code forwards ONLY structuredContent and drops
+	// text; claude.ai web and ChatGPT forward both; others may forward only
+	// text — for those, dedup would leave the model a bare marker). Gate it to
+	// clients known to surface structuredContent; unknown clients keep the
+	// text copy.
+	if h != nil && h.sessions != nil && !clientForwardsStructuredContent(h.sessions.clientType()) {
+		m["structured_dedup"] = true
 	}
-	m := make(map[string]bool, len(list))
-	for _, n := range list {
-		m[n] = true
+	if len(m) == 0 {
+		return nil
 	}
 	return m
+}
+
+// clientForwardsStructuredContent reports whether the connecting harness is
+// known to put structuredContent into the model's context (see the client
+// matrix in the 2026-07 compression audit: Claude Code CLI forwards only
+// structuredContent; claude.ai web and ChatGPT forward both). Anything
+// unrecognized is treated as text-only — the conservative default.
+func clientForwardsStructuredContent(clientType string) bool {
+	lower := strings.ToLower(strings.TrimSpace(clientType))
+	if lower == "" {
+		return false
+	}
+	for _, known := range []string{"claude", "chatgpt"} {
+		if strings.Contains(lower, known) {
+			return true
+		}
+	}
+	return false
 }
 
 // persistCompression writes the pipeline's observations to the durable savings

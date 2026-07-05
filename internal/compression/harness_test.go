@@ -8,7 +8,7 @@ import (
 // TestGimmickGate is the CI gate: every registered transform must satisfy all
 // three hard constraints on the representative corpus, or the build fails.
 func TestGimmickGate(t *testing.T) {
-	metrics := RunGate(DefaultTransforms(), GateCorpus(), func(n int) int { return n })
+	metrics := RunGate(DefaultTransforms(), GateCorpus())
 	if len(metrics) == 0 {
 		t.Fatal("no transforms registered")
 	}
@@ -36,7 +36,7 @@ func TestGimmickGate(t *testing.T) {
 // behaviour: it must win on the pretty-printed fixtures, stay a no-op on
 // already-compact / non-JSON payloads, and never touch a secret.
 func TestGateJSONMinifyBehaviour(t *testing.T) {
-	metrics := RunGate([]Transform{jsonMinify{}}, GateCorpus(), func(n int) int { return n })
+	metrics := RunGate([]Transform{jsonMinify{}}, GateCorpus())
 	m := metrics[0]
 	if m.Changed == 0 {
 		t.Fatal("json_minify saved nothing across the corpus — broken or a gimmick")

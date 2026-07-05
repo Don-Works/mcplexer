@@ -145,9 +145,9 @@ const PROVIDERS: Record<UIProvider, ProviderMeta> = {
     storage: 'mimo_cli',
     label: 'Xiaomi MiMo CLI',
     description: 'Spawns native `mimo --never-ask-questions run --pure --format json --dangerously-skip-permissions`. Uses your MiMo CLI login.',
-    defaultModel: 'xiaomi/mimo-v2.5',
+    defaultModel: 'xiaomi/mimo-v2.5-pro',
     modelSuggestions: MIMO_CLI_MODELS,
-    modelPlaceholder: 'xiaomi/mimo-v2.5',
+    modelPlaceholder: 'xiaomi/mimo-v2.5-pro',
     endpointEditable: true, // binary path or attach URL
   },
   gemini_cli: {

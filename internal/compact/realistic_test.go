@@ -136,8 +136,7 @@ func TestRealisticGitHubIssues(t *testing.T) {
 	}
 
 	inputJSON, _ := json.Marshal(issues)
-	c := New()
-	compacted := c.CompactJSON(inputJSON)
+	compacted, _ := json.Marshal(CompactArray(issues))
 
 	// Must be valid JSON.
 	var parsed map[string]any
@@ -187,8 +186,7 @@ func TestRealisticSlackMessages(t *testing.T) {
 	}
 
 	inputJSON, _ := json.Marshal(msgs)
-	c := New()
-	compacted := c.CompactJSON(inputJSON)
+	compacted, _ := json.Marshal(CompactArray(msgs))
 
 	var parsed any
 	if err := json.Unmarshal(compacted, &parsed); err != nil {
@@ -226,9 +224,7 @@ func TestRealisticLinearIssues(t *testing.T) {
 		issues[i] = makeLinearIssue(i + 1)
 	}
 
-	inputJSON, _ := json.Marshal(issues)
-	c := New()
-	compacted := c.CompactJSON(inputJSON)
+	compacted, _ := json.Marshal(CompactArray(issues))
 
 	var parsed map[string]any
 	if err := json.Unmarshal(compacted, &parsed); err != nil {
@@ -256,9 +252,7 @@ func TestRealisticDatabaseRows(t *testing.T) {
 		rows[i] = makeDBRow(i + 1)
 	}
 
-	inputJSON, _ := json.Marshal(rows)
-	c := New()
-	compacted := c.CompactJSON(inputJSON)
+	compacted, _ := json.Marshal(CompactArray(rows))
 
 	var parsed map[string]any
 	if err := json.Unmarshal(compacted, &parsed); err != nil {
@@ -281,43 +275,7 @@ func TestRealisticDatabaseRows(t *testing.T) {
 	}
 }
 
-func TestRealisticMCPEnvelope(t *testing.T) {
-	issues := make([]map[string]any, 5)
-	for i := range issues {
-		issues[i] = makeGitHubIssue(i+1, "open")
-	}
-	issuesJSON, _ := json.Marshal(issues)
-	envelope := fmt.Sprintf(
-		`{"content":[{"type":"text","text":%s}]}`,
-		mustQuoteJSON(string(issuesJSON)),
-	)
-
-	c := New()
-	result := c.CompactToolResult(json.RawMessage(envelope))
-
-	var env struct {
-		Content []map[string]any `json:"content"`
-	}
-	if err := json.Unmarshal(result, &env); err != nil {
-		t.Fatalf("invalid result: %v", err)
-	}
-
-	text := env.Content[0]["text"].(string)
-	var parsed map[string]any
-	if err := json.Unmarshal([]byte(text), &parsed); err != nil {
-		t.Fatalf("compacted text not valid JSON: %v", err)
-	}
-	if _, ok := parsed["_cols"]; !ok {
-		t.Error("expected columnar format in MCP envelope")
-	}
-
-	ratio := float64(len(result)) / float64(len(envelope))
-	t.Logf("MCP envelope: %d → %d bytes (%.0f%% reduction)",
-		len(envelope), len(result), (1-ratio)*100)
-}
-
 func TestDataPreservationRoundTrip(t *testing.T) {
-	c := New()
 	issues := make([]map[string]any, 5)
 	for i := range issues {
 		issues[i] = map[string]any{
@@ -329,8 +287,7 @@ func TestDataPreservationRoundTrip(t *testing.T) {
 		}
 	}
 
-	inputJSON, _ := json.Marshal(issues)
-	compacted := c.CompactJSON(inputJSON)
+	compacted, _ := json.Marshal(CompactArray(issues))
 
 	var m map[string]any
 	if err := json.Unmarshal(compacted, &m); err != nil {
@@ -368,11 +325,6 @@ func TestDataPreservationRoundTrip(t *testing.T) {
 			}
 		}
 	}
-}
-
-func mustQuoteJSON(s string) string {
-	data, _ := json.Marshal(s)
-	return string(data)
 }
 
 func truncate(s string, n int) string {

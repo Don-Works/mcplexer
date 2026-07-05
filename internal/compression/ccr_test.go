@@ -19,6 +19,35 @@ func TestParseCCRKeysIgnoresNonMarkerHex(t *testing.T) {
 	}
 }
 
+// TestOversizeTruncateNeverSlicesInnerMarkers (F6): when an earlier transform
+// (log_compact) left a CCR marker in the text and the oversize head/tail cut
+// would land inside it, the cut must move off the marker — a half marker is
+// garbage the model can neither read nor expand.
+func TestOversizeTruncateNeverSlicesInnerMarkers(t *testing.T) {
+	inner := CCRMarker(CCRKey([]byte("inner-original")), 4242)
+	for name, text := range map[string]string{
+		// Marker straddling the 2KB head boundary.
+		"head-seam": strings.Repeat("a", oversizeHeadBytes-20) + inner + strings.Repeat("b", oversizeThresholdBytes),
+		// Marker straddling the tail-start boundary.
+		"tail-seam": strings.Repeat("a", oversizeThresholdBytes) + inner + strings.Repeat("b", oversizeTailBytes-40),
+	} {
+		out, changed, _ := oversizeTruncate{}.ApplyWithStash(fixtureText(text))
+		if !changed {
+			t.Fatalf("%s: expected truncation", name)
+		}
+		got := textOf(t, out)
+		opens := strings.Count(got, "[[ccr")
+		complete := len(ccrMarkerSpanRE.FindAllString(got, -1))
+		if opens != complete {
+			t.Errorf("%s: %d marker opener(s) but %d complete marker(s) — a marker was sliced:\n%s",
+				name, opens, complete, got)
+		}
+		if strings.Count(got, "]]") != complete {
+			t.Errorf("%s: orphaned ]] fragment in output:\n%s", name, got)
+		}
+	}
+}
+
 func TestOversizeTruncatePreservesValidUTF8AtSeams(t *testing.T) {
 	// Multibyte content so the head/tail byte cuts land mid-rune without the fix.
 	big := strings.Repeat("héllo wörld 日本語 ", 2000)

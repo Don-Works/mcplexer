@@ -64,6 +64,16 @@ type ExecutionResult struct {
 	ToolCalls          []ToolCallRecord `json:"tool_calls"`
 	Error              string           `json:"error,omitempty"`
 
+	// OutputRaw is the displayed output WITHOUT the truncation notice, and
+	// OutputOverflow the retained over-cap bytes — together the (possibly
+	// bounded) full print stream, handed to the gateway so it can stash the
+	// original in CCR and leave a retrieval marker instead of a dead-end
+	// truncation. OutputOverflowComplete is false when even the retention
+	// bound overflowed. Never serialized to the model.
+	OutputRaw              string `json:"-"`
+	OutputOverflow         []byte `json:"-"`
+	OutputOverflowComplete bool   `json:"-"`
+
 	// SessionState is the post-run snapshot of the ephemeral `session`
 	// object — the JSON-serializable own properties an agent assigned to it.
 	// Populated only on a CLEAN run when session-state is enabled
@@ -346,11 +356,14 @@ func (s *Sandbox) Execute(ctx context.Context, code string, tools []ToolDef) (*E
 	close(done)
 
 	result := &ExecutionResult{
-		Output:             output.String(),
-		OutputTruncated:    output.Truncated(),
-		OutputMaxBytes:     output.MaxBytes(),
-		OutputBytesOmitted: output.BytesOmitted(),
-		ToolCalls:          records,
+		Output:                 output.String(),
+		OutputTruncated:        output.Truncated(),
+		OutputMaxBytes:         output.MaxBytes(),
+		OutputBytesOmitted:     output.BytesOmitted(),
+		OutputRaw:              output.Raw(),
+		OutputOverflow:         output.Overflow(),
+		OutputOverflowComplete: output.OverflowComplete(),
+		ToolCalls:              records,
 	}
 
 	if err != nil {
@@ -778,8 +791,11 @@ func (s *Sandbox) makeToolFunc(
 		// Surface _meta.cache from the raw result as a VM global.
 		setCacheMeta(vm, rawResult)
 
-		compacted := compactForSandbox(rawResult)
-		val, errText := parseToolResult(vm, compacted)
+		// The sandbox receives the EXACT downstream value — no pruning, no
+		// pagination-key stripping. JS consumers need `.map` on empty arrays,
+		// `=== null` checks, and cursor fields to behave truthfully; token
+		// economy happens at print/render time, never on the consumed value.
+		val, errText := parseToolResult(vm, rawResult)
 		if errText != "" {
 			record.Error = errText
 			record.Result = rawResult
@@ -1325,12 +1341,23 @@ func extractToolErrorText(content []map[string]any, raw json.RawMessage) string 
 // argument was a map, its sorted top-level keys are recorded so the
 // truncation notice can hand the agent a cheap shape hint of the lost
 // value rather than just saying "your stuff overflowed."
+// overflowRetainMaxBytes bounds how much over-cap print output is retained
+// for CCR stashing (vs. counted-and-discarded). Keeps one runaway print()
+// from holding unbounded memory while making the common truncation case
+// fully recoverable via mcpx__retrieve.
+const overflowRetainMaxBytes = 1024 * 1024
+
 type outputCapture struct {
 	buf          strings.Builder
 	maxBytes     int
 	truncated    bool
 	bytesOmitted int
 	lastShape    string // formatted "[keyA, keyB, keyC]" of the most recent map arg
+	// overflow retains over-cap bytes (up to overflowRetainMaxBytes) so the
+	// gateway can stash the full output in CCR; overflowDropped counts bytes
+	// beyond even that retention bound.
+	overflow        strings.Builder
+	overflowDropped int
 }
 
 func newOutputCapture(maxBytes int) *outputCapture {
@@ -1354,6 +1381,7 @@ func (o *outputCapture) WriteString(s string) {
 	if remaining <= 0 {
 		o.truncated = true
 		o.bytesOmitted += len(s)
+		o.retainOverflow(s)
 		return
 	}
 	if len(s) <= remaining {
@@ -1365,6 +1393,24 @@ func (o *outputCapture) WriteString(s string) {
 	o.buf.WriteString(prefix)
 	o.truncated = true
 	o.bytesOmitted += len(s) - len(prefix)
+	o.retainOverflow(s[len(prefix):])
+}
+
+// retainOverflow keeps omitted bytes for CCR stashing, up to the retention
+// bound; anything past it is counted so the notice can say so.
+func (o *outputCapture) retainOverflow(s string) {
+	room := overflowRetainMaxBytes - o.overflow.Len()
+	if room <= 0 {
+		o.overflowDropped += len(s)
+		return
+	}
+	if len(s) <= room {
+		o.overflow.WriteString(s)
+		return
+	}
+	prefix := safeUTF8Prefix(s, room)
+	o.overflow.WriteString(prefix)
+	o.overflowDropped += len(s) - len(prefix)
 }
 
 func (o *outputCapture) writeByte(b byte) {
@@ -1436,6 +1482,15 @@ func (o *outputCapture) MaxBytes() int {
 func (o *outputCapture) BytesOmitted() int {
 	return o.bytesOmitted
 }
+
+// Raw returns the captured (displayed) output without the truncation notice.
+func (o *outputCapture) Raw() string { return o.buf.String() }
+
+// Overflow returns the retained over-cap bytes (empty when not truncated).
+func (o *outputCapture) Overflow() []byte { return []byte(o.overflow.String()) }
+
+// OverflowComplete reports whether Overflow holds ALL omitted bytes.
+func (o *outputCapture) OverflowComplete() bool { return o.overflowDropped == 0 }
 
 // outputTruncationNotice is intentionally plain and loud: it is part of the
 // text returned to the model, not just logs. code_mode_max_output_bytes is
@@ -1581,14 +1636,15 @@ func formatArrayAsTable(items []any) string {
 	return compact.FormatColumnar(columnar)
 }
 
-// formatMapCompact prunes a map, then renders nested arrays as tables.
-// Top-level map is output as labeled sections; scalar values as key: value.
+// formatMapCompact renders a map for print(): nested large arrays become
+// tables, everything else is exact JSON. It does NOT prune — printed output
+// is what the model reads, and silently hiding null/empty/cursor fields
+// misleads it (a printed page without next_cursor looks like the last page).
+// Agents that want pruning call the documented compact() helper explicitly.
 func formatMapCompact(m map[string]any) string {
-	pruned := compact.PruneForSandbox(m)
-
 	// Check if any value is a large array — if so, use sectioned format.
 	hasLargeArray := false
-	for _, v := range pruned {
+	for _, v := range m {
 		if arr, ok := v.([]any); ok && len(arr) >= 3 {
 			hasLargeArray = true
 			break
@@ -1596,16 +1652,16 @@ func formatMapCompact(m map[string]any) string {
 	}
 
 	if !hasLargeArray {
-		data, err := json.Marshal(pruned)
+		data, err := json.Marshal(m)
 		if err != nil {
-			data, _ = json.Marshal(m)
+			return fmt.Sprintf("%v", m)
 		}
 		return string(data)
 	}
 
 	// Sectioned format: render each key as a labeled section.
 	var b strings.Builder
-	for k, v := range pruned {
+	for k, v := range m {
 		switch arr := v.(type) {
 		case []any:
 			if tbl := formatArrayAsTable(arr); tbl != "" {
@@ -1627,7 +1683,7 @@ func formatMapCompact(m map[string]any) string {
 func compactValue(exported any) any {
 	switch v := exported.(type) {
 	case map[string]any:
-		pruned := compact.PruneForSandbox(v)
+		pruned := compact.PruneObject(v)
 		// Recursively compact nested values.
 		for k, val := range pruned {
 			pruned[k] = compactValue(val)
@@ -1639,7 +1695,7 @@ func compactValue(exported any) any {
 			maps := make([]map[string]any, 0, len(v))
 			for _, item := range v {
 				if m, ok := item.(map[string]any); ok {
-					maps = append(maps, compact.PruneForSandbox(m))
+					maps = append(maps, compact.PruneObject(m))
 				} else {
 					// Mixed array — just prune elements.
 					out := make([]any, len(v))

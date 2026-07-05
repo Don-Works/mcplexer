@@ -65,7 +65,7 @@ func (h *compressionSSEHandler) stream(w http.ResponseWriter, r *http.Request) {
 		}
 		data, err := json.Marshal(map[string]any{
 			"mode":       mode,
-			"transforms": compression.DefaultTransformInfo(),
+			"transforms": transformInfoWithGatewaySteps(),
 			"disabled":   disabled,
 			"aggregate":  agg,
 		})

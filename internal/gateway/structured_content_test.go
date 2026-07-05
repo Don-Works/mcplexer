@@ -38,6 +38,41 @@ func TestSurfaceStructuredContent_JSONObjectLifted(t *testing.T) {
 	}
 }
 
+// TestSurfaceStructuredContent_BigIntsExact is the F1 number-safety
+// regression: int64 values beyond float64's 2^53 integer precision must
+// survive the lift with their exact digits. A float64 round-trip would turn
+// 9223372036854775807 into 9223372036854776000 — and on harnesses that
+// forward only structuredContent to the model (Claude Code CLI), the lifted
+// copy is the ONLY copy the model reads.
+func TestSurfaceStructuredContent_BigIntsExact(t *testing.T) {
+	in := json.RawMessage(`{"content":[{"type":"text","text":"{\"id\":9223372036854775807,\"snowflake\":1234567890123456789,\"small\":42}"}],"isError":false}`)
+	out := surfaceStructuredContent(in)
+
+	var envelope map[string]json.RawMessage
+	if err := json.Unmarshal(out, &envelope); err != nil {
+		t.Fatalf("unmarshal lifted result: %v", err)
+	}
+	raw, ok := envelope["structuredContent"]
+	if !ok {
+		t.Fatalf("structuredContent missing; got %s", string(out))
+	}
+	for _, digits := range []string{"9223372036854775807", "1234567890123456789"} {
+		if !strings.Contains(string(raw), digits) {
+			t.Errorf("structuredContent lost exact integer %s: %s", digits, string(raw))
+		}
+	}
+}
+
+// TestSurfaceStructuredContent_TrailingGarbageNotLifted guards the Decoder
+// switch: "{} extra" is not a clean JSON document and must not be lifted.
+func TestSurfaceStructuredContent_TrailingGarbageNotLifted(t *testing.T) {
+	in := json.RawMessage(`{"content":[{"type":"text","text":"{\"a\":1} trailing prose"}],"isError":false}`)
+	out := surfaceStructuredContent(in)
+	if strings.Contains(string(out), "structuredContent") {
+		t.Fatalf("text with trailing garbage was lifted: %s", string(out))
+	}
+}
+
 // TestSurfaceStructuredContent_JSONArrayLifted covers the array variant
 // — many task__list / mesh__list_* shapes return a JSON array, and
 // those should be liftable too.

@@ -5,6 +5,10 @@ import (
 	"testing"
 )
 
+// The 2026-07 quality-first contract: schema minification removes ONLY inert
+// keys ($schema, $id, $comment, title). Property descriptions, defaults,
+// examples, enum, additionalProperties, and numeric constraints are all
+// load-bearing for correct tool calls and must survive.
 func TestMinifyToolSchemas(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -13,7 +17,7 @@ func TestMinifyToolSchemas(t *testing.T) {
 		noKeys   []string // keys that must NOT exist in the first property
 	}{
 		{
-			name: "strips property descriptions",
+			name: "preserves property descriptions",
 			schema: `{
 				"type": "object",
 				"properties": {
@@ -24,24 +28,10 @@ func TestMinifyToolSchemas(t *testing.T) {
 				},
 				"required": ["query"]
 			}`,
-			wantKeys: []string{"type"},
-			noKeys:   []string{"description"},
+			wantKeys: []string{"type", "description"},
 		},
 		{
-			name: "strips additionalProperties and $schema",
-			schema: `{
-				"$schema": "https://json-schema.org/draft/2020-12/schema",
-				"type": "object",
-				"additionalProperties": false,
-				"properties": {
-					"id": {"type": "string", "description": "unique ID"}
-				}
-			}`,
-			wantKeys: []string{"type"},
-			noKeys:   []string{"description"},
-		},
-		{
-			name: "preserves enum and required",
+			name: "preserves enum, default, and description",
 			schema: `{
 				"type": "object",
 				"properties": {
@@ -54,11 +44,10 @@ func TestMinifyToolSchemas(t *testing.T) {
 				},
 				"required": ["mode"]
 			}`,
-			wantKeys: []string{"type", "enum"},
-			noKeys:   []string{"description", "default"},
+			wantKeys: []string{"type", "enum", "description", "default"},
 		},
 		{
-			name: "handles nested objects",
+			name: "handles nested objects, keeps nested descriptions",
 			schema: `{
 				"type": "object",
 				"properties": {
@@ -74,11 +63,10 @@ func TestMinifyToolSchemas(t *testing.T) {
 					}
 				}
 			}`,
-			wantKeys: []string{"type", "properties"},
-			noKeys:   []string{"description"},
+			wantKeys: []string{"type", "properties", "description"},
 		},
 		{
-			name: "preserves constraint fields",
+			name: "preserves constraints, strips only title",
 			schema: `{
 				"type": "object",
 				"properties": {
@@ -91,8 +79,8 @@ func TestMinifyToolSchemas(t *testing.T) {
 					}
 				}
 			}`,
-			wantKeys: []string{"type", "minimum", "maximum"},
-			noKeys:   []string{"description", "title"},
+			wantKeys: []string{"type", "minimum", "maximum", "description"},
+			noKeys:   []string{"title"},
 		},
 	}
 
@@ -109,12 +97,10 @@ func TestMinifyToolSchemas(t *testing.T) {
 				t.Fatalf("got %d tools, want 1", len(result))
 			}
 
-			// Tool description should be preserved (it's on the tool, not in the schema).
 			if result[0].Description != "A test tool" {
 				t.Errorf("tool description = %q, want %q", result[0].Description, "A test tool")
 			}
 
-			// Parse the minified schema and check the first property.
 			var schema struct {
 				Properties map[string]map[string]json.RawMessage `json:"properties"`
 				Required   []string                              `json:"required"`
@@ -123,7 +109,6 @@ func TestMinifyToolSchemas(t *testing.T) {
 				t.Fatalf("unmarshal result: %v", err)
 			}
 
-			// Check first property.
 			for _, prop := range schema.Properties {
 				for _, key := range tt.wantKeys {
 					if _, ok := prop[key]; !ok {
@@ -149,11 +134,13 @@ func TestMinifySchema_InvalidJSON(t *testing.T) {
 	}
 }
 
-func TestMinifySchema_TopLevelFieldsStripped(t *testing.T) {
+func TestMinifySchema_NoiseKeysStripped(t *testing.T) {
 	raw := json.RawMessage(`{
 		"$schema": "https://json-schema.org/draft/2020-12/schema",
+		"$id": "https://example.com/schema",
 		"type": "object",
 		"title": "MySchema",
+		"description": "Top-level description",
 		"additionalProperties": false,
 		"properties": {}
 	}`)
@@ -162,17 +149,24 @@ func TestMinifySchema_TopLevelFieldsStripped(t *testing.T) {
 	if err := json.Unmarshal(result, &obj); err != nil {
 		t.Fatal(err)
 	}
-	for _, key := range []string{"$schema", "title", "additionalProperties"} {
+	for _, key := range []string{"$schema", "$id", "title"} {
 		if _, ok := obj[key]; ok {
-			t.Errorf("expected top-level key %q to be stripped", key)
+			t.Errorf("expected noise key %q to be stripped", key)
 		}
 	}
-	if _, ok := obj["type"]; !ok {
-		t.Error("type field should be preserved")
+	// Semantic keys survive: strict-mode marker and top-level description.
+	for _, key := range []string{"type", "description", "additionalProperties"} {
+		if _, ok := obj[key]; !ok {
+			t.Errorf("semantic key %q must be preserved", key)
+		}
+	}
+	if string(obj["additionalProperties"]) != "false" {
+		t.Errorf("boolean additionalProperties must round-trip exactly, got %s",
+			obj["additionalProperties"])
 	}
 }
 
-func TestMinifySchema_ArrayItems(t *testing.T) {
+func TestMinifySchema_ArrayItemsKeepSemantics(t *testing.T) {
 	raw := json.RawMessage(`{
 		"type": "object",
 		"properties": {
@@ -182,6 +176,7 @@ func TestMinifySchema_ArrayItems(t *testing.T) {
 				"items": {
 					"type": "string",
 					"description": "A tag",
+					"title": "Tag",
 					"examples": ["foo"]
 				}
 			}
@@ -190,20 +185,59 @@ func TestMinifySchema_ArrayItems(t *testing.T) {
 	result := minifySchema(raw)
 	var schema struct {
 		Properties map[string]struct {
-			Items map[string]json.RawMessage `json:"items"`
+			Description string                     `json:"description"`
+			Items       map[string]json.RawMessage `json:"items"`
 		} `json:"properties"`
 	}
 	if err := json.Unmarshal(result, &schema); err != nil {
 		t.Fatal(err)
 	}
-	items := schema.Properties["tags"].Items
-	if _, ok := items["description"]; ok {
-		t.Error("items description should be stripped")
+	tags := schema.Properties["tags"]
+	if tags.Description != "List of tags" {
+		t.Error("array property description must be preserved")
 	}
-	if _, ok := items["examples"]; ok {
-		t.Error("items examples should be stripped")
+	items := tags.Items
+	for _, key := range []string{"type", "description", "examples"} {
+		if _, ok := items[key]; !ok {
+			t.Errorf("items %q must be preserved", key)
+		}
 	}
-	if _, ok := items["type"]; !ok {
-		t.Error("items type should be preserved")
+	if _, ok := items["title"]; ok {
+		t.Error("items title (noise) should be stripped")
+	}
+}
+
+func TestMinifySchema_Combinators(t *testing.T) {
+	raw := json.RawMessage(`{
+		"type": "object",
+		"properties": {
+			"value": {
+				"oneOf": [
+					{"type": "string", "title": "S", "description": "as string"},
+					{"type": "integer", "title": "I", "description": "as int"}
+				]
+			}
+		}
+	}`)
+	result := minifySchema(raw)
+	var schema struct {
+		Properties map[string]struct {
+			OneOf []map[string]json.RawMessage `json:"oneOf"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(result, &schema); err != nil {
+		t.Fatal(err)
+	}
+	branches := schema.Properties["value"].OneOf
+	if len(branches) != 2 {
+		t.Fatalf("oneOf branches = %d, want 2", len(branches))
+	}
+	for i, b := range branches {
+		if _, ok := b["description"]; !ok {
+			t.Errorf("oneOf[%d] description must be preserved", i)
+		}
+		if _, ok := b["title"]; ok {
+			t.Errorf("oneOf[%d] title should be stripped", i)
+		}
 	}
 }

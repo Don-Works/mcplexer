@@ -39,7 +39,13 @@ type Settings struct {
 	// via mcpx__search_tools, but doesn't pollute the agent's top-level
 	// tool inventory. Saves ~22k tokens of MCP-tool context per session.
 	// Set false (or MCPLEXER_SLIM_SURFACE=false) to advertise everything.
-	SlimSurface      bool `json:"slim_surface"`
+	SlimSurface bool `json:"slim_surface"`
+	// CompactResponses is DEPRECATED and ignored (2026-07): the legacy
+	// CompactToolResult pass was removed from the model-facing path because it
+	// was lossy (float64 number corruption, null/empty pruning, columnar
+	// reshape) with no CCR backing. The field is kept so existing settings
+	// files and env overrides parse without error. Token economy now lives in
+	// the lossless/CCR-backed compression pipeline (CompressionMode).
 	CompactResponses bool `json:"compact_responses"`
 	// CompressionMode is the three-state token-compression switch for
 	// downstream MCP tool-result payloads: "off" | "shadow" | "on". Default

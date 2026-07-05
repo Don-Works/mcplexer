@@ -212,72 +212,35 @@ func TestPruneObjectFromJSON(t *testing.T) {
 	}
 }
 
-func TestPruneForSandbox(t *testing.T) {
-	tests := []struct {
-		name     string
-		in       map[string]any
-		wantKeys []string
-		dropKeys []string
-	}{
-		{
-			name: "strips pagination keys",
-			in: map[string]any{
-				"items":           []any{"a", "b"},
-				"next_cursor":     "abc123",
-				"has_more":        true,
-				"total_count":     float64(42),
-				"next_page_token": "token",
-			},
-			wantKeys: []string{"items"},
-			dropKeys: []string{"next_cursor", "has_more", "total_count", "next_page_token"},
-		},
-		{
-			name: "strips nulls and empties like PruneObject",
-			in: map[string]any{
-				"id":    float64(1),
-				"empty": "",
-				"nil":   nil,
-			},
-			wantKeys: []string{"id"},
-			dropKeys: []string{"empty", "nil"},
-		},
-		{
-			name: "recursive pagination stripping",
-			in: map[string]any{
-				"data": map[string]any{
-					"results":     []any{"x"},
-					"page_info":   map[string]any{"cursor": "abc"},
-					"next_cursor": "xyz",
-				},
-			},
-			wantKeys: []string{"data"},
-		},
-		{
-			name: "preserves non-pagination data",
-			in: map[string]any{
-				"id":     float64(1),
-				"name":   "test",
-				"active": true,
-				"count":  float64(0),
-				"page":   float64(3), // this is a pagination key
-			},
-			wantKeys: []string{"id", "name", "active", "count"},
-			dropKeys: []string{"page"},
-		},
+// TestPruneObjectKeepsPaginationKeys is the regression for the 2026-07
+// removal of PruneForSandbox: cursors and pagination metadata are load-bearing
+// and must survive pruning — an agent that can't see next_cursor can't page.
+func TestPruneObjectKeepsPaginationKeys(t *testing.T) {
+	in := map[string]any{
+		"items":           []any{"a", "b"},
+		"next_cursor":     "abc123",
+		"has_more":        true,
+		"total_count":     float64(42),
+		"next_page_token": "token",
+		"page":            float64(3),
+		"drop_null":       nil,
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := PruneForSandbox(tt.in)
-			for _, k := range tt.wantKeys {
-				if _, ok := got[k]; !ok {
-					t.Errorf("expected key %q to be preserved", k)
-				}
-			}
-			for _, k := range tt.dropKeys {
-				if _, ok := got[k]; ok {
-					t.Errorf("expected key %q to be pruned", k)
-				}
-			}
-		})
+	got := PruneObject(in)
+	for _, k := range []string{"items", "next_cursor", "has_more", "total_count", "next_page_token", "page"} {
+		if _, ok := got[k]; !ok {
+			t.Errorf("pagination key %q must be preserved by PruneObject", k)
+		}
+	}
+	if _, ok := got["drop_null"]; ok {
+		t.Errorf("null value should still be pruned: %#v", got)
+	}
+}
+
+func assertJSONEqual(t *testing.T, want, got any) {
+	t.Helper()
+	wj, _ := json.Marshal(want)
+	gj, _ := json.Marshal(got)
+	if string(wj) != string(gj) {
+		t.Errorf("mismatch:\n  want: %s\n  got:  %s", wj, gj)
 	}
 }

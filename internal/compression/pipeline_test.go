@@ -40,6 +40,47 @@ func TestProcessOffReturnsUnchangedNoObs(t *testing.T) {
 	}
 }
 
+// TestShadowSavingsSumToChainedSaving (F2): shadow per-transform savings are
+// marginal, so their sum must equal the end-to-end saving On mode achieves on
+// the same payload — no double-counting of overlapping wins (minify and dedup
+// both claiming the same text block was the original accounting bug).
+func TestShadowSavingsSumToChainedSaving(t *testing.T) {
+	// structured-dup payload: jsonMinify would shrink the text, then
+	// structuredDedup would drop it entirely — maximal overlap.
+	payload := structuredDupFixture()
+	p := New(nil, 0)
+	p.Register(DefaultTransforms()...)
+
+	_, shadowObs := p.Process(ModeShadow, nil, payload)
+	shadowSum := 0
+	for _, o := range shadowObs {
+		if o.Applied {
+			t.Fatalf("shadow must never mark Applied: %+v", o)
+		}
+		if len(o.Stash) != 0 {
+			t.Fatalf("shadow must never hand back stashes to persist: %+v", o)
+		}
+		if o.Changed && o.SavedBytes > 0 {
+			shadowSum += o.SavedBytes
+		}
+	}
+
+	onOut, onObs := p.Process(ModeOn, nil, payload)
+	onSum := 0
+	for _, o := range onObs {
+		if o.Applied {
+			onSum += o.SavedBytes
+		}
+	}
+	endToEnd := len(payload) - len(onOut)
+	if onSum != endToEnd {
+		t.Fatalf("On-mode applied savings %d != end-to-end delta %d", onSum, endToEnd)
+	}
+	if shadowSum != endToEnd {
+		t.Fatalf("shadow savings sum %d != chained end-to-end saving %d (double-counting?)", shadowSum, endToEnd)
+	}
+}
+
 func TestProcessShadowMeasuresButReturnsOriginal(t *testing.T) {
 	p := New(identityEstimate, 0)
 	shrunk := json.RawMessage(`{}`)

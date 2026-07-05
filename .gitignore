@@ -66,6 +66,9 @@ web/config/
 .codex/
 .opencode/
 .gemini/
+.impeccable/
+.playwright-mcp/
+.task/
 
 # User-specific addon specs (not part of the public repo)
 addons/*.yaml

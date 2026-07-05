@@ -20,12 +20,13 @@ const (
 )
 
 // ccrPut stashes an original payload in the CCR cache keyed by its content
-// address, returning the key. Best-effort: a store failure is logged, not
-// fatal — the kill-switch (ccrMarkersResolve) catches an unresolvable marker.
-func (h *handler) ccrPut(ctx context.Context, original []byte) string {
+// address, returning the key and whether the write succeeded. Best-effort for
+// pipeline stashes (the kill-switch catches an unresolvable marker); callers
+// that mint a marker OUTSIDE the pipeline must check ok before emitting it.
+func (h *handler) ccrPut(ctx context.Context, original []byte) (string, bool) {
 	key := compression.CCRKey(original)
 	if h == nil || h.store == nil || len(original) == 0 {
-		return key
+		return key, false
 	}
 	exp := time.Now().Add(ccrTTLMinutes * time.Minute)
 	if err := h.store.SetCodeState(ctx, &store.CodeStateEntry{
@@ -35,11 +36,15 @@ func (h *handler) ccrPut(ctx context.Context, original []byte) string {
 		TTLExpiresAt: &exp,
 	}); err != nil {
 		slog.Debug("ccr put", "err", err)
+		return key, false
 	}
-	return key
+	return key, true
 }
 
 // ccrGet returns the stashed original for a key, if present and unexpired.
+// Touch-on-read: a marker being expanded is a marker still live in some
+// model's context (possibly a long or resumed session), so each hit renews
+// the TTL — best-effort, a failed touch never blocks the read.
 func (h *handler) ccrGet(ctx context.Context, key string) ([]byte, bool) {
 	if h == nil || h.store == nil {
 		return nil, false
@@ -47,6 +52,11 @@ func (h *handler) ccrGet(ctx context.Context, key string) ([]byte, bool) {
 	e, err := h.store.GetCodeState(ctx, ccrWorkspace, key)
 	if err != nil || e == nil || len(e.ValueJSON) == 0 {
 		return nil, false
+	}
+	exp := time.Now().Add(ccrTTLMinutes * time.Minute)
+	e.TTLExpiresAt = &exp
+	if err := h.store.SetCodeState(ctx, e); err != nil {
+		slog.Debug("ccr touch", "err", err)
 	}
 	return []byte(e.ValueJSON), true
 }
@@ -56,7 +66,7 @@ func (h *handler) ccrGet(ctx context.Context, key string) ([]byte, bool) {
 func (h *handler) persistCCR(ctx context.Context, obs []compression.Observation) {
 	for _, o := range obs {
 		for _, blob := range o.Stash {
-			h.ccrPut(ctx, blob)
+			_, _ = h.ccrPut(ctx, blob)
 		}
 	}
 }

@@ -199,7 +199,6 @@ func (h *handler) handleContextCostStats(ctx context.Context) (json.RawMessage, 
 		"settings": map[string]any{
 			"slim_tools":                   settings.SlimTools,
 			"slim_surface":                 settings.SlimSurface,
-			"compact_responses":            settings.CompactResponses,
 			"compression_mode":             string(compression.ParseMode(settings.CompressionMode)),
 			"code_mode_max_output_bytes":   settings.CodeModeMaxOutputBytes,
 			"code_mode_max_heap_growth_mb": settings.CodeModeMaxHeapGrowthMB,

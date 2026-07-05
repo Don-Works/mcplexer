@@ -98,9 +98,22 @@ func surfaceStructuredContent(result json.RawMessage) json.RawMessage {
 		return result
 	}
 
+	// Decode with UseNumber so numbers round-trip as exact digit strings.
+	// A plain Unmarshal routes them through float64, silently corrupting
+	// int64 IDs > 2^53 (snowflakes, bigint PKs) — and on harnesses that
+	// forward only structuredContent to the model (Claude Code CLI), the
+	// lifted copy is the ONLY one the model reads.
+	dec := json.NewDecoder(strings.NewReader(text))
+	dec.UseNumber()
 	var parsed any
-	if err := json.Unmarshal([]byte(text), &parsed); err != nil {
+	if err := dec.Decode(&parsed); err != nil {
 		return result // prose, not structured — nothing to lift
+	}
+	// Reject trailing content after the JSON value (e.g. "{} extra"): a
+	// bare Unmarshal would error on it, and the Decoder must not silently
+	// lift a prefix of the text.
+	if dec.More() {
+		return result
 	}
 
 	// Only lift containers (objects / arrays). Scalars (strings, numbers,

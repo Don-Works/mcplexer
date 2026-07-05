@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"reflect"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -60,10 +61,7 @@ type GateMetrics struct {
 
 // RunGate replays every fixture through every transform and returns per-transform
 // metrics. It never fails — callers (the gate test) assert on the metrics.
-func RunGate(transforms []Transform, fixtures []Fixture, estimate TokenEstimator) []GateMetrics {
-	if estimate == nil {
-		estimate = func(n int) int { return n }
-	}
+func RunGate(transforms []Transform, fixtures []Fixture) []GateMetrics {
 	out := make([]GateMetrics, 0, len(transforms))
 	for _, t := range transforms {
 		m := GateMetrics{Transform: t.Name(), Lossless: t.Lossless(), LosslessOK: true, SecretSafe: true, RecoverableOK: true}
@@ -175,6 +173,15 @@ func GateCorpus() []Fixture {
 		{Name: "plain-text-log", Payload: fixtureText("INFO starting\nWARN slow query 1.2s\nERROR connection refused")},
 		{Name: "verbose-log", Payload: fixtureText(logFixtureText())},
 		{Name: "structured-dup", Payload: structuredDupFixture()},
+		{Name: "ansi-colored-log", Payload: fixtureText(ansiFixtureText())},
+		{Name: "progress-frames", Payload: fixtureText(progressFixtureText())},
+		{Name: "repeated-lines", Payload: fixtureText(strings.Repeat("Retrying connection to upstream:9000 in 5s\n", 60) + "ERROR gave up after 60 attempts")},
+		{
+			Name:        "base64-data-uri",
+			MustSurvive: []string{"550e8400-e29b-41d4-a716-446655440000"},
+			Payload: fixtureText("screenshot for trace 550e8400-e29b-41d4-a716-446655440000:\n" +
+				"data:image/png;base64," + strings.Repeat("iVBORw0KGgoAAAANSUhEUg", 100) + "=="),
+		},
 		{Name: "oversize-text", Payload: fixtureText(strings.Repeat("some log line with structured data here 0123456789\n", 400))},
 		{Name: "error-envelope", Payload: json.RawMessage(`{"isError":true,"content":[{"type":"text","text":"boom"}]}`)},
 		{
@@ -226,6 +233,26 @@ func logFixtureText() string {
 		"DEBUG cleanup done",
 		"INFO  metrics flushed",
 	}, "\n")
+}
+
+// ansiFixtureText is CI-style output saturated with color/cursor escapes.
+func ansiFixtureText() string {
+	line := "\x1b[32m✓\x1b[0m \x1b[1mtest passed\x1b[0m \x1b[90m(12ms)\x1b[0m\n"
+	return strings.Repeat(line, 40) + "\x1b[31m✗ one failure\x1b[0m"
+}
+
+// progressFixtureText is npm/pip-style output where \r overwrites frames.
+func progressFixtureText() string {
+	var b strings.Builder
+	for i := 1; i <= 100; i++ {
+		b.WriteString("Downloading package [")
+		b.WriteString(strings.Repeat("#", i/10))
+		b.WriteString("] ")
+		b.WriteString(strconv.Itoa(i))
+		b.WriteString("%\r")
+	}
+	b.WriteString("Downloading package [##########] 100%\ndone")
+	return b.String()
 }
 
 // structuredDupFixture is a tool result whose content[0].text JSON duplicates

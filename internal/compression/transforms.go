@@ -3,15 +3,28 @@ package compression
 import (
 	"bytes"
 	"encoding/json"
+	"regexp"
 	"strings"
 	"unicode/utf8"
 )
 
 // DefaultTransforms returns the transforms registered by default at the
-// gateway seam. New transforms are added here as they pass the gimmick-gate
-// harness; each starts life measured in shadow before being flipped on.
+// gateway seam, in evaluation order. New transforms are added here as they
+// pass the gimmick-gate harness; each starts life measured in shadow before
+// being flipped on. Ordering is load-bearing: terminal cleanups run first so
+// later transforms see clean text; base64 externalization runs before the
+// blunt oversize truncation so blobs get precise markers.
 func DefaultTransforms() []Transform {
-	return []Transform{jsonMinify{}, structuredDedup{}, logCompressor{}, oversizeTruncate{}}
+	return []Transform{
+		jsonMinify{},
+		ansiStrip{},
+		crCollapse{},
+		repeatCollapse{},
+		structuredDedup{},
+		logCompressor{},
+		base64Externalize{},
+		oversizeTruncate{},
+	}
 }
 
 // oversize truncation window. A single text content block larger than the
@@ -46,14 +59,37 @@ func (oversizeTruncate) ApplyWithStash(result json.RawMessage) (json.RawMessage,
 		}
 		original := []byte(text)
 		stash = append(stash, original)
-		head := text[:runeSafeEnd(text, oversizeHeadBytes)]
-		tail := text[runeSafeStart(text, len(text)-oversizeTailBytes):]
-		return head + "\n" + CCRMarker(CCRKey(original), len(original)) + "\n" + tail, true
+		headEnd := runeSafeEnd(text, oversizeHeadBytes)
+		tailStart := runeSafeStart(text, len(text)-oversizeTailBytes)
+		headEnd, tailStart = adjustCutForMarkers(text, headEnd, tailStart)
+		return text[:headEnd] + "\n" + CCRMarker(CCRKey(original), len(original)) + "\n" + text[tailStart:], true
 	})
 	if !changed {
 		return result, false, nil
 	}
 	return out, true, stash
+}
+
+// ccrMarkerSpanRE matches a complete inline CCR marker (as produced by
+// CCRMarker; no "]]" can occur inside one).
+var ccrMarkerSpanRE = regexp.MustCompile(`\[\[ccr key=[0-9a-f]{24} bytes=\d+[^\]]*\]\]`)
+
+// adjustCutForMarkers moves the head/tail cut points off any inline CCR
+// marker left by an earlier transform (e.g. log_compact), so truncation never
+// slices a marker in half — a half marker is unparseable garbage the model
+// can neither read nor expand. Head cuts shrink to before the marker; tail
+// cuts grow to after it. Content is unaffected otherwise: everything between
+// the cuts is stashed and recoverable via this transform's own marker.
+func adjustCutForMarkers(text string, headEnd, tailStart int) (int, int) {
+	for _, span := range ccrMarkerSpanRE.FindAllStringIndex(text, -1) {
+		if span[0] < headEnd && headEnd < span[1] {
+			headEnd = span[0]
+		}
+		if span[0] < tailStart && tailStart < span[1] {
+			tailStart = span[1]
+		}
+	}
+	return headEnd, tailStart
 }
 
 // TransformInfo is the descriptor the dashboard uses to render a toggle for
@@ -74,9 +110,9 @@ type TransformInfo struct {
 func DefaultTransformInfo() []TransformInfo {
 	ts := DefaultTransforms()
 	verified := make(map[string]bool, len(ts))
-	for _, m := range RunGate(ts, GateCorpus(), nil) {
+	for _, m := range RunGate(ts, GateCorpus()) {
 		verified[m.Transform] = (!m.Lossless || m.LosslessOK) && m.SecretSafe && m.RecoverableOK &&
-			!(m.Changed > 0 && m.TotalSavedBytes <= 0)
+			(m.Changed == 0 || m.TotalSavedBytes > 0)
 	}
 	out := make([]TransformInfo, 0, len(ts))
 	for _, t := range ts {

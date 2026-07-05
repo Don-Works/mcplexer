@@ -23,7 +23,7 @@ import (
 // Returns the original result unchanged on any unmarshalling error; we
 // would rather pass through unsanitized than fail a successful tool call
 // because of a malformed downstream payload (this matches the existing
-// posture in injectCacheMeta / compactor.CompactToolResult).
+// posture in injectCacheMeta).
 func (h *handler) sanitizeToolResult(
 	ctx context.Context,
 	result json.RawMessage,

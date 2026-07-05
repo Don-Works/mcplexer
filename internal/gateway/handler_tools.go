@@ -693,29 +693,14 @@ func (h *handler) handleToolsCall(
 	}
 
 	// Sanitize untrusted tool output (M1 Guards): scan for injection
-	// markers, wrap in <untrusted-content> envelope on hit. Must run
-	// BEFORE compaction — compacting an enveloped string is fine, but
-	// compaction can alter text in ways that would break the IsEnveloped
-	// short-circuit on a subsequent pass.
+	// markers, wrap in <untrusted-content> envelope on hit.
 	result = h.sanitizeToolResult(ctx, result, req.Name)
 
-	// Compact verbose JSON responses to reduce token consumption.
-	//
-	// Skip for internal code-mode calls: CompactToolResult turns an
-	// array-of-objects into the columnar {_cols,_rows,_fixed} shape, which is
-	// great for a model reading a tools/call result directly but breaks JS
-	// consumers inside mcpx__execute_code — `result.map`, `result.filter`,
-	// `result[i].field`, and `Array.isArray(result)` all fail on a columnar
-	// object. The sandbox must receive a naturally iterable plain array. Token
-	// economy on the code-mode path is handled downstream and on demand:
-	// `compactForSandbox` still prunes nulls/empties (more aggressively — it
-	// also strips pagination keys) before the value reaches JS, and `print()`
-	// / the opt-in `compact()` helper re-derive the columnar table from the
-	// plain value at render time. So skipping here costs no tokens the agent
-	// didn't ask to spend; it only keeps the consumed VALUE iterable.
-	if h.compactResponseEnabled(ctx) && !isInternalCodeModeCall(ctx) {
-		result = h.compactor.CompactToolResult(result)
-	}
+	// NOTE: the legacy CompactToolResult pass (columnar reshape + null/empty
+	// pruning) was removed from this path — it re-encoded JSON numbers through
+	// float64 (corrupting int64 IDs > 2^53) and dropped fields irreversibly,
+	// with no CCR backing. Token economy on model-facing results is now owned
+	// exclusively by the lossless/CCR-backed compression pipeline below.
 
 	// Lift JSON-shaped text into structuredContent BEFORE piggyback
 	// (piggyback adds a 2nd content block which would defeat the
@@ -734,7 +719,7 @@ func (h *handler) handleToolsCall(
 	// (columnar reshape would break `.map`/`[i]`); the execute_code OUTPUT the
 	// model actually reads is compressed separately in handleCodeExecute.
 	if !isInternalCodeModeCall(ctx) {
-		result = h.applyCompression(ctx, result)
+		result = h.applyCompressionForTool(ctx, req.Name, result)
 	}
 
 	// Piggyback mesh notices on successful downstream results.
@@ -745,15 +730,6 @@ func (h *handler) handleToolsCall(
 
 	h.recordAuditWithCache(ctx, req.Name, req.Arguments, routeResult, result, nil, start, cacheHit)
 	return result, nil
-}
-
-// compactResponseEnabled checks settings to decide whether to compact
-// verbose tool responses.
-func (h *handler) compactResponseEnabled(ctx context.Context) bool {
-	if h.settingsSvc != nil {
-		return h.settingsSvc.Load(ctx).CompactResponses
-	}
-	return true
 }
 
 // slimToolsEnabled checks settings (then env var fallback) to decide

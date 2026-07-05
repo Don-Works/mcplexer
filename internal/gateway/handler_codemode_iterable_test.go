@@ -7,7 +7,6 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/don-works/mcplexer/internal/compact"
 	"github.com/don-works/mcplexer/internal/config"
 	"github.com/don-works/mcplexer/internal/routing"
 	"github.com/don-works/mcplexer/internal/store"
@@ -150,20 +149,13 @@ func TestHandleToolsCall_CodeModeArrayResultIsIterable(t *testing.T) {
 }
 
 // TestHandleToolsCall_CodeModeArrayResultNotColumnar asserts directly at the
-// dispatch seam that handleToolsCall, when the call is internal (code-mode),
-// returns the array text UN-columnarized — and crucially that the same payload
-// run through the compactor WOULD columnarize, proving the skip is load-bearing
-// rather than a no-op on this input.
+// dispatch seam that handleToolsCall returns array text UN-columnarized for
+// internal (code-mode) calls. Regression guard for the 2026-07 removal of the
+// lossy CompactToolResult pass — columnar {_cols,_rows} must never reappear on
+// any model- or sandbox-facing result.
 func TestHandleToolsCall_CodeModeArrayResultNotColumnar(t *testing.T) {
 	body := arrayProfilesBody()
 	h, lister := newArrayResultHandler(t, body)
-
-	// Sanity: the compactor really does columnarize this exact payload, so a
-	// passing assertion below means the skip — not the input shape — is what
-	// keeps the result iterable.
-	if columnar := compact.New().CompactToolResult(body); !strings.Contains(string(columnar), "_cols") {
-		t.Fatalf("precondition failed: compactor did not columnarize the test payload: %s", columnar)
-	}
 
 	ctx := withInternalCodeModeCall(context.Background())
 	params, _ := json.Marshal(CallToolRequest{
