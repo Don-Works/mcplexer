@@ -2,69 +2,239 @@ package sqlite
 
 import (
 	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"time"
 
 	"github.com/don-works/mcplexer/internal/store"
 )
 
-// STAGE 0 CONTRACTS PLACEHOLDER.
-//
-// These stub implementations exist only so *DB satisfies the store.Store
-// composite (which gained store.CodeIndexStore in migration 127's stage-0
-// contract) and `go build ./...` stays green before the real write/read
-// paths land. Stage 1 Agent B REPLACES this file wholesale — the real
-// UpsertCodeIndexedFiles / DeleteCodeIndexFiles / PutCodeIndexBuild (write
-// path) plus a sibling code_index_query.go (read path) per plan §2/§4/P2.
-//
-// Behavior of the stubs: writes are no-ops; list/search return empty; the
-// getters return store.ErrNotFound (i.e. "never built"), which lets the
-// index service compile and degrade cleanly until the real impl arrives.
+const codeIndexFileCols = `id, workspace_id, path, path_tokens, language, package,
+	size_bytes, line_count, mtime_unix, content_hash, doc_summary,
+	is_test, skipped_reason, indexed_at`
 
-// UpsertCodeIndexedFiles is a stage-0 no-op. Replaced by Agent B.
-func (d *DB) UpsertCodeIndexedFiles(ctx context.Context, workspaceID string, files []store.IndexedFile) error {
+const codeIndexSymbolCols = `id, file_id, workspace_id, name, name_tokens, kind,
+	receiver, signature, doc, start_line, end_line, exported`
+
+func codeIndexSymbolColsPrefixed(alias string) string {
+	return alias + `.id, ` + alias + `.file_id, ` + alias + `.workspace_id, ` +
+		alias + `.name, ` + alias + `.name_tokens, ` + alias + `.kind, ` +
+		alias + `.receiver, ` + alias + `.signature, ` + alias + `.doc, ` +
+		alias + `.start_line, ` + alias + `.end_line, ` + alias + `.exported`
+}
+
+const codeIndexBuildCols = `workspace_id, root_path, git_head, dirty_count,
+	built_at, duration_ms, file_count, symbol_count, warnings_json`
+
+// UpsertCodeIndexedFiles upserts each file (preserving row id on conflict) and
+// fully replaces its symbols and edges inside one transaction.
+func (d *DB) UpsertCodeIndexedFiles(
+	ctx context.Context, workspaceID string, files []store.IndexedFile,
+) error {
+	if len(files) == 0 {
+		return nil
+	}
+	tx, err := d.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("upsert code index files: begin tx: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	q := &DB{db: d.db, q: tx}
+	for _, f := range files {
+		if err := q.upsertOneCodeIndexFile(ctx, workspaceID, f); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (d *DB) upsertOneCodeIndexFile(
+	ctx context.Context, workspaceID string, f store.IndexedFile,
+) error {
+	fileID, err := d.upsertCodeIndexFileRow(ctx, workspaceID, f.File)
+	if err != nil {
+		return err
+	}
+	if err := d.replaceCodeIndexFileChildren(ctx, workspaceID, fileID, f); err != nil {
+		return fmt.Errorf("replace children for %q: %w", f.File.Path, err)
+	}
 	return nil
 }
 
-// DeleteCodeIndexFiles is a stage-0 no-op. Replaced by Agent B.
-func (d *DB) DeleteCodeIndexFiles(ctx context.Context, workspaceID string, paths []string) error {
+func (d *DB) upsertCodeIndexFileRow(
+	ctx context.Context, workspaceID string, file store.CodeIndexFile,
+) (int64, error) {
+	if file.IndexedAt.IsZero() {
+		file.IndexedAt = time.Now().UTC()
+	}
+	_, err := d.q.ExecContext(ctx, `
+		INSERT INTO code_index_files (
+			workspace_id, path, path_tokens, language, package,
+			size_bytes, line_count, mtime_unix, content_hash, doc_summary,
+			is_test, skipped_reason, indexed_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(workspace_id, path) DO UPDATE SET
+			path_tokens = excluded.path_tokens,
+			language = excluded.language,
+			package = excluded.package,
+			size_bytes = excluded.size_bytes,
+			line_count = excluded.line_count,
+			mtime_unix = excluded.mtime_unix,
+			content_hash = excluded.content_hash,
+			doc_summary = excluded.doc_summary,
+			is_test = excluded.is_test,
+			skipped_reason = excluded.skipped_reason,
+			indexed_at = excluded.indexed_at`,
+		workspaceID, file.Path, file.PathTokens, file.Language, file.Package,
+		file.SizeBytes, file.LineCount, file.MtimeUnix, file.ContentHash,
+		file.DocSummary, boolToInt(file.IsTest), file.SkippedReason,
+		formatTime(file.IndexedAt))
+	if err != nil {
+		return 0, fmt.Errorf("upsert code index file %q: %w", file.Path, err)
+	}
+	var fileID int64
+	err = d.q.QueryRowContext(ctx, `
+		SELECT id FROM code_index_files
+		WHERE workspace_id = ? AND path = ?`,
+		workspaceID, file.Path).Scan(&fileID)
+	if err != nil {
+		return 0, fmt.Errorf("resolve code index file id %q: %w", file.Path, err)
+	}
+	return fileID, nil
+}
+
+func (d *DB) replaceCodeIndexFileChildren(
+	ctx context.Context, workspaceID string, fileID int64, f store.IndexedFile,
+) error {
+	if _, err := d.q.ExecContext(ctx,
+		`DELETE FROM code_index_symbols WHERE file_id = ?`, fileID); err != nil {
+		return fmt.Errorf("delete symbols: %w", err)
+	}
+	if _, err := d.q.ExecContext(ctx,
+		`DELETE FROM code_index_edges WHERE from_file_id = ?`, fileID); err != nil {
+		return fmt.Errorf("delete edges: %w", err)
+	}
+	for _, sym := range f.Symbols {
+		if err := d.insertCodeIndexSymbol(ctx, workspaceID, fileID, sym); err != nil {
+			return err
+		}
+	}
+	for _, edge := range f.Edges {
+		if err := d.insertCodeIndexEdge(ctx, workspaceID, fileID, edge); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
-// ListCodeIndexFileStats is a stage-0 stub returning no rows. Replaced by Agent B.
-func (d *DB) ListCodeIndexFileStats(ctx context.Context, workspaceID string) ([]store.CodeIndexFileStat, error) {
-	return nil, nil
+func (d *DB) insertCodeIndexSymbol(
+	ctx context.Context, workspaceID string, fileID int64, sym store.CodeIndexSymbol,
+) error {
+	_, err := d.q.ExecContext(ctx, `
+		INSERT INTO code_index_symbols (
+			workspace_id, file_id, name, name_tokens, kind, receiver,
+			signature, doc, start_line, end_line, exported)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		workspaceID, fileID, sym.Name, sym.NameTokens, sym.Kind, sym.Receiver,
+		sym.Signature, sym.Doc, sym.StartLine, sym.EndLine, boolToInt(sym.Exported))
+	if err != nil {
+		return fmt.Errorf("insert code index symbol %q: %w", sym.Name, err)
+	}
+	return nil
 }
 
-// GetCodeIndexFile is a stage-0 stub. Replaced by Agent B.
-func (d *DB) GetCodeIndexFile(ctx context.Context, workspaceID, path string) (*store.CodeIndexFile, error) {
-	return nil, store.ErrNotFound
+func (d *DB) insertCodeIndexEdge(
+	ctx context.Context, workspaceID string, fileID int64, edge store.CodeIndexEdge,
+) error {
+	_, err := d.q.ExecContext(ctx, `
+		INSERT INTO code_index_edges (
+			workspace_id, from_file_id, kind, to_path, to_module)
+		VALUES (?, ?, ?, ?, ?)`,
+		workspaceID, fileID, edge.Kind, edge.ToPath, edge.ToModule)
+	if err != nil {
+		return fmt.Errorf("insert code index edge: %w", err)
+	}
+	return nil
 }
 
-// ListCodeIndexSymbolsByPath is a stage-0 stub returning no rows. Replaced by Agent B.
-func (d *DB) ListCodeIndexSymbolsByPath(ctx context.Context, workspaceID, path string) ([]store.CodeIndexSymbol, error) {
-	return nil, nil
+// DeleteCodeIndexFiles removes files and their child symbols/edges for a workspace.
+func (d *DB) DeleteCodeIndexFiles(
+	ctx context.Context, workspaceID string, paths []string,
+) error {
+	if len(paths) == 0 {
+		return nil
+	}
+	tx, err := d.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("delete code index files: begin tx: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	q := &DB{db: d.db, q: tx}
+	for _, path := range paths {
+		if err := q.deleteOneCodeIndexFile(ctx, workspaceID, path); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
-// SearchCodeIndexSymbols is a stage-0 stub returning no hits. Replaced by Agent B.
-func (d *DB) SearchCodeIndexSymbols(ctx context.Context, q store.CodeIndexSymbolQuery) ([]store.CodeIndexSymbolHit, error) {
-	return nil, nil
+func (d *DB) deleteOneCodeIndexFile(ctx context.Context, workspaceID, path string) error {
+	var fileID int64
+	err := d.q.QueryRowContext(ctx, `
+		SELECT id FROM code_index_files
+		WHERE workspace_id = ? AND path = ?`, workspaceID, path).Scan(&fileID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("lookup code index file %q: %w", path, err)
+	}
+	if _, err := d.q.ExecContext(ctx,
+		`DELETE FROM code_index_symbols WHERE file_id = ?`, fileID); err != nil {
+		return fmt.Errorf("delete symbols for %q: %w", path, err)
+	}
+	if _, err := d.q.ExecContext(ctx,
+		`DELETE FROM code_index_edges WHERE from_file_id = ?`, fileID); err != nil {
+		return fmt.Errorf("delete edges for %q: %w", path, err)
+	}
+	if _, err := d.q.ExecContext(ctx, `
+		DELETE FROM code_index_files WHERE id = ?`, fileID); err != nil {
+		return fmt.Errorf("delete file %q: %w", path, err)
+	}
+	return nil
 }
 
-// SearchCodeIndexFiles is a stage-0 stub returning no hits. Replaced by Agent B.
-func (d *DB) SearchCodeIndexFiles(ctx context.Context, workspaceID, query string, limit int) ([]store.CodeIndexFileHit, error) {
-	return nil, nil
-}
-
-// ListCodeIndexEdges is a stage-0 stub returning no edges. Replaced by Agent B.
-func (d *DB) ListCodeIndexEdges(ctx context.Context, f store.CodeIndexEdgeFilter) ([]store.CodeIndexEdgeHit, error) {
-	return nil, nil
-}
-
-// PutCodeIndexBuild is a stage-0 no-op. Replaced by Agent B.
+// PutCodeIndexBuild upserts the per-workspace build freshness row.
 func (d *DB) PutCodeIndexBuild(ctx context.Context, b *store.CodeIndexBuild) error {
+	if b == nil {
+		return errors.New("PutCodeIndexBuild: nil build")
+	}
+	if b.BuiltAt.IsZero() {
+		b.BuiltAt = time.Now().UTC()
+	}
+	if b.WarningsJSON == "" {
+		b.WarningsJSON = "[]"
+	}
+	_, err := d.q.ExecContext(ctx, `
+		INSERT INTO code_index_builds (`+codeIndexBuildCols+`)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(workspace_id) DO UPDATE SET
+			root_path = excluded.root_path,
+			git_head = excluded.git_head,
+			dirty_count = excluded.dirty_count,
+			built_at = excluded.built_at,
+			duration_ms = excluded.duration_ms,
+			file_count = excluded.file_count,
+			symbol_count = excluded.symbol_count,
+			warnings_json = excluded.warnings_json`,
+		b.WorkspaceID, b.RootPath, b.GitHead, b.DirtyCount,
+		formatTime(b.BuiltAt), b.DurationMS, b.FileCount, b.SymbolCount,
+		b.WarningsJSON)
+	if err != nil {
+		return fmt.Errorf("put code index build: %w", err)
+	}
 	return nil
-}
-
-// GetCodeIndexBuild is a stage-0 stub reporting "never built". Replaced by Agent B.
-func (d *DB) GetCodeIndexBuild(ctx context.Context, workspaceID string) (*store.CodeIndexBuild, error) {
-	return nil, store.ErrNotFound
 }
