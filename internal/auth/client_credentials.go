@@ -51,6 +51,8 @@ func (c *clientCredentialsCache) set(scopeID, token string, expiresAt time.Time)
 	c.entries[scopeID] = &tokenEntry{accessToken: token, expiresAt: expiresAt}
 }
 
+var ccHTTPClient = &http.Client{Timeout: 30 * time.Second}
+
 // ccTokenResponse is the OAuth2 token response for client_credentials.
 type ccTokenResponse struct {
 	AccessToken string `json:"access_token"`
@@ -65,6 +67,9 @@ func exchangeClientCredentials(
 	ctx context.Context,
 	tokenURL, clientID, clientSecret, scopes string,
 ) (token string, expiresAt time.Time, err error) {
+	if strings.HasPrefix(strings.ToLower(tokenURL), "http://") {
+		return "", time.Time{}, fmt.Errorf("token URL must use https, got %s", tokenURL)
+	}
 	form := url.Values{"grant_type": {"client_credentials"}}
 	if scopes != "" {
 		form.Set("scope", scopes)
@@ -81,13 +86,13 @@ func exchangeClientCredentials(
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := ccHTTPClient.Do(req)
 	if err != nil {
 		return "", time.Time{}, fmt.Errorf("token request: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
 		return "", time.Time{}, fmt.Errorf("read token response: %w", err)
 	}

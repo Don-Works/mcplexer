@@ -56,8 +56,8 @@ export interface BrainPushResult {
   status?: BrainGitStatus
 }
 
-export function getBrainStatus(): Promise<BrainStatus> {
-  return request('/brain/status')
+export function getBrainStatus(init?: RequestInit): Promise<BrainStatus> {
+  return request('/brain/status', init)
 }
 
 export function listBrainErrors(): Promise<BrainError[]> {

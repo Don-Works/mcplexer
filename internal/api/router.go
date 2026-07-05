@@ -685,6 +685,8 @@ func NewRouter(deps RouterDeps) http.Handler {
 		mux.HandleFunc("POST /api/v1/mesh/send", msh.send)
 		mwh := &meshWaitHandler{mgr: deps.MeshManager}
 		mux.HandleFunc("GET /api/v1/mesh/wait", mwh.wait)
+		ch := &chatSendHandler{mgr: deps.MeshManager}
+		mux.HandleFunc("POST /api/v1/chat/send", ch.send)
 	}
 
 	// "Focus" — switch the user's local tmux to a mesh agent's pane.

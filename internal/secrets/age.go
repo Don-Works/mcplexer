@@ -138,6 +138,7 @@ func (e *AgeEncryptor) Decrypt(ciphertext []byte) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create age reader: %w", err)
 	}
+	defer r.Close()
 	plaintext, err := io.ReadAll(r)
 	if err != nil {
 		return nil, fmt.Errorf("read decrypted data: %w", err)

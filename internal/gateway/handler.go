@@ -33,6 +33,9 @@ import (
 	workersadmin "github.com/don-works/mcplexer/internal/workers/admin"
 )
 
+// buildVersion is set via -ldflags at build time.
+var buildVersion = "dev"
+
 // ToolLister abstracts downstream tool discovery and invocation.
 type ToolLister interface {
 	ListAllTools(ctx context.Context) (map[string]json.RawMessage, error)
@@ -79,7 +82,7 @@ type handler struct {
 	settingsSvc    *config.SettingsService
 	compactor      *compact.Compactor
 	toolsListCache *cache.Cache[string, json.RawMessage]
-	notifier       Notifier                  // set at runtime for sending notifications
+
 	addonRegistry  *addon.Registry           // nil = no addons loaded
 	addonExecutor  *addon.Executor           // nil = no addons loaded
 	addonCreator   AddonCreator              // nil = creating addons disabled
@@ -117,8 +120,14 @@ type handler struct {
 	refinedDescs   map[string]string
 	refinedDescsMu sync.RWMutex
 
-	// bgCtx is a long-lived context for background goroutines (set from run()).
-	bgCtx context.Context
+	// notifierMu protects notifier against concurrent access from
+	// background goroutines (e.g. sendToolsListChanged).
+	notifierMu sync.RWMutex
+	notifier    Notifier // set at runtime for sending notifications — guarded by notifierMu
+
+	// bgCtxMu protects bgCtx reads/writes.
+	bgCtxMu sync.RWMutex
+	bgCtx   context.Context // set from run()
 	// Background catalog refresh state, keyed by cache key (server group). The
 	// refresh re-arms on an interval (backgroundRefreshInterval) instead of firing
 	// once-ever: a downstream MCP server that restarts with a changed tool surface
@@ -128,6 +137,7 @@ type handler struct {
 	// to a single in-flight goroutine; bgRefreshAt records the last refresh start so
 	// the next trigger waits out the interval. A tools/list_changed notification is
 	// sent only when the live catalog actually differs from the cached one.
+	bgWg              sync.WaitGroup
 	bgRefreshMu       sync.Mutex
 	bgRefreshAt       map[string]time.Time
 	bgRefreshInFlight map[string]bool
@@ -163,7 +173,9 @@ type lastCreatedKey struct {
 
 // setNotifier sets the notifier for sending client notifications.
 func (h *handler) setNotifier(n Notifier) {
+	h.notifierMu.Lock()
 	h.notifier = n
+	h.notifierMu.Unlock()
 }
 
 // setTasksSvc wires the tasks service post-construction so the
@@ -289,7 +301,7 @@ func (h *handler) handleInitialize(
 		Capabilities: ServerCapability{
 			Tools: &ToolCapability{ListChanged: true},
 		},
-		ServerInfo: ServerInfo{Name: "mcplexer", Version: "0.4.0"},
+		ServerInfo: ServerInfo{Name: "mcplexer", Version: buildVersion},
 	}
 	result.Instructions = buildCodeModeInstructions(
 		harnessProfileForClient(p.ClientInfo.Name),

@@ -23,6 +23,7 @@ export function useBrainStatus(): UseBrainStatusReturn {
 
   useEffect(() => {
     let active = true
+    const controller = new AbortController()
 
     if (trigger > 0) {
       setState((prev) => ({ ...prev, loading: true, error: null }))
@@ -30,6 +31,7 @@ export function useBrainStatus(): UseBrainStatusReturn {
 
     const timeoutId = setTimeout(() => {
       if (active) {
+        controller.abort()
         setState((prev) => ({
           ...prev,
           loading: false,
@@ -39,7 +41,7 @@ export function useBrainStatus(): UseBrainStatusReturn {
       }
     }, 15_000)
 
-    getBrainStatus()
+    getBrainStatus({ signal: controller.signal })
       .then((data) => {
         if (active) {
           clearTimeout(timeoutId)
@@ -65,6 +67,7 @@ export function useBrainStatus(): UseBrainStatusReturn {
 
     return () => {
       active = false
+      controller.abort()
       clearTimeout(timeoutId)
     }
   }, [trigger])

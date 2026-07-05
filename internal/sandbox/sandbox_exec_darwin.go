@@ -13,6 +13,10 @@ import (
 	"strings"
 )
 
+var sandboxSafeEnv = []string{
+	"PATH", "HOME", "USER", "SHELL", "TERM", "LANG", "TMPDIR", "TMP",
+}
+
 // sandboxExecPath is the absolute path to Apple's sandbox-exec binary.
 // Hard-coded rather than going through exec.LookPath: on macOS this is
 // part of the base system and a substituted /usr/local/bin/sandbox-exec
@@ -55,6 +59,7 @@ func (d *sandboxExecDriver) Run(
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
+	cmd.Env = cleanSandboxEnv(sandboxSafeEnv)
 	if cfg.WorkingDir != "" {
 		cmd.Dir = cfg.WorkingDir
 	}
@@ -64,6 +69,21 @@ func (d *sandboxExecDriver) Run(
 		return ExitCode(cmd.ProcessState.ExitCode()), filterRunErr(err)
 	}
 	return -1, err
+}
+
+func cleanSandboxEnv(safeVars []string) []string {
+	safe := make(map[string]struct{}, len(safeVars))
+	for _, k := range safeVars {
+		safe[k] = struct{}{}
+	}
+	var out []string
+	for _, e := range os.Environ() {
+		k, _, _ := strings.Cut(e, "=")
+		if _, ok := safe[k]; ok {
+			out = append(out, e)
+		}
+	}
+	return out
 }
 
 // writeProfileTemp writes the .sb profile string to a fresh tempfile

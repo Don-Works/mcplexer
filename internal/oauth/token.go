@@ -13,6 +13,8 @@ import (
 	"github.com/don-works/mcplexer/internal/store"
 )
 
+var oauthHTTPClient = &http.Client{Timeout: 30 * time.Second}
+
 // tokenResponse is the JSON response from an OAuth2 token endpoint.
 type tokenResponse struct {
 	AccessToken  string `json:"access_token"`
@@ -217,13 +219,13 @@ func (fm *FlowManager) postToken(
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := oauthHTTPClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("token request: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
 		return nil, fmt.Errorf("read token response: %w", err)
 	}

@@ -640,6 +640,10 @@ func sanitizeFTS5Query(q string) string {
 		if p == "" {
 			continue
 		}
+		p = strings.ReplaceAll(p, `\`, "")
+		if p == "" {
+			continue
+		}
 		out = append(out, `"`+p+`"`)
 	}
 	if len(out) == 0 {

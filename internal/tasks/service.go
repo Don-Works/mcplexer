@@ -951,6 +951,24 @@ func (s *Service) Heartbeat(ctx context.Context, workspaceID, id, sessionID stri
 	return nil
 }
 
+// recentLeaseExpired returns true if the task's embedded status_history
+// already contains a lease_expired entry within the last hour. This
+// prevents the sweep from spamming duplicate entries on tasks whose
+// lease_expires_at was already stale.
+func recentLeaseExpired(t *store.Task) bool {
+	history := readHistory(t.StatusHistoryJSON)
+	cutoff := time.Now().UTC().Add(-1 * time.Hour)
+	for i := len(history) - 1; i >= 0; i-- {
+		if history[i].Evt == "lease_expired" && history[i].At.After(cutoff) {
+			return true
+		}
+		if history[i].At.Before(cutoff) {
+			break
+		}
+	}
+	return false
+}
+
 // SweepExpiredLeases clears every row whose lease window has elapsed
 // and appends evt=lease_expired to each cleared row's status_history
 // so the audit trail shows why the row was abandoned. Tasks in a
@@ -966,6 +984,12 @@ func (s *Service) SweepExpiredLeases(ctx context.Context) (int, error) {
 	for _, id := range ids {
 		t, gerr := s.store.GetTask(ctx, id)
 		if gerr != nil {
+			continue
+		}
+		// Dedup: skip if the last history entry was also lease_expired
+		// within the last hour (prevents spam from repeated sweeps on
+		// tasks whose lease_expires_at was already stale).
+		if recentLeaseExpired(t) {
 			continue
 		}
 		before := cloneTask(t)
@@ -1946,6 +1970,12 @@ func truncateForHistory(s string, limit int) string {
 	s = strings.TrimSpace(s)
 	if limit <= 0 || len(s) <= limit {
 		return s
+	}
+	// rune-safe truncation: find the last full rune within the cap.
+	for i := limit; i > 0; i-- {
+		if i < len(s) && (s[i]&0xc0) != 0x80 {
+			return s[:i] + "..."
+		}
 	}
 	return s[:limit] + "..."
 }

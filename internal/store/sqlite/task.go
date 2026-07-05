@@ -279,11 +279,6 @@ func (d *DB) ListTasks(ctx context.Context, f store.TaskFilter) ([]store.Task, e
 	if err != nil {
 		return nil, err
 	}
-	// Apply tag post-filter (FTS-style tags get tokenised in the FTS
-	// mirror; the JSON column is the source of truth for ALL-must-match).
-	if len(f.Tags) > 0 {
-		out = filterTasksByTags(out, f.Tags)
-	}
 	return out, rows.Err()
 }
 
@@ -424,9 +419,6 @@ func (d *DB) searchTasksFTS(ctx context.Context, f store.TaskFilter, query strin
 	if err != nil {
 		return nil, err
 	}
-	if len(f.Tags) > 0 {
-		out = filterTasksByTags(out, f.Tags)
-	}
 	return out, rows.Err()
 }
 
@@ -454,9 +446,6 @@ func (d *DB) searchTasksTitleFallback(ctx context.Context, f store.TaskFilter, q
 	if err != nil {
 		return nil, err
 	}
-	if len(f.Tags) > 0 {
-		out = filterTasksByTags(out, f.Tags)
-	}
 	return out, rows.Err()
 }
 
@@ -483,9 +472,6 @@ func (d *DB) searchTasksTagFallback(ctx context.Context, f store.TaskFilter, que
 	out, err := scanTasks(rows)
 	if err != nil {
 		return nil, err
-	}
-	if len(f.Tags) > 0 {
-		out = filterTasksByTags(out, f.Tags)
 	}
 	return out, rows.Err()
 }
@@ -535,9 +521,6 @@ func (d *DB) searchTasksByIDRef(ctx context.Context, f store.TaskFilter, query s
 	out, err := scanTasks(rows)
 	if err != nil {
 		return nil, err
-	}
-	if len(f.Tags) > 0 {
-		out = filterTasksByTags(out, f.Tags)
 	}
 	return out, rows.Err()
 }
@@ -781,6 +764,14 @@ func buildTaskWhere(f store.TaskFilter) (string, []any, error) {
 		clause, vs := metaInSQL(k, opts, "tasks")
 		conds = append(conds, clause)
 		args = append(args, vs...)
+	}
+	for _, t := range f.Tags {
+		t = strings.ToLower(strings.TrimSpace(t))
+		if t == "" {
+			continue
+		}
+		conds = append(conds, "EXISTS (SELECT 1 FROM json_each(tasks.tags_json) WHERE lower(json_each.value) = ?)")
+		args = append(args, t)
 	}
 	if len(conds) == 0 {
 		return "1=1", args, nil

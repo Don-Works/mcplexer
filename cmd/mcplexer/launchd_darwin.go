@@ -7,7 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"text/template"
+	"html/template"
 )
 
 const plistName = "com.mcplexer.daemon"

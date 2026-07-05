@@ -1031,7 +1031,7 @@ func buildServerDeps(ctx context.Context, cfg *Config, db *sqlite.DB, settingsSv
 	// that have no vector yet so old notes become searchable by meaning
 	// without the user re-saving them. Runs once in the background; no-ops
 	// when there's no embedder or nothing pending. Resumable across restarts.
-	if d.memorySvc.StartBackfillAsync() {
+	if d.memorySvc.StartBackfillAsync(ctx) {
 		slog.Info("memory: embeddings backfill started for existing corpus")
 	}
 	// Bridge memory.Service.Notify → notify.Bus so every memory CUD op,

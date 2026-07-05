@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback } from 'react'
-import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom'
+import { BrowserRouter, Link, Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { Toaster } from '@/components/ui/sonner'
 import { useDocumentTitle } from '@/hooks/use-pending-title'
@@ -13,8 +13,7 @@ import { AppLayout } from '@/components/layout/AppLayout'
 import { BrainGate } from '@/components/BrainGate'
 import { QuickSetupPage } from '@/pages/QuickSetupPage'
 import { HarnessSetupPage } from '@/pages/HarnessSetupPage'
-import { getHealth } from '@/api/client'
-import { useApi } from '@/hooks/use-api'
+import { useHealth, HealthProvider } from '@/hooks/use-health'
 import { serverHomePath } from '@/lib/server-profile'
 
 const DashboardPage = lazy(() => import('@/pages/DashboardPage').then(m => ({ default: m.DashboardPage })))
@@ -30,6 +29,7 @@ const ApprovalsPage = lazy(() => import('@/pages/ApprovalsPage').then(m => ({ de
 const MobileAppPage = lazy(() => import('@/pages/MobileAppPage').then(m => ({ default: m.MobileAppPage })))
 const SettingsPage = lazy(() => import('@/pages/SettingsPage').then(m => ({ default: m.SettingsPage })))
 const MeshPage = lazy(() => import('@/pages/MeshPage').then(m => ({ default: m.MeshPage })))
+const ChatView = lazy(() => import('@/pages/chat/ChatView').then(m => ({ default: m.ChatView })))
 const PairingPage = lazy(() => import('@/pages/Pairing').then(m => ({ default: m.PairingPage })))
 const BackupsPage = lazy(() => import('@/pages/BackupsPage').then(m => ({ default: m.BackupsPage })))
 const BrainStatusPage = lazy(() => import('@/pages/BrainStatusPage').then(m => ({ default: m.BrainStatusPage })))
@@ -67,6 +67,16 @@ function PageLoader() {
   return (
     <div className="flex items-center justify-center py-32">
       <div className="animate-pulse text-muted-foreground text-sm">Loading...</div>
+    </div>
+  )
+}
+
+function NotFound() {
+  return (
+    <div className="flex flex-col items-center justify-center py-32 gap-4">
+      <h1 className="text-4xl font-bold text-foreground">404</h1>
+      <p className="text-muted-foreground">Page not found</p>
+      <Link to="/" className="text-sm text-primary hover:underline">Back to home</Link>
     </div>
   )
 }
@@ -128,6 +138,7 @@ function App() {
             <Route path="/app" element={<MobileAppPage />} />
             <Route path="/approvals" element={<ApprovalsPage />} />
             <Route path="/mesh" element={<MeshPage />} />
+            <Route path="/chat" element={<ChatView />} />
             <Route path="/skills" element={<SkillRegistryPage />} />
             <Route path="/signals" element={<SignalsPage />} />
 
@@ -214,6 +225,7 @@ function App() {
             <Route path="/brain" element={<BrainStatusPage />} />
             <Route path="/brain/browse" element={<BrainGate><BrainBrowserPage /></BrainGate>} />
             <Route path="/brain/browse/:ws/:kind/:id" element={<BrainGate><BrainBrowserPage /></BrainGate>} />
+            <Route path="*" element={<NotFound />} />
           </Routes>
         </Suspense>
       </AppLayout>

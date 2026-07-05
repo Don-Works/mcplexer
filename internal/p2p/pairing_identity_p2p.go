@@ -5,7 +5,9 @@ package p2p
 import (
 	"bufio"
 	"encoding/json"
+	"log/slog"
 	"strings"
+	"unicode"
 )
 
 // SetSelfIdentity records the local human-user identity (M7.1) so the
@@ -47,5 +49,35 @@ func readIdentityFrame(r *bufio.Reader) remoteIdentity {
 		return out
 	}
 	_ = json.Unmarshal([]byte(line), &out)
+	if out.UserID != "" {
+		if len(out.UserID) > 128 || !isAlphanumericHyphen(out.UserID) {
+			slog.Warn("p2p: invalid user_id in identity frame, discarding", "user_id", out.UserID)
+			out.UserID = ""
+		}
+	}
+	if out.DisplayName != "" {
+		if len(out.DisplayName) > 256 || containsControlChars(out.DisplayName) {
+			slog.Warn("p2p: invalid display_name in identity frame, discarding", "display_name", out.DisplayName)
+			out.DisplayName = ""
+		}
+	}
 	return out
+}
+
+func isAlphanumericHyphen(s string) bool {
+	for _, c := range s {
+		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-') {
+			return false
+		}
+	}
+	return true
+}
+
+func containsControlChars(s string) bool {
+	for _, c := range s {
+		if unicode.IsControl(c) {
+			return true
+		}
+	}
+	return false
 }

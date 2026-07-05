@@ -229,7 +229,7 @@ func writeBundleEntries(raw []byte, dest, prefix string) ([]string, error) {
 			if err != nil {
 				return nil, fmt.Errorf("create %s: %w", rel, err)
 			}
-			if _, err := io.Copy(f, tr); err != nil {
+			if _, err := io.Copy(f, io.LimitReader(tr, 50*1024*1024)); err != nil {
 				_ = f.Close()
 				return nil, fmt.Errorf("write %s: %w", rel, err)
 			}
