@@ -87,7 +87,7 @@ func indexQueryToolDefinitions() []Tool {
 		},
 		{
 			Name:        "index__context",
-			Description: "THE context-pack call: given a task description or question, returns a token-budgeted, ranked pack of the right files — summaries, key symbols with line numbers, owning tests, recent commits — instead of you slurping the repo. Auto-refreshes the index if git HEAD moved. Designed for small-context models: ask first, read files second. For one known file use index__summary; for a failure use index__map_failure.",
+			Description: "Get the relevant context for a coding task: given a task description or question, returns a token-budgeted, ranked pack of the right files — summaries, key symbols with line numbers, owning tests, recent commits. Call this FIRST when exploring the codebase, orienting on unfamiliar code, or gathering context, instead of reading the repo wholesale. Auto-refreshes the index if git HEAD moved. Designed for small-context models: ask first, read files second. For one known file use index__summary; for a failure use index__map_failure.",
 			InputSchema: json.RawMessage(`{
 				"type": "object",
 				"properties": {

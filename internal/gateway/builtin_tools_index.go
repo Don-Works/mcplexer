@@ -48,7 +48,7 @@ func indexToolDefinitions() []Tool {
 		},
 		{
 			Name:        "index__symbols",
-			Description: "Search the symbol map (functions, methods, types, consts, classes, components) by name or words — camelCase is word-split, so 'kv set' finds HandleKVSet. Returns file:line hits with signatures. Results reflect the last index__build (check index__status if unsure). For a whole-task, multi-file context pack use index__context instead.",
+			Description: "Find where a function, method, type, const, class, or component is defined — definition lookup over the code symbol map by name or words (camelCase is word-split, so 'kv set' finds HandleKVSet). Returns file:line hits with signatures; use this instead of grepping the repo. Results reflect the last index__build (check index__status if unsure). For a whole-task, multi-file context pack use index__context instead.",
 			InputSchema: json.RawMessage(`{
 				"type": "object",
 				"properties": {

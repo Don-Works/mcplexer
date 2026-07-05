@@ -86,12 +86,35 @@ func TestRenderV4HasTaskDiscipline(t *testing.T) {
 	}
 }
 
-// TestCurrentVersionIsV9 — guard rail so a future bump that forgets
+// TestCurrentVersionIsV10 — guard rail so a future bump that forgets
 // to add the matching contentVN switch case fails fast in tests
 // rather than silently shipping a stale block.
-func TestCurrentVersionIsV9(t *testing.T) {
-	if CurrentVersion != 9 {
-		t.Fatalf("CurrentVersion=%d; expected 9. If you bumped it, add the matching contentVN + test coverage.", CurrentVersion)
+func TestCurrentVersionIsV10(t *testing.T) {
+	if CurrentVersion != 10 {
+		t.Fatalf("CurrentVersion=%d; expected 10. If you bumped it, add the matching contentVN + test coverage.", CurrentVersion)
+	}
+}
+
+// TestRenderV10HasCodeIndex pins the v10 contract: the code-index
+// family section is present, leads with the ask-the-index-first rule,
+// and names the headline calls. v10 must also inherit v9's browser
+// section.
+func TestRenderV10HasCodeIndex(t *testing.T) {
+	out := Render(10)
+	mustContain := []string{
+		"<!-- MCPLEXER:BEGIN v10 -->",
+		"ask the index before reading the repo",
+		"`index.context({query, budget_tokens})`",
+		"`index.symbols`",
+		"`index.map_failure`",
+		"`index.build`",
+		// v10 must inherit v9's browser-automation guidance.
+		"Browser automation",
+	}
+	for _, s := range mustContain {
+		if !strings.Contains(out, s) {
+			t.Errorf("Render(10) missing required substring %q", s)
+		}
 	}
 }
 
