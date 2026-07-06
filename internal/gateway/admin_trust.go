@@ -24,36 +24,50 @@ type AdminTrust string
 const (
 	// AdminTrustNone — the session does not qualify for admin at all.
 	AdminTrustNone AdminTrust = ""
-	// AdminTrustDataDir — qualified via the real admin context: CWD (or
-	// an admin-trusted workspace tag) inside the data directory, the
-	// gate being disabled, or the explicit env break-glass. Full admin
-	// authority.
+	// AdminTrustDataDir — qualified via the real admin context: a CWD or
+	// workspace root physically inside the data directory, or the gate
+	// being disabled (no data dir configured). Full admin authority,
+	// including cross-workspace credential references. This is the
+	// operator-at-the-data-dir context — owning that path already owns
+	// the host, so there is no workspace-segregation expectation to
+	// protect.
 	AdminTrustDataDir AdminTrust = "datadir"
-	// AdminTrustSourceRepo — qualified ONLY via the dev-mode escape (a
-	// CWD or workspace root inside a mcplexer source tree). Admin tools
-	// are visible, but cross-workspace credential references in route
-	// mutations are refused (internal/control route guard).
+	// AdminTrustSourceRepo — qualified via a dev-mode escape: a CWD or
+	// workspace root inside a mcplexer source tree, OR the
+	// MCPLEXER_ADMIN_ALLOW_ANY_CWD env break-glass. Admin tools are
+	// visible and callable, but cross-workspace credential references in
+	// route mutations are refused (internal/control route guard). Both
+	// escapes are dev conveniences for exercising admin tools while
+	// working on the gateway — neither should double as a
+	// workspace-segregation bypass (2026-07-06 incident).
 	AdminTrustSourceRepo AdminTrust = "source-repo"
 )
 
 // AdminTrustLevel reports how (cwd, workspaceRoots) qualifies for the
-// admin surface. The decision mirrors IsAdminContext exactly — same
-// signals, same order — but returns the strongest matching level
-// instead of collapsing to a boolean. Data-dir qualification wins over
-// the source-repo escape when both hold.
+// admin surface, returning the strongest matching level instead of the
+// boolean IsAdminContext collapses to. A genuine data-dir context wins;
+// the source-repo tree and the env break-glass both resolve to the
+// weaker source-repo level so the route guard still polices them.
+//
+// Agreement invariant with IsAdminContext: this returns AdminTrustNone
+// iff IsAdminContext would return false. The env break-glass makes
+// IsAdminContext true from any dir, so it must yield a non-None level
+// here too — but source-repo, not data-dir, so the segregation guard
+// keeps biting.
 func (g *AdminCWDGate) AdminTrustLevel(cwd string, workspaceRoots []string) AdminTrust {
-	if !g.Enabled() || adminAnyCWDBypass() {
+	if !g.Enabled() {
 		return AdminTrustDataDir
 	}
-	sourceRepo := false
+	// A genuine data-dir CWD is the operator context — full authority.
 	if cwd != "" {
 		cleaned := filepath.Clean(cwd)
 		if cleaned == g.dataDir || strings.HasPrefix(cleaned, g.dataDir+string(filepath.Separator)) {
 			return AdminTrustDataDir
 		}
-		if isMcplexerSourceCWD(cleaned) {
-			sourceRepo = true
-		}
+	}
+	sourceRepo := false
+	if cwd != "" && isMcplexerSourceCWD(filepath.Clean(cwd)) {
+		sourceRepo = true
 	}
 	for _, root := range workspaceRoots {
 		if root == "" {
@@ -64,6 +78,13 @@ func (g *AdminCWDGate) AdminTrustLevel(cwd string, workspaceRoots []string) Admi
 		}
 	}
 	if sourceRepo {
+		return AdminTrustSourceRepo
+	}
+	// The env break-glass lifts the CWD gate from every directory. It
+	// still grants admin (that is its purpose), but only at source-repo
+	// trust: a dev exercising admin tools from an arbitrary dir must not
+	// thereby be able to borrow another workspace's credentialed servers.
+	if adminAnyCWDBypass() {
 		return AdminTrustSourceRepo
 	}
 	return AdminTrustNone
