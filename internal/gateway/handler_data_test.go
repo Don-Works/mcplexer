@@ -49,23 +49,23 @@ func TestDataToolsDispatchRoundTrip(t *testing.T) {
 			{"state":"done","title":"routine cleanup"}
 		]
 	}`)
-	if !strings.Contains(ingest, `"row_count": 2`) {
+	if !strings.Contains(ingest, `"row_count":2`) {
 		t.Fatalf("ingest body missing row count: %s", ingest)
 	}
 
 	query := dataResult(t, h, "data__query",
 		`{"name":"issues","sql":"SELECT state, COUNT(*) AS c FROM data GROUP BY state"}`)
-	if !strings.Contains(query, `"state": "open"`) {
+	if !strings.Contains(query, `"state":"open"`) {
 		t.Fatalf("query body missing open row: %s", query)
 	}
 
 	search := dataResult(t, h, "data__search", `{"name":"issues","query":"urgent"}`)
-	if !strings.Contains(search, `"count": 1`) {
+	if !strings.Contains(search, `"count":1`) {
 		t.Fatalf("search body missing hit: %s", search)
 	}
 
 	drop := dataResult(t, h, "data__drop", `{"name":"issues"}`)
-	if !strings.Contains(drop, `"ok": true`) {
+	if !strings.Contains(drop, `"ok":true`) {
 		t.Fatalf("drop body = %s", drop)
 	}
 }
@@ -156,13 +156,13 @@ func TestDataHarvestHarnessContext(t *testing.T) {
 		t.Fatalf("rpc error: %v", rpcErr)
 	}
 	result := rawResultText(t, raw)
-	if !strings.Contains(result, `"ok": true`) {
+	if !strings.Contains(result, `"ok":true`) {
 		t.Fatalf("harvest result missing ok: %s", result)
 	}
-	if !strings.Contains(result, `"collection_name": "ctx-test"`) {
+	if !strings.Contains(result, `"collection_name":"ctx-test"`) {
 		t.Fatalf("harvest result missing collection_name: %s", result)
 	}
-	if !strings.Contains(result, `"total_ingested": 2`) {
+	if !strings.Contains(result, `"total_ingested":2`) {
 		t.Fatalf("harvest result missing ingested count: %s", result)
 	}
 	cols, err := h.store.ListDataCollections(context.Background(), store.DataCollectionFilter{
@@ -204,10 +204,10 @@ func TestDataHarvestHarnessContextEmpty(t *testing.T) {
 		t.Fatalf("rpc error: %v", rpcErr)
 	}
 	result := rawResultText(t, raw)
-	if !strings.Contains(result, `"ok": true`) {
+	if !strings.Contains(result, `"ok":true`) {
 		t.Fatalf("empty harvest should succeed: %s", result)
 	}
-	if !strings.Contains(result, `"total_ingested": 0`) {
+	if !strings.Contains(result, `"total_ingested":0`) {
 		t.Fatalf("empty harvest should report zero ingested: %s", result)
 	}
 	if _, err := h.store.GetDataCollection(context.Background(), "ws-data", "empty-harvest"); err == nil {

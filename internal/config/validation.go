@@ -121,15 +121,3 @@ func validateHTTPURL(raw string) error {
 	}
 	return nil
 }
-
-// ValidateCallTimeoutSec checks that a call_timeout_sec value is within bounds.
-// Returns nil for 0 (means "use default"). Non-zero must be > 0 and < 3600.
-func ValidateCallTimeoutSec(v int) error {
-	if v == 0 {
-		return nil
-	}
-	if v < 0 || v > 3600 {
-		return fmt.Errorf("call_timeout_sec must be > 0 and <= 3600, got %d", v)
-	}
-	return nil
-}

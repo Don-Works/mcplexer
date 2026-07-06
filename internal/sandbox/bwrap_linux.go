@@ -5,9 +5,12 @@ package sandbox
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
+	"strings"
 )
 
 // bwrapDriver implements Driver using bubblewrap (`bwrap`). This is the
@@ -56,6 +59,7 @@ func (d *bwrapDriver) Run(
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
+	cmd.Env = cleanSandboxEnv()
 
 	err := cmd.Run()
 	if cmd.ProcessState != nil {
@@ -71,6 +75,7 @@ func bwrapArgv(cfg Config, home, program string, args []string) []string {
 
 	argv := []string{
 		"--unshare-all",
+		"--new-session",
 		"--proc", "/proc",
 		"--dev", "/dev",
 		"--tmpfs", "/tmp",
@@ -83,11 +88,25 @@ func bwrapArgv(cfg Config, home, program string, args []string) []string {
 		if _, blocked := denied[p]; blocked || p == "" {
 			continue
 		}
+		if resolved, err := filepath.EvalSymlinks(p); err == nil {
+			if !isSubpath(resolved, home) {
+				slog.Warn("sandbox: symlink resolves outside home, skipping bind", "path", p, "resolved", resolved)
+				continue
+			}
+			p = resolved
+		}
 		argv = append(argv, "--ro-bind", p, p)
 	}
 	for _, p := range cfg.ReadWritePaths {
 		if _, blocked := denied[p]; blocked || p == "" {
 			continue
+		}
+		if resolved, err := filepath.EvalSymlinks(p); err == nil {
+			if !isSubpath(resolved, home) {
+				slog.Warn("sandbox: symlink resolves outside home, skipping bind", "path", p, "resolved", resolved)
+				continue
+			}
+			p = resolved
 		}
 		argv = append(argv, "--bind", p, p)
 	}
@@ -111,6 +130,29 @@ func bwrapArgv(cfg Config, home, program string, args []string) []string {
 	argv = append(argv, "--chdir", cwd, "--", program)
 	argv = append(argv, args...)
 	return argv
+}
+
+func cleanSandboxEnv() []string {
+	safe := map[string]struct{}{
+		"PATH": {}, "HOME": {}, "USER": {}, "SHELL": {},
+		"TERM": {}, "LANG": {}, "TMPDIR": {}, "TMP": {},
+	}
+	var out []string
+	for _, e := range os.Environ() {
+		k, _, _ := strings.Cut(e, "=")
+		if _, ok := safe[k]; ok {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+func isSubpath(path, parent string) bool {
+	rel, err := filepath.Rel(parent, path)
+	if err != nil {
+		return false
+	}
+	return rel == "." || !strings.HasPrefix(rel, "..")
 }
 
 // denySet turns the deny-path slice into a set for O(1) membership

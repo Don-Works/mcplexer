@@ -212,6 +212,7 @@ func (d *DB) listWorkers(
 	if err != nil {
 		return nil, fmt.Errorf("list workers: %w", err)
 	}
+	defer func() { _ = rows.Close() }()
 	var out []*store.Worker
 	for rows.Next() {
 		w, err := scanWorker(rows)
@@ -221,9 +222,6 @@ func (d *DB) listWorkers(
 		out = append(out, w)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	if err := rows.Close(); err != nil {
 		return nil, err
 	}
 	for _, w := range out {

@@ -56,7 +56,7 @@ func (s *Service) BackfillStatus(ctx context.Context) BackfillState {
 // already running and a vector provider is wired. Returns true if it
 // started a new run. Safe to call on every boot — it no-ops when there's
 // nothing to do.
-func (s *Service) StartBackfillAsync() bool {
+func (s *Service) StartBackfillAsync(ctx context.Context) bool {
 	if s == nil || s.store == nil || !s.EmbedderActive() {
 		return false
 	}
@@ -65,7 +65,7 @@ func (s *Service) StartBackfillAsync() bool {
 	}
 	go func() {
 		defer s.backfillRunning.Store(false)
-		_, _ = s.BackfillEmbeddings(context.Background(), 0)
+		_, _ = s.BackfillEmbeddings(ctx, 0)
 	}()
 	return true
 }

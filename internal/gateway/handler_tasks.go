@@ -2089,7 +2089,7 @@ func parseOptionalRFC3339(s string) (*time.Time, error) {
 }
 
 func marshalJSONResult(v any) (json.RawMessage, *RPCError) {
-	b, err := json.MarshalIndent(v, "", "  ")
+	b, err := json.Marshal(v)
 	if err != nil {
 		return nil, &RPCError{Code: CodeInternalError, Message: err.Error()}
 	}

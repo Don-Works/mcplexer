@@ -164,9 +164,11 @@ func (h *embeddingsHandler) handleConfigure(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Hot-swap the live provider + backfill the existing corpus.
+	// Hot-swap the live provider + backfill the existing corpus. The
+	// backfill outlives this request, so detach it from the request's
+	// cancellation while keeping its values.
 	h.svc.SetEmbedder(emb)
-	h.svc.StartBackfillAsync()
+	h.svc.StartBackfillAsync(context.WithoutCancel(r.Context()))
 	writeJSON(w, http.StatusOK, h.status(r.Context()))
 }
 
@@ -178,7 +180,7 @@ func (h *embeddingsHandler) handleBackfill(w http.ResponseWriter, r *http.Reques
 			"no embedding provider is active — configure one first")
 		return
 	}
-	h.svc.StartBackfillAsync()
+	h.svc.StartBackfillAsync(context.WithoutCancel(r.Context()))
 	writeJSON(w, http.StatusOK, h.status(r.Context()))
 }
 

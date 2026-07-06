@@ -47,7 +47,7 @@ func rawResultText(t *testing.T, raw json.RawMessage) string {
 }
 
 // TestTaskList_EmptyResultReturnsEmptyArray asserts that an empty
-// list response carries `"tasks": []`, NOT `"tasks": null`. The
+// list response carries `"tasks":[]`, NOT `"tasks":null`. The
 // known_* envelope fields must also be `[]` for the same reason.
 func TestTaskList_EmptyResultReturnsEmptyArray(t *testing.T) {
 	ctx := context.Background()
@@ -61,11 +61,11 @@ func TestTaskList_EmptyResultReturnsEmptyArray(t *testing.T) {
 	body := rawResultText(t, raw)
 
 	mustHave := []string{
-		`"tasks": []`,
-		`"known_assignees": []`,
-		`"known_statuses": [`, // may be empty `[]` or canonical defaults
-		`"known_tags": []`,
-		`"known_meta_keys": []`,
+		`"tasks":[]`,
+		`"known_assignees":[]`,
+		`"known_statuses":[`, // may be empty `[]` or canonical defaults
+		`"known_tags":[]`,
+		`"known_meta_keys":[]`,
 	}
 	for _, want := range mustHave {
 		if !strings.Contains(body, want) {
@@ -73,11 +73,11 @@ func TestTaskList_EmptyResultReturnsEmptyArray(t *testing.T) {
 		}
 	}
 	mustNotHave := []string{
-		`"tasks": null`,
-		`"known_assignees": null`,
-		`"known_statuses": null`,
-		`"known_tags": null`,
-		`"known_meta_keys": null`,
+		`"tasks":null`,
+		`"known_assignees":null`,
+		`"known_statuses":null`,
+		`"known_tags":null`,
+		`"known_meta_keys":null`,
 	}
 	for _, bad := range mustNotHave {
 		if strings.Contains(body, bad) {
@@ -109,10 +109,10 @@ func TestTaskGet_EmptySiblingsReturnEmptyArrays(t *testing.T) {
 	body := rawResultText(t, raw)
 
 	mustHave := []string{
-		`"notes": []`,
-		`"composed_by": []`,
-		`"composes": []`,
-		`"known_assignees": []`,
+		`"notes":[]`,
+		`"composed_by":[]`,
+		`"composes":[]`,
+		`"known_assignees":[]`,
 	}
 	for _, want := range mustHave {
 		if !strings.Contains(body, want) {
@@ -120,10 +120,10 @@ func TestTaskGet_EmptySiblingsReturnEmptyArrays(t *testing.T) {
 		}
 	}
 	mustNotHave := []string{
-		`"notes": null`,
-		`"composed_by": null`,
-		`"composes": null`,
-		`"known_assignees": null`,
+		`"notes":null`,
+		`"composed_by":null`,
+		`"composes":null`,
+		`"known_assignees":null`,
 	}
 	for _, bad := range mustNotHave {
 		if strings.Contains(body, bad) {
@@ -156,13 +156,13 @@ func TestTaskUpdate_EmptyBulkReturnsEmptyArrays(t *testing.T) {
 	body := rawResultText(t, resp)
 	// ok should be `[]` (no successful updates); failed should be a
 	// populated array with one error row.
-	if !strings.Contains(body, `"ok": []`) {
-		t.Errorf("expected `\"ok\": []` in bulk-update body:\n%s", body)
+	if !strings.Contains(body, `"ok":[]`) {
+		t.Errorf("expected `\"ok\":[]` in bulk-update body:\n%s", body)
 	}
-	if strings.Contains(body, `"ok": null`) {
-		t.Errorf("bulk-update body contains `\"ok\": null`:\n%s", body)
+	if strings.Contains(body, `"ok":null`) {
+		t.Errorf("bulk-update body contains `\"ok\":null`:\n%s", body)
 	}
-	if strings.Contains(body, `"failed": null`) {
-		t.Errorf("bulk-update body contains `\"failed\": null`:\n%s", body)
+	if strings.Contains(body, `"failed":null`) {
+		t.Errorf("bulk-update body contains `\"failed\":null`:\n%s", body)
 	}
 }

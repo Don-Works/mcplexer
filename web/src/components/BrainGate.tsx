@@ -3,8 +3,12 @@ import { Brain } from 'lucide-react'
 import { getBrainStatus } from '@/api/brain'
 import { useApi } from '@/hooks/use-api'
 
+// Module-level so the fetcher keeps a stable identity — useApi refetches
+// whenever the fetcher reference changes.
+const fetchBrainStatus = (signal: AbortSignal) => getBrainStatus({ signal })
+
 export function BrainGate({ children }: { children: ReactNode }) {
-  const { data: status, loading, error } = useApi(getBrainStatus)
+  const { data: status, loading, error } = useApi(fetchBrainStatus)
 
   if (loading) {
     return (

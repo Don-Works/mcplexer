@@ -2,6 +2,7 @@ package downstream
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -93,6 +94,11 @@ var protectedMcplexerPathFragments = []string{
 	".mcplexer/secrets",
 	".mcplexer/p2p",
 	".mcplexer/backups",
+	".ssh",
+	".aws",
+	".docker",
+	".gnupg",
+	".kube",
 }
 
 // ValidateCommand rejects spawn configurations that look like an attempt
@@ -114,6 +120,7 @@ var protectedMcplexerPathFragments = []string{
 // `grep -c PATTERN file`, `curl -c cookies.txt`, and `tar -c`.
 func ValidateCommand(command string, args []string) error {
 	if os.Getenv("MCPLEXER_UNSAFE_DOWNSTREAM_COMMANDS") == "1" {
+		slog.Warn("downstream command validation bypassed", "env", "MCPLEXER_UNSAFE_DOWNSTREAM_COMMANDS")
 		return nil
 	}
 

@@ -303,6 +303,7 @@ func (m *Manager) decryptSecrets(data []byte) (map[string]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("decrypt secrets: %w", err)
 	}
+	defer ZeroBytes(plaintext)
 
 	var secrets map[string]string
 	if err := json.Unmarshal(plaintext, &secrets); err != nil {

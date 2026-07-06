@@ -448,6 +448,14 @@ func (h *handler) handleToolsCall(
 		return nil, rpcErr
 	}
 
+	// Stamp HOW this session qualified for the admin surface onto ctx so
+	// the control backend can hold the dev-mode source-repo escape to
+	// stricter rules (cross-workspace route references are refused for
+	// that trust level — see internal/control/route_guard.go).
+	if IsAdminTool(req.Name) {
+		ctx = WithAdminTrust(ctx, h.adminTrustLevel(ctx))
+	}
+
 	// Skill capability enforcement: when the call originates from inside a
 	// skill (skill_id attached to ctx), reject any namespace not declared in
 	// the manifest. Built-in mcpx__/mesh__ namespaces are always permitted.

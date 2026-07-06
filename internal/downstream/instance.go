@@ -733,6 +733,9 @@ type stderrLogger struct {
 
 func (l *stderrLogger) Write(p []byte) (int, error) {
 	l.buf = append(l.buf, p...)
+	if len(l.buf) > 1<<20 { // cap at 1 MiB
+		l.buf = l.buf[len(l.buf)-1<<20:]
+	}
 	for {
 		idx := bytes.IndexByte(l.buf, '\n')
 		if idx < 0 {

@@ -6,7 +6,7 @@ $(warning Makefile is deprecated; prefer Taskfile.yml via `task --list-all`)
 
 GIT_VERSION ?= $(shell git describe --tags --dirty --always --abbrev=12 2>/dev/null || echo dev)
 GIT_COMMIT ?= $(shell git rev-parse --short=12 HEAD 2>/dev/null || echo unknown)
-GO_LDFLAGS ?= -X main.buildVersion=$(GIT_VERSION) -X main.buildCommit=$(GIT_COMMIT)
+GO_LDFLAGS ?= -X main.buildVersion=$(GIT_VERSION) -X main.buildCommit=$(GIT_COMMIT) -X github.com/don-works/mcplexer/internal/gateway.buildVersion=$(GIT_VERSION)
 
 # Default build: slim binary without libp2p (~30 MB).
 build: web-build go-build

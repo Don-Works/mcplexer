@@ -92,7 +92,7 @@ func TestBackfillEmbeddings_NoEmbedderIsAnError(t *testing.T) {
 	if _, err := svc.BackfillEmbeddings(ctx, 0); err == nil {
 		t.Fatal("expected error when no embedder is configured")
 	}
-	if svc.StartBackfillAsync() {
+	if svc.StartBackfillAsync(ctx) {
 		t.Fatal("StartBackfillAsync must no-op without a vector provider")
 	}
 	if st := svc.BackfillStatus(ctx); st.EmbedderActive {

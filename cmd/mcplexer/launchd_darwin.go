@@ -4,10 +4,10 @@ package main
 
 import (
 	"fmt"
+	"html/template"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"text/template"
 )
 
 const plistName = "com.mcplexer.daemon"
