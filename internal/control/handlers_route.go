@@ -50,6 +50,9 @@ func handleCreateRoute(
 	if env, ok := v.envelope(); ok {
 		return env, nil
 	}
+	if err := guardCrossWorkspaceRouteRefs(ctx, s, &r); err != nil {
+		return nil, err
+	}
 	if err := s.CreateRouteRule(ctx, &r); err != nil {
 		return nil, fmt.Errorf("create route: %w", err)
 	}
@@ -71,6 +74,9 @@ func handleUpdateRoute(
 		return nil, fmt.Errorf("invalid params: %w", err)
 	}
 	r.ID = id
+	if err := guardCrossWorkspaceRouteRefs(ctx, s, r); err != nil {
+		return nil, err
+	}
 	if err := s.UpdateRouteRule(ctx, r); err != nil {
 		return nil, fmt.Errorf("update route: %w", err)
 	}
