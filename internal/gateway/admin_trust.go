@@ -65,10 +65,7 @@ func (g *AdminCWDGate) AdminTrustLevel(cwd string, workspaceRoots []string) Admi
 			return AdminTrustDataDir
 		}
 	}
-	sourceRepo := false
-	if cwd != "" && isMcplexerSourceCWD(filepath.Clean(cwd)) {
-		sourceRepo = true
-	}
+	sourceRepo := cwd != "" && isMcplexerSourceCWD(filepath.Clean(cwd))
 	for _, root := range workspaceRoots {
 		if root == "" {
 			continue
