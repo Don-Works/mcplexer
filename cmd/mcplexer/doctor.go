@@ -278,13 +278,16 @@ func checkDaemon(addr, socketPath string) checkResult {
 
 // checkAgeKey verifies the age encryption key file exists.
 func checkAgeKey(cfg *Config) checkResult {
+	// Mirror buildAuthInjector: an explicit MCPLEXER_AGE_KEY wins, otherwise the
+	// daemon auto-generates a key beside the DB at "<db>.age". Checking a
+	// standalone age-key.txt reported a false miss on every default install.
 	keyPath := cfg.AgeKeyPath
 	if keyPath == "" {
-		keyPath = defaultDataPath("age-key.txt")
+		keyPath = cfg.DBDSN + ".age"
 	}
 	if _, err := os.Stat(keyPath); err != nil {
 		return checkResult{false, "age key not found at " + keyPath,
-			"generate a key: mcplexer init"}
+			"start the daemon once to auto-generate it, or set MCPLEXER_AGE_KEY"}
 	}
 	return checkResult{true, "exists (" + keyPath + ")", ""}
 }
