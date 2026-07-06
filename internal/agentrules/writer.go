@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 )
 
 // markerRegex matches the BEGIN/END pair non-greedily. (?m) so ^/$
@@ -34,7 +35,10 @@ var markerRegex = regexp.MustCompile(`(?ms)^<!-- MCPLEXER:BEGIN v(\d+) -->\s*\n(
 // we're targeting, the function is a no-op and returns changed=false.
 // Calling Sync twice with the same version is guaranteed cheap.
 func Sync(path string, version int) (changed bool, err error) {
-	rendered := Render(version)
+	return syncBlock(path, version, "")
+}
+
+func syncBlock(path string, version int, dashboardURL string) (changed bool, err error) {
 	newBody := renderContent(version)
 	newHash := sha256.Sum256([]byte(normalizeBody([]byte(newBody))))
 
@@ -43,11 +47,12 @@ func Sync(path string, version int) (changed bool, err error) {
 		if !os.IsNotExist(err) {
 			return false, fmt.Errorf("read %s: %w", path, err)
 		}
-		// File missing: create parent dir + write the block fresh.
+		// File missing: create parent dir + write the block fresh. No installed
+		// URL to preserve, so an empty dashboardURL renders the default.
 		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 			return false, fmt.Errorf("mkdir parent: %w", err)
 		}
-		if err := writeRulesFile(path, []byte(rendered)); err != nil {
+		if err := writeRulesFile(path, []byte(applyDashboard(Render(version), dashboardURL))); err != nil {
 			return false, err
 		}
 		return true, nil
@@ -61,7 +66,7 @@ func Sync(path string, version int) (changed bool, err error) {
 		if len(trimmed) > 0 {
 			buf.WriteString("\n\n")
 		}
-		buf.WriteString(rendered)
+		buf.WriteString(applyDashboard(Render(version), dashboardURL))
 		if err := writeRulesFile(path, buf.Bytes()); err != nil {
 			return false, err
 		}
@@ -72,11 +77,23 @@ func Sync(path string, version int) (changed bool, err error) {
 	installedBody := existing[match[4]:match[5]]
 	installedHash := sha256.Sum256([]byte(normalizeBody(installedBody)))
 
-	if installedVersion == version && installedHash == newHash {
+	// An empty dashboardURL means "leave the installed URL alone"; a non-empty
+	// one is enforced. This keeps a plain Sync from churning a machine's
+	// runtime port back to the default.
+	effectiveURL := dashboardURL
+	if effectiveURL == "" {
+		effectiveURL = installedDashboardURL(installedBody)
+	}
+
+	// Content current (version + body, URL-agnostic) AND the URL is already
+	// what we'd write → nothing to do. The URL check corrects a stale port even
+	// when the body hash matches.
+	urlSatisfied := dashboardURL == "" || bytes.Contains(installedBody, dashboardLine(dashboardURL))
+	if installedVersion == version && installedHash == newHash && urlSatisfied {
 		return false, nil
 	}
 
-	replacement := []byte(rendered)
+	replacement := []byte(applyDashboard(Render(version), effectiveURL))
 	replacement = bytes.TrimRight(replacement, "\n")
 
 	var buf bytes.Buffer
@@ -193,10 +210,56 @@ func parseVersion(b []byte) int {
 	return n
 }
 
+// dashboardLineRegex matches the single "**Dashboard:** <url>" line so the
+// idempotency hash can ignore which URL a given machine rendered.
+var dashboardLineRegex = regexp.MustCompile(`(?m)^\*\*Dashboard:\*\* .*$`)
+
 // normalizeBody strips a single leading/trailing newline so the hash
 // comparison ignores formatting drift from older Sync calls that may
-// have emitted slightly different whitespace. Keeps interior newlines
-// intact — only the boundary whitespace is normalized.
+// have emitted slightly different whitespace, and canonicalizes the
+// Dashboard URL line so a machine that rendered a runtime-specific URL
+// (e.g. :13333) hash-matches the default (:3333) and is never seen as
+// drifted. Keeps interior newlines intact.
 func normalizeBody(b []byte) string {
-	return string(bytes.TrimSpace(b))
+	trimmed := bytes.TrimSpace(b)
+	canon := dashboardLineRegex.ReplaceAll(trimmed, []byte("**Dashboard:** <URL>"))
+	return string(canon)
+}
+
+// applyDashboard swaps the default dashboard URL for a runtime-resolved one.
+// A no-op when the URL is empty or already the default, so the plain Render
+// and Sync paths stay byte-identical.
+func applyDashboard(s, dashboardURL string) string {
+	if dashboardURL == "" || dashboardURL == DashboardURL {
+		return s
+	}
+	return strings.Replace(s, DashboardURL, dashboardURL, 1)
+}
+
+// dashboardLine is the exact "**Dashboard:** <url>" line a sync with this URL
+// would render (default URL when empty), used to detect a stale installed port.
+func dashboardLine(dashboardURL string) []byte {
+	url := dashboardURL
+	if url == "" {
+		url = DashboardURL
+	}
+	return []byte("**Dashboard:** " + url)
+}
+
+// installedDashboardURL extracts the URL from an installed block's Dashboard
+// line, or "" when absent — used to preserve a machine's URL on a plain Sync.
+func installedDashboardURL(body []byte) string {
+	m := dashboardLineRegex.Find(body)
+	if m == nil {
+		return ""
+	}
+	return strings.TrimSpace(strings.TrimPrefix(string(m), "**Dashboard:**"))
+}
+
+// SyncWithDashboard is Sync with the rendered block's Dashboard URL replaced
+// by dashboardURL (empty = leave the default). The idempotency hash ignores
+// the URL line, so re-syncing with a different URL only rewrites when the
+// version or the rest of the body actually changed.
+func SyncWithDashboard(path string, version int, dashboardURL string) (changed bool, err error) {
+	return syncBlock(path, version, dashboardURL)
 }

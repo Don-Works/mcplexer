@@ -65,6 +65,12 @@ func Render(version int) string {
 	return b.String()
 }
 
+// RenderWithDashboard is Render with the Dashboard URL swapped for a
+// runtime-resolved one (empty = keep the compiled default).
+func RenderWithDashboard(version int, dashboardURL string) string {
+	return applyDashboard(Render(version), dashboardURL)
+}
+
 // renderContent returns just the markdown body (no markers) for a given
 // version. Split out so writer.go can hash + diff the body
 // independently of the marker line, which matters for the idempotency

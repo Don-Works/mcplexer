@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/don-works/mcplexer/internal/agentrules"
+	"github.com/don-works/mcplexer/internal/config"
 )
 
 // cmdRules dispatches `mcplexer rules <sync|check|diff>`. Wired from
@@ -41,7 +42,7 @@ func rulesSync(args []string) error {
 	}
 
 	existed := fileExists(*path)
-	changed, err := agentrules.Sync(*path, *version)
+	changed, err := agentrules.SyncWithDashboard(*path, *version, resolveDashboardURL())
 	if err != nil {
 		return fmt.Errorf("sync %s: %w", *path, err)
 	}
@@ -164,6 +165,26 @@ func splitLinesKeepEmpty(s string) []string {
 		return nil
 	}
 	return strings.Split(strings.TrimRight(s, "\n"), "\n")
+}
+
+// resolveDashboardURL points the synced block at the port the running daemon
+// actually bound (from its published runtime descriptor) or a configured
+// public URL, falling back to the compiled default when nothing is known.
+func resolveDashboardURL() string {
+	cfg, err := loadConfig()
+	if err != nil {
+		return ""
+	}
+	httpAddr, publicURL := cfg.HTTPAddr, cfg.PublicURL
+	if info, err := config.ReadRuntimeInfo(filepath.Dir(cfg.DBDSN)); err == nil && info != nil {
+		if info.HTTPAddr != "" {
+			httpAddr = info.HTTPAddr
+		}
+		if info.PublicURL != "" {
+			publicURL = info.PublicURL
+		}
+	}
+	return config.DashboardURL(httpAddr, publicURL)
 }
 
 func defaultRulesPath() string {

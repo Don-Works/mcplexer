@@ -46,6 +46,10 @@ var readinessTracker *readiness.Tracker
 
 func SetSystemInfo(info SystemInfo) { systemInfo = info }
 
+// GetSystemInfo returns the startup system info snapshot (zero value before
+// SetSystemInfo runs).
+func GetSystemInfo() SystemInfo { return systemInfo }
+
 func SetReadinessTracker(t *readiness.Tracker) { readinessTracker = t }
 
 type healthResponse struct {

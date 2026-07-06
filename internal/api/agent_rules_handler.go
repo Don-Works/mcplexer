@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/don-works/mcplexer/internal/agentrules"
+	"github.com/don-works/mcplexer/internal/config"
 )
 
 // agentRulesHandler backs /api/v1/agent-rules/*. Exposes the marker-bounded
@@ -69,7 +70,11 @@ func (h *agentRulesHandler) sync(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	changed, err := agentrules.Sync(path, agentrules.CurrentVersion)
+	// Point the synced block at the port this daemon actually bound (and any
+	// configured public URL), not a compiled-in default.
+	sys := GetSystemInfo()
+	dashboardURL := config.DashboardURL(sys.HTTPAddr, sys.PublicURL)
+	changed, err := agentrules.SyncWithDashboard(path, agentrules.CurrentVersion, dashboardURL)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

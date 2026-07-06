@@ -946,6 +946,10 @@ func buildServerDeps(ctx context.Context, cfg *Config, db *sqlite.DB, settingsSv
 	// agent's CWD is at or under the data directory.
 	internalBackend := control.NewInternalBackend(db, d.backupSvc)
 	internalBackend.SetEncryptor(d.enc)
+	// Route/workspace/server mutations via MCP admin tools must invalidate
+	// the routing rules cache immediately (the REST handlers already do);
+	// otherwise new routes only take effect after the 30s cache TTL.
+	internalBackend.SetRouteInvalidator(d.engine.InvalidateAllRoutes)
 	if d.brainGit != nil {
 		internalBackend.SetBrainGit(d.brainGit)
 	}
@@ -1507,6 +1511,23 @@ func runServer(ctx context.Context, cfg *Config, db *sqlite.DB, cfgSvc *config.S
 		return err
 	}
 
+	// Publish the effective runtime address so out-of-process tools (doctor,
+	// rules sync) discover where we actually bound — cfg.HTTPAddr comes from a
+	// --addr flag that loadConfig() in those tools never sees. Use the bound
+	// listener address so a :0 request resolves to the real port.
+	runtimeDataDir := filepath.Dir(cfg.DBDSN)
+	if err := config.WriteRuntimeInfo(runtimeDataDir, config.RuntimeInfo{
+		HTTPAddr:   httpLn.Addr().String(),
+		PublicURL:  cfg.PublicURL,
+		SocketPath: cfg.SocketPath,
+		PID:        os.Getpid(),
+		Version:    mcplexerVersion,
+		StartedAt:  time.Now().UTC().Format(time.RFC3339),
+	}); err != nil {
+		slog.Warn("could not publish runtime info", "err", err)
+	}
+	defer config.RemoveRuntimeInfo(runtimeDataDir)
+
 	baseCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -1722,6 +1743,7 @@ func runStdio(ctx context.Context, cfg *Config, db *sqlite.DB, settingsSvc *conf
 	stdioBackupSvc := backup.New(filepath.Dir(cfg.DBDSN), cfg.DBDSN, mcplexerVersion)
 	stdioInternalBackend := control.NewInternalBackend(db, stdioBackupSvc)
 	stdioInternalBackend.SetEncryptor(stdioEnc)
+	stdioInternalBackend.SetRouteInvalidator(engine.InvalidateAllRoutes)
 	// Workers admin tools live on the same InternalBackend; stdio mode
 	// has no runner so RunNow falls back to the stub placeholder path
 	// (the worker row is still authored — exec is picked up next time

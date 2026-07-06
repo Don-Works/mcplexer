@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/don-works/mcplexer/internal/config"
 	"github.com/don-works/mcplexer/internal/store/sqlite"
 )
 
@@ -33,12 +34,16 @@ func cmdDoctor(args []string) error {
 		return fmt.Errorf("load config: %w", err)
 	}
 
+	// The running daemon's real bind address comes from a --addr flag that
+	// loadConfig() never sees; prefer the descriptor it published at startup.
+	addr, socketPath := effectiveDaemonEndpoint(cfg)
+
 	checks := []healthCheck{
 		{"binary", checkBinary()},
-		{"port", checkPort(cfg.HTTPAddr)},
+		{"port", checkPort(addr)},
 		{"database", checkDatabase(cfg)},
-		{"socket", checkSocket(cfg.SocketPath)},
-		{"daemon", checkDaemon(cfg.HTTPAddr)},
+		{"socket", checkSocket(socketPath)},
+		{"daemon", checkDaemon(addr, socketPath)},
 		{"age_key", checkAgeKey(cfg)},
 		{"api_key", checkAPIKey(cfg)},
 	}
@@ -185,12 +190,68 @@ func checkSocket(socketPath string) checkResult {
 	return checkResult{true, fmt.Sprintf("exists (%s)", dir), ""}
 }
 
-// checkDaemon attempts to reach the running daemon's health endpoint.
-func checkDaemon(addr string) checkResult {
+// effectiveDaemonEndpoint returns the address + socket the running daemon
+// actually uses, reading the descriptor it publishes at startup and falling
+// back to the config defaults when no daemon is running.
+func effectiveDaemonEndpoint(cfg *Config) (addr, socketPath string) {
+	addr, socketPath = cfg.HTTPAddr, cfg.SocketPath
+	if info, err := config.ReadRuntimeInfo(filepath.Dir(cfg.DBDSN)); err == nil && info != nil {
+		if info.HTTPAddr != "" {
+			addr = info.HTTPAddr
+		}
+		if info.SocketPath != "" {
+			socketPath = info.SocketPath
+		}
+	}
+	return dialableAddr(addr), socketPath
+}
+
+// dialableAddr rewrites a wildcard bind host to loopback so doctor can connect.
+func dialableAddr(addr string) string {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return addr
+	}
+	switch host {
+	case "", "0.0.0.0", "::", "[::]":
+		host = "127.0.0.1"
+	}
+	return net.JoinHostPort(host, port)
+}
+
+// daemonHealthyViaSocket proves liveness over the unix socket, independent of
+// which TCP port the daemon bound — the definitive "is it alive" signal.
+func daemonHealthyViaSocket(socketPath string) bool {
+	if socketPath == "" || runtime.GOOS == "windows" {
+		return false
+	}
+	if _, err := os.Stat(socketPath); err != nil {
+		return false
+	}
+	client := &http.Client{Timeout: 2 * time.Second, Transport: &http.Transport{
+		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, "unix", socketPath)
+		},
+	}}
+	resp, err := client.Get("http://unix/api/v1/health")
+	if err != nil {
+		return false
+	}
+	defer func() { _ = resp.Body.Close() }()
+	return resp.StatusCode == http.StatusOK
+}
+
+// checkDaemon attempts to reach the running daemon's health endpoint over TCP,
+// falling back to the unix socket so a non-default HTTP port never reads as a
+// dead daemon.
+func checkDaemon(addr, socketPath string) checkResult {
 	client := &http.Client{Timeout: 2 * time.Second}
 	url := fmt.Sprintf("http://%s/api/v1/health", addr)
 	resp, err := client.Get(url)
 	if err != nil {
+		if daemonHealthyViaSocket(socketPath) {
+			return checkResult{true, fmt.Sprintf("responding on socket %s (HTTP %s unreachable)", socketPath, addr), ""}
+		}
 		return checkResult{false, "daemon not responding",
 			"start the daemon: mcplexer daemon start"}
 	}
