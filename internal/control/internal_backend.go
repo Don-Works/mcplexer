@@ -34,6 +34,29 @@ type InternalBackend struct {
 	brainGit     *brain.Git                // optional; nil means brain_push/brain_status return a structured error
 	brainSecrets *brainSecretsConfig       // optional; nil means brain_migrate_secrets returns a structured error
 	brainMig     *brainMigrationConfig     // optional; nil means brain_init/import/verify/disable return a structured error
+
+	// routeInvalidator is called after any successful route/workspace/server
+	// mutation so the routing engine's rules cache picks up the change
+	// immediately instead of after the cache TTL. Optional; nil means admin
+	// mutations become routable only once the 30s rules cache expires (the
+	// REST API handlers invalidate on the same mutation set).
+	routeInvalidator func()
+}
+
+// routeCacheMutators is the set of control tools whose success must
+// invalidate the routing rules cache — mirrors the REST handlers
+// (route_handler.go, workspace_handler.go, downstream_handler.go), which
+// call Engine.InvalidateAllRoutes on the same mutations.
+var routeCacheMutators = map[string]bool{
+	"create_route":     true,
+	"update_route":     true,
+	"delete_route":     true,
+	"create_workspace": true,
+	"update_workspace": true,
+	"delete_workspace": true,
+	"create_server":    true,
+	"update_server":    true,
+	"delete_server":    true,
 }
 
 // brainMigrationConfig carries the deps the M5 migration tools
@@ -128,6 +151,14 @@ func (b *InternalBackend) SetBrainMigration(cfg brain.Config, ser *brain.Seriali
 	b.brainMig = &brainMigrationConfig{cfg: cfg, ser: ser, ix: ix, settings: settings}
 }
 
+// SetRouteInvalidator wires the routing engine's cache invalidation (typically
+// Engine.InvalidateAllRoutes) so route/workspace/server mutations made through
+// the MCP admin tools take effect immediately, matching the REST API path.
+// Optional — when unset, changes become routable after the rules cache TTL.
+func (b *InternalBackend) SetRouteInvalidator(f func()) {
+	b.routeInvalidator = f
+}
+
 // SetEncryptor wires the age encryptor so the create_oauth_provider admin tool
 // can seal the OAuth client secret at rest exactly as the REST path does.
 // Optional — when unset, create_oauth_provider only errors if a client_secret
@@ -219,6 +250,9 @@ func (b *InternalBackend) Call(
 	result, err := handler(ctx, b.store, args)
 	if err != nil {
 		return errorResult(err.Error()), nil
+	}
+	if routeCacheMutators[toolName] && b.routeInvalidator != nil {
+		b.routeInvalidator()
 	}
 	return result, nil
 }
