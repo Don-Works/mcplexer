@@ -212,7 +212,7 @@ func (d *DB) listWorkers(
 	if err != nil {
 		return nil, fmt.Errorf("list workers: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []*store.Worker
 	for rows.Next() {
 		w, err := scanWorker(rows)
