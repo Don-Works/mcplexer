@@ -162,9 +162,16 @@ func (inst *Instance) start(ctx context.Context) error {
 	inst.stdin = stdin
 	inst.done = make(chan struct{})
 
+	// One scanner reads stdout for the instance's whole lifetime — the
+	// handshake and the request loop MUST share it. Two scanners on one pipe
+	// would let the handshake buffer (and then discard) bytes past the
+	// initialize line, desyncing every subsequent response.
+	scanner := bufio.NewScanner(stdout)
+	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
+
 	// Perform MCP initialize handshake with timeout.
 	initCtx, initCancel := context.WithTimeout(childCtx, 30*time.Second)
-	if err := inst.initialize(initCtx, stdin, stdout); err != nil {
+	if err := inst.initialize(initCtx, stdin, scanner); err != nil {
 		initCancel()
 		_ = cmd.Process.Kill()
 		cancel()
@@ -176,13 +183,13 @@ func (inst *Instance) start(ctx context.Context) error {
 	inst.state = StateReady
 
 	// Start the processing loop and monitor goroutines.
-	go inst.processLoop(stdout)
+	go inst.processLoop(scanner)
 	go inst.monitorProcess(cmd)
 
 	return nil
 }
 
-func (inst *Instance) initialize(ctx context.Context, stdin io.Writer, stdout io.Reader) error {
+func (inst *Instance) initialize(ctx context.Context, stdin io.Writer, scanner *bufio.Scanner) error {
 	initReq := jsonRPCRequest{
 		JSONRPC: "2.0",
 		ID:      json.RawMessage(`1`),
@@ -197,28 +204,37 @@ func (inst *Instance) initialize(ctx context.Context, stdin io.Writer, stdout io
 		return fmt.Errorf("write initialize: %w", err)
 	}
 
-	// Read response with context timeout support.
-	type scanResult struct {
-		line []byte
-		err  error
-	}
-	ch := make(chan scanResult, 1)
+	// Read the initialize response, tolerating launcher preamble. A cold
+	// `uvx`/`npx` spawn can print resolution/progress lines to stdout before
+	// the wrapped server starts speaking JSON-RPC; blindly taking the first
+	// line as the response would desync the stream for the instance's whole
+	// life. Skip non-JSON and non-matching lines until the id==1 response.
+	ch := make(chan error, 1)
 	go func() {
-		scanner := bufio.NewScanner(stdout)
-		scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
-		if scanner.Scan() {
-			ch <- scanResult{line: append([]byte{}, scanner.Bytes()...)}
-		} else {
-			ch <- scanResult{err: fmt.Errorf("no initialize response")}
+		for scanner.Scan() {
+			line := scanner.Bytes()
+			var resp jsonRPCResponse
+			if err := json.Unmarshal(line, &resp); err != nil || resp.ID == nil {
+				// Preamble noise or a pre-init notification — skip it.
+				inst.logInitPreamble(line)
+				continue
+			}
+			if !responseIDMatches(resp.ID, 1) {
+				inst.logInitPreamble(line)
+				continue
+			}
+			ch <- nil
+			return
 		}
+		ch <- fmt.Errorf("no initialize response")
 	}()
 
 	select {
 	case <-ctx.Done():
 		return fmt.Errorf("initialize timed out: %w", ctx.Err())
-	case res := <-ch:
-		if res.err != nil {
-			return res.err
+	case err := <-ch:
+		if err != nil {
+			return err
 		}
 	}
 
@@ -230,11 +246,17 @@ func (inst *Instance) initialize(ctx context.Context, stdin io.Writer, stdout io
 	return writeJSONLine(stdin, notif)
 }
 
-func (inst *Instance) processLoop(stdout io.Reader) {
-	defer close(inst.done)
+// logInitPreamble records a non-response line seen during the handshake so a
+// misbehaving launcher is diagnosable, capped to avoid flooding logs.
+func (inst *Instance) logInitPreamble(line []byte) {
+	const maxLen = 200
+	s := string(line)
+	s = s[:min(len(s), maxLen)]
+	slog.Debug("downstream init preamble skipped", "server", inst.key.ServerID, "line", s)
+}
 
-	scanner := bufio.NewScanner(stdout)
-	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
+func (inst *Instance) processLoop(scanner *bufio.Scanner) {
+	defer close(inst.done)
 
 	for {
 		req, ok := inst.queue.dequeue()
@@ -298,7 +320,11 @@ func (inst *Instance) readResponse(scanner *bufio.Scanner, expectID int) (json.R
 
 		var rpcResp jsonRPCResponse
 		if err := json.Unmarshal(scanner.Bytes(), &rpcResp); err != nil {
-			return nil, fmt.Errorf("unmarshal response: %w", err)
+			// A non-JSON line on the response stream means the stream is
+			// corrupt/desynced. Wrap ErrResponseDesync so the Manager evicts
+			// this instance and the next call lazy-starts a fresh process,
+			// instead of leaving it poisoned until idle timeout.
+			return nil, fmt.Errorf("%w: unmarshal response: %v", ErrResponseDesync, err)
 		}
 
 		// No id means this is a notification, not a response.
