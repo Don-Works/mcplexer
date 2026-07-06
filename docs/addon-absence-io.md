@@ -108,5 +108,5 @@ absence.list_users({ limit: 200 })
 absence.list_absences({ limit: 200, filter: '{"start":{"$gte":"2026-05-25"},"end":{"$lte":"2026-06-05"}}' })
 ```
 
-Built for the R&D bi-weekly report's **People** section (who's on leave /
-capacity during the reporting fortnight).
+A typical use: a team-status report's **People** section (who's on leave /
+capacity during the reporting period).

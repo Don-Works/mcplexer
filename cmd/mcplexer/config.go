@@ -236,9 +236,9 @@ func serverCapabilities(profile string) map[string]bool {
 // alias a user might type in a browser to reach the same machine.
 // macOS in particular advertises three different names:
 //
-//   - the short hostname              ("dev-laptop-a")        — what people type
-//   - the mDNS / Bonjour form         ("dev-laptop-a.local")  — LAN discovery
-//   - the full domain-qualified form  ("dev-laptop-a.ts.net") — Tailscale, VPNs
+//   - the short hostname              ("my-mac")        — what people type
+//   - the mDNS / Bonjour form         ("my-mac.local")  — LAN discovery
+//   - the full domain-qualified form  ("my-mac.ts.net") — Tailscale, VPNs
 //
 // os.Hostname() only returns one of these — whichever the kernel was
 // told to use most recently — so we have to derive the other shapes
@@ -254,7 +254,7 @@ func localHostnames() []string {
 	}
 	// macOS in particular can return a whitespace-separated list of
 	// names from gethostname() when Tailscale or other tooling has
-	// stamped multiple aliases (e.g. "dev-laptop-a.ts.net lan"). Split + add
+	// stamped multiple aliases (e.g. "my-mac.ts.net lan"). Split + add
 	// each one so every variant is trusted.
 	seen := make(map[string]struct{})
 	var out []string

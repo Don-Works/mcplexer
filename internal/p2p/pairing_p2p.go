@@ -96,7 +96,7 @@ func NewPairingService(host *Host, st PairingStore) *PairingService {
 // SetPeerPersister attaches a PeerPersister to the service. When set, the
 // responder side of a successful handshake inserts the initiator into the
 // peer store. Without this, only the initiator's HTTP handler writes a row
-// — leaving the two sides asymmetric (see ClickUp 86c9kfhhb).
+// — leaving the two sides asymmetric.
 func (s *PairingService) SetPeerPersister(p PeerPersister) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

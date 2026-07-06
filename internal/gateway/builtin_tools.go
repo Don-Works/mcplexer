@@ -387,7 +387,7 @@ func meshToolDefinitions() []Tool {
 			InputSchema: json.RawMessage(`{
 				"type": "object",
 				"properties": {
-					"to_peer": { "type": "string", "description": "Recipient: paired peer display name (e.g. 'dev-laptop-a') or short ID. Resolved like to_peer in mesh__send." },
+					"to_peer": { "type": "string", "description": "Recipient: paired peer display name (e.g. 'my-laptop') or short ID. Resolved like to_peer in mesh__send." },
 					"name":    { "type": "string", "description": "Short label for the secret (e.g. 'pi-ssh-key'). Surfaced to the receiver in their pending-offers list. Not used as a storage key on this side." },
 					"value":   { "type": "string", "description": "The plaintext secret value. ≤ 64 KB. Never logged or persisted in clear." },
 					"metadata": { "type": "object", "description": "Optional non-sensitive labels (e.g. {\"comment\":\"piclaw@picoclaw-pi\"}). Shown to the receiver before they accept.", "additionalProperties": { "type": "string" } },

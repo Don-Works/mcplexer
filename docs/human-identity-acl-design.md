@@ -11,7 +11,7 @@ control after human identity and human task assignees.
 - Existing cross-machine enforcement remains peer-scope based.
 
 V1 should not require Google/OIDC. OIDC can later prove account ownership, but
-local-first ownership already has enough structure for Max-owned devices.
+local-first ownership already has enough structure for user-owned devices.
 
 ## Scope Model
 

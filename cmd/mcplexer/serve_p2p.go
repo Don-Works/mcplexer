@@ -110,7 +110,7 @@ func mustStartP2P(ctx context.Context, cfg *Config, enc p2p.Encryptor) *p2p.Host
 //
 // We also attach the P2PPeerStore as a PeerPersister so the responder side
 // of a successful handshake inserts the initiator into our p2p_peers table
-// (fixes the asymmetric pairing bug: ClickUp 86c9kfhhb).
+// (fixes the asymmetric pairing bug).
 func buildPairingService(host *p2p.Host, st store.P2PPeerStore) *p2p.PairingService {
 	if host == nil {
 		return nil

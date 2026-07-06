@@ -4,7 +4,7 @@
 - Date: 2026-04-30
 - Deciders: project maintainers
 - Branch: `spike/nono-sh-eval`
-- Related: ClickUp 86c9ka8wj; ADR 0002 (skill signing); ADR 0004 (skill capability enforcement); `project_code_mode.md`
+- Related: ADR 0002 (skill signing); ADR 0004 (skill capability enforcement); `project_code_mode.md`
 - Supersedes: —
 
 ## Decision

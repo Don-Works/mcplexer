@@ -184,7 +184,7 @@ This replaces the old "send a freeform `kind: event` saying 'I'm starting on X'"
 
 - Claims live in their own table — peers' UIs render an "Active claims by teammates" panel without parsing message content.
 - They auto-expire (default 1h, max 12h), so a crashed agent doesn't pin a path forever.
-- They cross machines: a claim made on Max's mcplexer is broadcast over libp2p to Alice's and Bob's gateways within ~1s.
+- They cross machines: a claim made on your mcplexer is broadcast over libp2p to Alice's and Bob's gateways within ~1s.
 
 ### Check first
 

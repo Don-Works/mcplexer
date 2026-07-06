@@ -73,7 +73,7 @@ func TestValidateDisplayName(t *testing.T) {
 		input   string
 		wantErr bool
 	}{
-		{"simple alpha", "max-mbp", false},
+		{"simple alpha", "my-mbp", false},
 		{"with dot", "max.air", false},
 		{"with underscore", "max_air", false},
 		{"alnum mix", "Box1", false},

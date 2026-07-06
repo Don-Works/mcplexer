@@ -3,7 +3,7 @@
 - Status: Accepted (spike R0.1)
 - Date: 2026-04-30
 - Branch: `spike/libp2p-embed`
-- ClickUp: [R0.1 — Spike: embed go-libp2p in mcplexer daemon](https://app.clickup.com/t/86c9k55k0)
+- Tracking: R0.1 — Spike: embed go-libp2p in mcplexer daemon
 
 ## Decision
 

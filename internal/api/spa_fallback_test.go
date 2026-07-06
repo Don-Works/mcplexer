@@ -93,16 +93,16 @@ func TestSPAFallback_RedirectsNonLoopbackHTTPToPublicURL(t *testing.T) {
 	fsys := fstest.MapFS{
 		"index.html": &fstest.MapFile{Data: []byte("<html>")},
 	}
-	h := spaFallback(fsys, http.FileServerFS(fsys), "", "https://dev-laptop-a.example.ts.net")
+	h := spaFallback(fsys, http.FileServerFS(fsys), "", "https://my-mac.example.ts.net")
 
-	req := httptest.NewRequest(http.MethodGet, "http://dev-laptop-a:13333/app?source=pwa", nil)
+	req := httptest.NewRequest(http.MethodGet, "http://my-mac:13333/app?source=pwa", nil)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusTemporaryRedirect {
 		t.Fatalf("status=%d want %d", rec.Code, http.StatusTemporaryRedirect)
 	}
-	if got, want := rec.Header().Get("Location"), "https://dev-laptop-a.example.ts.net/app?source=pwa"; got != want {
+	if got, want := rec.Header().Get("Location"), "https://my-mac.example.ts.net/app?source=pwa"; got != want {
 		t.Fatalf("Location=%q want %q", got, want)
 	}
 }
@@ -111,7 +111,7 @@ func TestSPAFallback_DoesNotRedirectLoopbackHTTP(t *testing.T) {
 	fsys := fstest.MapFS{
 		"index.html": &fstest.MapFile{Data: []byte("<html>")},
 	}
-	h := spaFallback(fsys, http.FileServerFS(fsys), "", "https://dev-laptop-a.example.ts.net")
+	h := spaFallback(fsys, http.FileServerFS(fsys), "", "https://my-mac.example.ts.net")
 
 	req := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:13333/app", nil)
 	rec := httptest.NewRecorder()

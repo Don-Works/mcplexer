@@ -22,7 +22,7 @@ Each Google account → a different mcplexer workspace, each with its own OAuth 
 2. **Gmail `auth` hardcodes loopback port 3000** (`server.listen(3000)`). If anything (a Next.js/`next-server` dev server, Docker) holds 3000, auth fails `EADDRINUSE` and the OAuth code lands on *that* app. Fix: free port 3000, OR patch the npx-cached `dist/index.js` `server.listen(3000)`→ a free port and pass that callback as the 3rd CLI arg (`npx … auth http://localhost:3600/oauth2callback`). The Calendar server uses an ephemeral port — no conflict.
 3. **Per-account consent MUST be done in a REAL browser** (system Chrome). cmux's WKWebView can't render Google's login JS (reads `about:blank`). The Calendar server serves a friendly `http://localhost:<port>` landing page; the Gmail server prints the consent URL.
 4. **Provision via the dashboard REST API on `:13333`**, authenticated by the **session cookie** (load `http://localhost:13333/`, then `fetch` same-origin). The admin `mcplexer__*` MCP tools are CWD-gated to `~/.mcplexer`, AND there is no MCP tool to write scope env values — REST is the path.
-5. **GCP project ID ≠ project name.** The console auto-generates an ID (e.g. `graphical-cairn-498408-j9`) that does NOT match the name you type. Always read the real ID (project picker / resource manager) and use it in `?project=` URLs.
+5. **GCP project ID ≠ project name.** The console auto-generates an ID (e.g. `your-project-a1b2c3d4`) that does NOT match the name you type. Always read the real ID (project picker / resource manager) and use it in `?project=` URLs.
 
 ## Step 1 — GCP OAuth app (ONCE, in a real browser)
 

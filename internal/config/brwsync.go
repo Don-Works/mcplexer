@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/don-works/mcplexer/internal/store"
@@ -11,11 +13,22 @@ import (
 
 // DefaultBrwdPath is the live brwd binary location used when SyncOptions
 // leaves BrwdPath empty. It mirrors the reference brw_chromium server.
-const DefaultBrwdPath = "/home/example/Library/Application Support/brw/bin/brwd"
+// Resolved under the current user's home dir, not a hardcoded username.
+var DefaultBrwdPath = homeRelPath("Library", "Application Support", "brw", "bin", "brwd")
 
 // DefaultBrwPolicyPath is the browser-profiles policy passed via
 // --profile-policy when SyncOptions leaves PolicyPath empty.
-const DefaultBrwPolicyPath = "/home/example/.config/brw/browser-profiles.json"
+var DefaultBrwPolicyPath = homeRelPath(".config", "brw", "browser-profiles.json")
+
+// homeRelPath joins path segments under the current user's home directory.
+// Falls back to a relative path when the home dir can't be resolved.
+func homeRelPath(seg ...string) string {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return filepath.Join(seg...)
+	}
+	return filepath.Join(append([]string{home}, seg...)...)
+}
 
 // brwSource tags every downstream server + route this sync owns. Only rows
 // with this source are ever updated or pruned by the sync.

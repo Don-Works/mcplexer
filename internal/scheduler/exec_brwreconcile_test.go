@@ -86,7 +86,7 @@ func TestSchedulerBrwReconcile_FileWatchDispatches(t *testing.T) {
 		ID:      "brw-watch",
 		Name:    "brw_reconcile_watch",
 		Kind:    KindFileWatch,
-		Spec:    "/home/example/.config/brw/browser-profiles.json",
+		Spec:    "/tmp/brw/browser-profiles.json",
 		Command: BrwReconcileCommand,
 		Surface: "schedule",
 		Enabled: true,

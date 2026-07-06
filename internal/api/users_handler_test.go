@@ -191,7 +191,7 @@ func TestUsersListHidesSyntheticDeviceIdentities(t *testing.T) {
 	st.users["u-self"] = store.User{UserID: "u-self", DisplayName: "Max", IsSelf: true}
 	st.users[syntheticID] = store.User{UserID: syntheticID, DisplayName: "peer-legacy"}
 	st.users["u-elliot"] = store.User{UserID: "u-elliot", DisplayName: "Elliot"}
-	st.peers["peer-legacy"] = store.P2PPeer{PeerID: "peer-legacy", DisplayName: "dev-laptop-b"}
+	st.peers["peer-legacy"] = store.P2PPeer{PeerID: "peer-legacy", DisplayName: "my-air"}
 	st.peers["peer-elliot"] = store.P2PPeer{PeerID: "peer-elliot", DisplayName: "elliot-mbp"}
 	st.peerUsers[syntheticID] = []string{"peer-legacy"}
 	st.peerUsers["u-elliot"] = []string{"peer-elliot"}
@@ -223,10 +223,10 @@ func TestUsersListHidesLegacyDeviceNamedIdentities(t *testing.T) {
 	t.Parallel()
 	st := newFakeUserStore()
 	st.users["u-self"] = store.User{UserID: "u-self", DisplayName: "Max", IsSelf: true}
-	st.users["u-device-name"] = store.User{UserID: "u-device-name", DisplayName: "dev-laptop-b"}
+	st.users["u-device-name"] = store.User{UserID: "u-device-name", DisplayName: "my-air"}
 	st.users["u-peer-label"] = store.User{UserID: "u-peer-label", DisplayName: "peer-abcdef12"}
 	st.users["u-person"] = store.User{UserID: "u-person", DisplayName: "Elliot"}
-	st.peers["peer-device"] = store.P2PPeer{PeerID: "peer-device", DisplayName: "dev-laptop-b"}
+	st.peers["peer-device"] = store.P2PPeer{PeerID: "peer-device", DisplayName: "my-air"}
 	st.peers["12D3KooWabcdef12"] = store.P2PPeer{PeerID: "12D3KooWabcdef12"}
 	st.peers["peer-person"] = store.P2PPeer{PeerID: "peer-person", DisplayName: "elliot-mbp"}
 	st.peerUsers["u-device-name"] = []string{"peer-device"}

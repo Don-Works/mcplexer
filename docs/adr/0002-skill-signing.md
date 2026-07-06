@@ -3,7 +3,7 @@
 - Status: Accepted (spike outcome)
 - Date: 2026-04-30
 - Deciders: project maintainers
-- Related: R0.2 — Spike: skill signing scheme decision (ClickUp 86c9k55k1)
+- Related: R0.2 — Spike: skill signing scheme decision
 - Supersedes: —
 
 ## Context

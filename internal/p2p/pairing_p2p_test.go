@@ -331,8 +331,8 @@ func TestPairWrongCodeRejected(t *testing.T) {
 	}
 }
 
-// TestPairResponderPersistsInitiator is the regression test for ClickUp
-// 86c9kfhhb: when B (initiator) completes a handshake against A
+// TestPairResponderPersistsInitiator is the regression test for the
+// asymmetric-pairing bug: when B (initiator) completes a handshake against A
 // (responder), A must also persist B in its peer store. Before this fix
 // only B's HTTP handler wrote a row, leaving A with an empty p2p_peers
 // table — the user-visible symptom: "I paired but A doesn't see B".

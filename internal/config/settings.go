@@ -16,7 +16,7 @@ import (
 
 // DisplayName is purely cosmetic / UX. It is NOT auth-bearing — cryptographic
 // trust still rides on the libp2p PeerID. We pass DisplayName through pairing
-// + mesh envelopes as a hint so users see "max-mbp" instead of "peer-Ymq…"
+// + mesh envelopes as a hint so users see "my-laptop" instead of "peer-Ymq…"
 // in lists and audit lines. Receivers MUST NOT use DisplayName for any trust
 // or routing decision — those are keyed strictly off PeerID.
 const (
