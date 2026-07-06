@@ -69,7 +69,7 @@ func TestIndexStatusSurfacesNotBuilt(t *testing.T) {
 func TestIndexSymbolsAutoBuilds(t *testing.T) {
 	h := newHandlerWithIndex(t)
 	out := indexOK(t, h, "index__symbols", `{"query":"dispatch"}`)
-	if !strings.Contains(out, `"count": 0`) {
+	if !strings.Contains(out, `"count":0`) {
 		t.Fatalf("expected empty auto-built symbol result, got %q", out)
 	}
 }

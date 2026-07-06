@@ -65,7 +65,7 @@ func TestKVRoundTrip(t *testing.T) {
 	h := newHandlerWithKVDB(t)
 	set := kvText(t, h, "kv__set",
 		`{"key":"customers","value":{"count":2,"names":["acme","globex"],"revenue":1234.5}}`)
-	if !strings.Contains(set, `"ok": true`) || !strings.Contains(set, `"bytes":`) {
+	if !strings.Contains(set, `"ok":true`) || !strings.Contains(set, `"bytes":`) {
 		t.Fatalf("set body: %s", set)
 	}
 	// kv__get returns the value verbatim (auto-unwrapped in the sandbox).
@@ -90,20 +90,20 @@ func TestKVListPrefixAndIdempotentDelete(t *testing.T) {
 	_ = kvText(t, h, "kv__set", `{"key":"b","value":3}`)
 
 	list := kvText(t, h, "kv__list", `{}`)
-	if !strings.Contains(list, `"count": 3`) {
+	if !strings.Contains(list, `"count":3`) {
 		t.Fatalf("list count: %s", list)
 	}
 	pref := kvText(t, h, "kv__list", `{"prefix":"a"}`)
-	if !strings.Contains(pref, `"count": 2`) {
+	if !strings.Contains(pref, `"count":2`) {
 		t.Fatalf("prefix list: %s", pref)
 	}
 
 	del := kvText(t, h, "kv__delete", `{"key":"a"}`)
-	if !strings.Contains(del, `"deleted": true`) {
+	if !strings.Contains(del, `"deleted":true`) {
 		t.Fatalf("delete existing: %s", del)
 	}
 	del2 := kvText(t, h, "kv__delete", `{"key":"a"}`)
-	if !strings.Contains(del2, `"deleted": false`) {
+	if !strings.Contains(del2, `"deleted":false`) {
 		t.Fatalf("idempotent delete of absent key: %s", del2)
 	}
 }

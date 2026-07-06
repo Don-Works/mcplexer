@@ -41,7 +41,7 @@ func (t *errorTracker) RecordError(msg string) bool {
 // RecordSuccess resets the error tracker on a successful tool call.
 func (t *errorTracker) RecordSuccess() {
 	t.mu.Lock()
-	t.entries = t.entries[:0]
+	t.entries = nil
 	t.mu.Unlock()
 }
 
