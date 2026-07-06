@@ -61,6 +61,35 @@ func TestAdminTrustLevel(t *testing.T) {
 			}
 		}
 	})
+
+	// The MCPLEXER_ADMIN_ALLOW_ANY_CWD break-glass grants admin from any
+	// dir, but must resolve to the WEAKER source-repo level so the
+	// cross-workspace route guard still bites (2026-07-06 incident: the
+	// env var was set on the daemon, forcing full data-dir trust and
+	// making the guard inert). t.Setenv forbids t.Parallel — these run
+	// serially.
+	t.Run("env break-glass is source-repo not datadir", func(t *testing.T) {
+		t.Setenv("MCPLEXER_ADMIN_ALLOW_ANY_CWD", "1")
+		if got := g.AdminTrustLevel(project, nil); got != AdminTrustSourceRepo {
+			t.Errorf("env-bypass plain dir = %q, want source-repo", got)
+		}
+		if got := g.AdminTrustLevel("", nil); got != AdminTrustSourceRepo {
+			t.Errorf("env-bypass empty cwd = %q, want source-repo", got)
+		}
+		// A genuine data-dir CWD still wins even with the env var set.
+		if got := g.AdminTrustLevel(dataDir, nil); got != AdminTrustDataDir {
+			t.Errorf("env-bypass + data-dir cwd = %q, want datadir", got)
+		}
+		// A source-repo cwd is source-repo either way.
+		if got := g.AdminTrustLevel(repo, nil); got != AdminTrustSourceRepo {
+			t.Errorf("env-bypass + repo cwd = %q, want source-repo", got)
+		}
+		// Agreement invariant holds under the break-glass too: IsAdminContext
+		// is true from anywhere, and the level is never None.
+		if !g.IsAdminContext(project, nil) || g.AdminTrustLevel(project, nil) == AdminTrustNone {
+			t.Error("env-bypass broke the IsAdminContext/None agreement invariant")
+		}
+	})
 }
 
 // TestAdminTrustContextRoundTrip covers the ctx plumbing between the
