@@ -12,11 +12,52 @@ import (
 // denyDirs are directory names never descended into or indexed, on BOTH the
 // git and WalkDir paths (a committed vendor/ or node_modules/ would otherwise
 // pollute the map — plan §7.1 / R8). "testdata" and any dotfile directory are
-// handled separately in isDenied/isDeniedDirName.
+// handled separately in isDenied/isDeniedDirName. Covers the common dependency
+// and build-output dirs across ecosystems (JS, Go, Rust, Python, JVM, Ruby,
+// iOS) so the index stays code-only even when such a dir is committed.
 var denyDirs = map[string]struct{}{
-	".git": {}, "node_modules": {}, "vendor": {}, "dist": {}, "build": {},
-	"out": {}, ".next": {}, "bin": {}, "coverage": {}, ".claude": {},
-	".impeccable": {}, ".playwright-mcp": {},
+	// JS/TS
+	"node_modules": {}, "dist": {}, "build": {}, "out": {}, ".next": {},
+	"coverage": {}, ".turbo": {}, ".parcel-cache": {},
+	// Go / general
+	".git": {}, "vendor": {}, "bin": {},
+	// Rust / Maven / Gradle (build output)
+	"target": {}, ".gradle": {},
+	// Python
+	"__pycache__": {}, ".venv": {}, "venv": {}, ".tox": {},
+	".mypy_cache": {}, ".pytest_cache": {}, ".ruff_cache": {},
+	// Ruby / iOS / IaC / caches
+	".bundle": {}, "Pods": {}, ".terraform": {}, ".cache": {},
+	// Agent/tool scratch
+	".claude": {}, ".impeccable": {}, ".playwright-mcp": {},
+}
+
+// denyFileNames are exact filenames that are tracked text but pure noise for a
+// code index — lock files and checksum manifests. They add no symbols and
+// their dependency-name soup pollutes file/context search.
+var denyFileNames = map[string]struct{}{
+	"package-lock.json": {}, "npm-shrinkwrap.json": {}, "yarn.lock": {},
+	"pnpm-lock.yaml": {}, "bun.lockb": {}, "go.sum": {}, "Cargo.lock": {},
+	"poetry.lock": {}, "Pipfile.lock": {}, "composer.lock": {},
+	"Gemfile.lock": {}, "flake.lock": {},
+}
+
+// denyFileSuffixes are extensions/suffixes that are generated or minified —
+// noise that shouldn't feed symbol or context search.
+var denyFileSuffixes = []string{".min.js", ".min.css", ".map", ".lock"}
+
+// isDeniedFileName reports whether a bare filename is index noise (a lock file,
+// checksum manifest, minified bundle, or source map).
+func isDeniedFileName(base string) bool {
+	if _, ok := denyFileNames[base]; ok {
+		return true
+	}
+	for _, suf := range denyFileSuffixes {
+		if strings.HasSuffix(base, suf) {
+			return true
+		}
+	}
+	return false
 }
 
 // binarySniffLimit is how many leading bytes are scanned for a NUL to classify
@@ -45,13 +86,17 @@ func isDenied(rel string) bool {
 		if p == "" {
 			continue
 		}
+		last := i == len(parts)-1
+		if last && isDeniedFileName(p) {
+			return true
+		}
 		if _, ok := denyDirs[p]; ok {
 			return true
 		}
 		if p == "testdata" {
 			return true
 		}
-		if i < len(parts)-1 && strings.HasPrefix(p, ".") {
+		if !last && strings.HasPrefix(p, ".") {
 			return true
 		}
 	}

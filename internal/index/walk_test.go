@@ -30,6 +30,34 @@ func TestIsDenied(t *testing.T) {
 	}
 }
 
+// TestIsDeniedNoiseFilesAndEcosystemDirs guards the code-only invariant across
+// ecosystems: lock/checksum/minified files and non-JS/Go build+dep dirs must be
+// excluded, while real source (incl. go.mod, which the Go extractor needs) stays.
+func TestIsDeniedNoiseFilesAndEcosystemDirs(t *testing.T) {
+	denied := []string{
+		// noise files
+		"web/package-lock.json", "yarn.lock", "go.sum", "Cargo.lock",
+		"poetry.lock", "Gemfile.lock", "flake.lock",
+		"web/dist/app.min.js", "assets/style.min.css", "web/src/app.js.map",
+		// cross-ecosystem build/dep dirs (even if committed)
+		"target/debug/foo.rs", "src/__pycache__/mod.cpython-311.pyc",
+		".venv/lib/python3.11/site-packages/x.py", "app/.gradle/cache.bin",
+		"ios/Pods/Alamofire/Source/x.swift", ".terraform/providers/y.go",
+	}
+	for _, p := range denied {
+		if !isDenied(p) {
+			t.Errorf("isDenied(%q) = false, want true (noise/build dir)", p)
+		}
+	}
+	// go.mod is NOT noise — the Go extractor parses it for import resolution.
+	keep := []string{"go.mod", "web/package.json", "src/main.rs", "app/pyproject.toml"}
+	for _, p := range keep {
+		if isDenied(p) {
+			t.Errorf("isDenied(%q) = true, want false (real source/config)", p)
+		}
+	}
+}
+
 func TestMatchesPrefixes(t *testing.T) {
 	if !matchesPrefixes("internal/index/build.go", nil) {
 		t.Error("empty prefixes should match everything")
