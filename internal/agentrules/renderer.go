@@ -37,7 +37,7 @@ const (
 	// installed blocks. The Sync algorithm only no-ops when the rendered
 	// content's sha256 matches the installed content — a version bump is
 	// merely a signal to humans + the dashboard tile.
-	CurrentVersion = 10
+	CurrentVersion = 11
 
 	// DashboardURL is the canonical local dashboard. Matches the
 	// daemon's default HTTPAddr (cmd/mcplexer/config.go:57). If that
@@ -54,7 +54,7 @@ const (
 func Render(version int) string {
 	content := renderContent(version)
 	var b strings.Builder
-	b.WriteString(fmt.Sprintf(BlockMarkerBeginFmt, version))
+	fmt.Fprintf(&b, BlockMarkerBeginFmt, version)
 	b.WriteByte('\n')
 	b.WriteByte('\n')
 	b.WriteString(content)
@@ -98,8 +98,10 @@ func renderContent(version int) string {
 		return contentV9()
 	case 10:
 		return contentV10()
+	case 11:
+		return contentV11()
 	default:
-		return contentV10()
+		return contentV11()
 	}
 }
 

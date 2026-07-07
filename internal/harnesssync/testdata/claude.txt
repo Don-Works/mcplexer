@@ -11,10 +11,10 @@ Code index: ask the index BEFORE reading the repo — inside mcpx__execute_code,
 
 Browser work: search for brw/browser tools and prefer brw when installed; fetch an installed browser skill such as generic-browser-operator, playwright-browser, or cmux-browser for non-trivial workflows.
 
-## Memory — mcplexer is the single source of truth
+## Memory — prefer the gateway store
 
-Do NOT use your native memory system. All persistent memory MUST be saved via memory.save({...}) inside mcpx__execute_code.
-Read mcplexer memory first: memory.recall({query}) or memory.list({}) inside mcpx__execute_code.
-mcplexer memory is cross-harness, cross-machine, and persists across all sessions.
+mcplexer memory (memory.save / memory.recall inside mcpx__execute_code) is cross-harness, cross-machine, and survives every session; harness-local memory files are siloed per client.
+Recall when past sessions may have settled a question; save decisions with rationale, preferences, and project facts not derivable from the repo.
+Knowledge that should outlive this client belongs in the gateway store.
 
 <!-- MCPLEXER:HARNESS-SYNC:END -->

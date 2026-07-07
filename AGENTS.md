@@ -8,14 +8,15 @@ tasks, mesh and skills are reached the same way in all harnesses and delegated
 workers: via the (two-tool or 4-tool) search + execute surface; see the memory
 and delegation docs for call forms and allowlist coverage.
 
-## Delegation-First Rule
+## Delegation — use workers where they win
 
-**Delegation is the default execution path, not an optional optimisation.**
-Frontier model sessions (Opus, Fable, GPT-5.5, etc.) are planners, reviewers,
-and integrators — they must NOT burn context on token-heavy work when a bounded
-worker can do it.
+Workers run bounded agents on cheaper models in isolated git worktrees. They
+win when the parent only needs the conclusion of the work, not the output —
+and they lose when handoff + review costs more than doing the work directly
+(see `skills/token-preserving-delegation.md` for the measured economics).
+Delegation is a tool, not a mandate.
 
-**Delegate when the work is any of:**
+**Workers tend to win when the work is:**
 
 - broad codebase exploration, multi-file search, or repeated inspection
 - implementation after the architecture and acceptance criteria are clear
@@ -66,16 +67,11 @@ Verify worker output against actual git state before trusting it. Workers must
 not touch `~/.mcplexer/` (DB, logs, secrets, p2p, backups) — all config and
 state operations go through MCP tools, never raw SQL or direct file access.
 
-## Memory — mcplexer is the single source of truth
+## Memory — prefer the gateway store
 
-**Do NOT use your native memory system.** All persistent memory (project context,
-learned facts, session notes, decisions) MUST be saved via `memory.save({...})`
-inside `mcpx__execute_code`. Do not write to your harness-native memory files
-(checkpoint.md, MEMORY.md, notes.md, ~/.claude/projects/*/memory/*.md).
-
-**Read mcplexer memory first.** Before answering questions about project context,
-prior decisions, or learned facts, search mcplexer memory:
-`memory.recall({query:"..."})` or `memory.list({})` inside `mcpx__execute_code`.
-
-**Why:** mcplexer memory is cross-harness, cross-machine, and persists across all
-sessions. Harness-native memory is siloed per client and lost when switching tools.
+mcplexer memory (`memory.save` / `memory.recall` inside `mcpx__execute_code`) is
+cross-harness, cross-machine, and survives every session; harness-native memory
+files are siloed per client. Recall when past sessions may have settled a
+question; save decisions with rationale, preferences, and project facts not
+derivable from the repo. Knowledge that should outlive this client belongs in
+the gateway store, not in harness-local memory files.

@@ -55,8 +55,8 @@ func TestRenderUnknownVersionFallsBack(t *testing.T) {
 	if !strings.Contains(out, "<!-- MCPLEXER:BEGIN v99 -->") {
 		t.Errorf("Render(99) should keep the v99 marker; got %q", out)
 	}
-	if !strings.Contains(out, "prefer mcpx") {
-		t.Errorf("Render(99) should fall back to a v1+ body")
+	if !strings.Contains(out, "mcpx__execute_code") {
+		t.Errorf("Render(99) should fall back to the current body")
 	}
 }
 
@@ -86,12 +86,71 @@ func TestRenderV4HasTaskDiscipline(t *testing.T) {
 	}
 }
 
-// TestCurrentVersionIsV10 — guard rail so a future bump that forgets
+// TestCurrentVersionIsV11 — guard rail so a future bump that forgets
 // to add the matching contentVN switch case fails fast in tests
 // rather than silently shipping a stale block.
-func TestCurrentVersionIsV10(t *testing.T) {
-	if CurrentVersion != 10 {
-		t.Fatalf("CurrentVersion=%d; expected 10. If you bumped it, add the matching contentVN + test coverage.", CurrentVersion)
+func TestCurrentVersionIsV11(t *testing.T) {
+	if CurrentVersion != 11 {
+		t.Fatalf("CurrentVersion=%d; expected 11. If you bumped it, add the matching contentVN + test coverage.", CurrentVersion)
+	}
+}
+
+// TestRenderV11LeanContract pins the v11 redesign: one self-contained
+// block that names every tool family and every guardrail, WITHOUT the
+// V2→V8 process essays. The positive list is the load-bearing surface;
+// the negative list is the point of the redesign — if any of those
+// strings come back, the instruction tax is creeping back in (put the
+// depth in a registry skill or docs/, not this block).
+func TestRenderV11LeanContract(t *testing.T) {
+	out := Render(11)
+
+	mustContain := []string{
+		"<!-- MCPLEXER:BEGIN v11 -->",
+		"mcpx__execute_code",
+		"mcpx__search_tools",
+		"secret://<KEY>",
+		"task.claim",
+		"touches_files",
+		"memory.recall",
+		"memory.save",
+		"index.context",
+		"mesh.receive",
+		"mcpx.skill_*",
+		"delegate_worker",
+		"http://localhost:3333",
+		"~/.mcplexer",
+		"rules sync",
+		// The shell-guard line must describe TODAY's behaviour: the check
+		// is quote-aware and chaining flows to approval by default.
+		"quote-aware",
+		`grep -E "a|b"`,
+	}
+	for _, s := range mustContain {
+		if !strings.Contains(out, s) {
+			t.Errorf("Render(11) missing required substring %q", s)
+		}
+	}
+
+	mustNotContain := []string{
+		"HARD-BLOCKED",            // v6's stale shell-guard framing
+		"Anti-patterns",           // self-recognition essays
+		"default execution path",  // delegation-first mandate
+		"Ignore it",               // "ignore the harness" imperative
+		"harness's session-local", // ditto
+		"RECALL BEFORE ACTING",    // shouting memory contract
+	}
+	for _, s := range mustNotContain {
+		if strings.Contains(out, s) {
+			t.Errorf("Render(11) contains banned substring %q — v11 is the lean block; keep process essays out", s)
+		}
+	}
+
+	// Line budget: v10 rendered ~150 lines; the redesign target is a
+	// third of that. Headroom for editorial tweaks, but a breach of 60
+	// means sections are accreting again.
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	if len(lines) > 60 {
+		t.Errorf("Render(11) is %d lines; budget is 60", len(lines))
 	}
 }
 

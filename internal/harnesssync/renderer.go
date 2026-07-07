@@ -21,13 +21,9 @@ Browser/browser-control tasks: assume brw may be installed. Search brw/browser t
 
 The using-mcplexer skill (this bootstrap) is the source of truth for the contract.
 
-## Memory — mcplexer is the single source of truth
+## Memory — prefer the gateway store
 
-Do NOT use your native memory system. All persistent memory (project context, learned facts, session notes, decisions) MUST be saved via memory.save({...}) inside mcpx__execute_code. Do not write to your harness-native memory files (checkpoint.md, MEMORY.md, notes.md, ~/.claude/projects/*/memory/*.md).
-
-Read mcplexer memory first. Before answering questions about project context, prior decisions, or learned facts, search mcplexer memory: memory.recall({query:"..."}) or memory.list({}) inside mcpx__execute_code. The digest at ~/.mcplexer/memory-exports/ is a read-only snapshot — use the live memory tools for the canonical data.
-
-Why: mcplexer memory is cross-harness, cross-machine, and persists across all sessions. Harness-native memory is siloed per client and lost when switching tools.`
+mcplexer memory (memory.save / memory.recall inside mcpx__execute_code) is cross-harness, cross-machine, and survives every session; harness-native memory files are siloed per client. Recall when past sessions may have settled a question; save decisions with rationale, preferences, and project facts not derivable from the repo. Knowledge that should outlive this client belongs in the gateway store, not in harness-local memory files. The digest at ~/.mcplexer/memory-exports/ is a read-only snapshot — the live memory tools are canonical.`
 
 // Render produces the managed block content (markers + body) for the
 // given harness. The caller writes it into TargetPath. For claude and
@@ -42,10 +38,10 @@ func Render(k HarnessKey, version int) string {
 			"Fetch deeper playbooks via the skill registry on demand.\n\n"+
 			"Code index: ask the index BEFORE reading the repo — inside mcpx__execute_code, index.context({query, budget_tokens}) returns a ranked context pack for a task, index.symbols finds definitions (camelCase word-split), index.map_failure maps a pasted test failure to candidate files.\n\n"+
 			"Browser work: search for brw/browser tools and prefer brw when installed; fetch an installed browser skill such as generic-browser-operator, playwright-browser, or cmux-browser for non-trivial workflows.\n\n"+
-			"## Memory — mcplexer is the single source of truth\n\n"+
-			"Do NOT use your native memory system. All persistent memory MUST be saved via memory.save({...}) inside mcpx__execute_code.\n"+
-			"Read mcplexer memory first: memory.recall({query}) or memory.list({}) inside mcpx__execute_code.\n"+
-			"mcplexer memory is cross-harness, cross-machine, and persists across all sessions.",
+			"## Memory — prefer the gateway store\n\n"+
+			"mcplexer memory (memory.save / memory.recall inside mcpx__execute_code) is cross-harness, cross-machine, and survives every session; harness-local memory files are siloed per client.\n"+
+			"Recall when past sessions may have settled a question; save decisions with rationale, preferences, and project facts not derivable from the repo.\n"+
+			"Knowledge that should outlive this client belongs in the gateway store.",
 			version, version)
 	}
 	if k == OpenCode {
@@ -55,10 +51,10 @@ func Render(k HarnessKey, version int) string {
 			"Fetch deeper playbooks via the skill registry on demand.\n\n"+
 			"Code index: ask the index BEFORE reading the repo — inside mcpx__execute_code, index.context({query, budget_tokens}) returns a ranked context pack for a task, index.symbols finds definitions (camelCase word-split), index.map_failure maps a pasted test failure to candidate files.\n\n"+
 			"Browser work: search for brw/browser tools and prefer brw when installed; fetch an installed browser skill such as generic-browser-operator, playwright-browser, or cmux-browser for non-trivial workflows.\n\n"+
-			"## Memory — mcplexer is the single source of truth\n\n"+
-			"Do NOT use your native memory system. All persistent memory MUST be saved via memory.save({...}) inside mcpx__execute_code.\n"+
-			"Read mcplexer memory first: memory.recall({query}) or memory.list({}) inside mcpx__execute_code.\n"+
-			"mcplexer memory is cross-harness, cross-machine, and persists across all sessions.",
+			"## Memory — prefer the gateway store\n\n"+
+			"mcplexer memory (memory.save / memory.recall inside mcpx__execute_code) is cross-harness, cross-machine, and survives every session; harness-local memory files are siloed per client.\n"+
+			"Recall when past sessions may have settled a question; save decisions with rationale, preferences, and project facts not derivable from the repo.\n"+
+			"Knowledge that should outlive this client belongs in the gateway store.",
 			version, version)
 	}
 	if k == Grok {
@@ -70,8 +66,8 @@ func Render(k HarnessKey, version int) string {
 
 func renderTOMLCommentBlock(k HarnessKey, version int, body string) string {
 	var b strings.Builder
-	b.WriteString(fmt.Sprintf(TOMLBlockBeginFmt, version, k))
-	for _, line := range strings.Split(body, "\n") {
+	fmt.Fprintf(&b, TOMLBlockBeginFmt, version, k)
+	for line := range strings.SplitSeq(body, "\n") {
 		if line == "" {
 			b.WriteString("#\n")
 			continue

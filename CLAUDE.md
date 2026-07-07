@@ -51,17 +51,13 @@ CLI workers (`claude_cli`, `opencode_cli`, `grok_cli`, `mimo_cli`) run with **Ne
 - `grok_cli` headless JSON may omit usage/cost — treat `0` tokens as missing accounting, not zero spend.
 - Enable via launchd plist `EnvironmentVariables` (macOS) or systemd unit `Environment=` (Linux).
 
-## Token-Preserving Delegation (delegation-first)
-**Delegation is the default execution path, not an optional optimisation.** Frontier model sessions (Opus/Fable/GPT-5.5 class) are planners, reviewers, and integrators. They must NOT burn context on token-heavy work when a bounded Worker can do it.
-- **Delegate when:** multi-file exploration, repeated file reads, long command output, implementation after the architecture is clear, test/log triage, mechanical edits, or parallel investigation. If the architecture and acceptance criteria are known, the work belongs in a worker.
-- **Keep in the parent:** problem framing, architecture decisions, worker decomposition, result review/scoring, integration, secret handling, and final user communication.
-- **Tools:** `mcpx__delegate_worker` (create), `mcpx__list_delegations` (poll), `mcpx__review_delegation` (score). `mcplexer__spawn_subagent` is an admin escape hatch only.
-- **Lifecycle:** decompose → delegate → poll → inspect results → optionally score with `mcpx__review_delegation` when the review is useful for model ranking, safety, merges, or user-visible quality. Set `review_required: true` only when parent review must gate completion; otherwise completion is not held in `needs_review`.
-- **Handoff packet:** objective, scope, known facts with file refs, constraints, acceptance criteria, verification commands, return contract. Under ~4 000 tokens; put heavier context in a `task__create` work context and pass the task ID.
-- **Workers:** prefer mcplexer Workers on cheap code-cutter profiles over native Claude/Codex subagents (better cross-client pickup, audit, budgets, provider routing). For OpenCode-backed workers (MiniMax, GLM, OpenRouter), prefer a local OpenCode server endpoint so parallel workers attach through one server.
-- **Worker isolation:** workers must use isolated git worktrees, never the parent checkout. Workers must not touch `~/.mcplexer/` (DB, logs, secrets, p2p, backups) — all config/state operations go through MCP tools, never raw SQL or direct file access.
-- **Metrics:** the Delegations UI (`/delegations`) shows parent/worker context trees, spend, frontier tokens/cost avoided, worker token delta, review scores, and model rank. Compare avoided frontier cost against worker spend; raw MiniMax/GLM token count is not the win condition.
-- See `skills/token-preserving-delegation.md` for the full workflow, calling conventions, exploration pattern, savings rubric, and handoff template.
+## Delegation — use workers where they win
+Workers (`mcpx__delegate_worker` to create, `mcpx__list_delegations` to poll, `mcpx__review_delegation` to score) run bounded agents on cheaper models in isolated git worktrees. They win when the work is parallel fan-out, a broad codebase scan, mechanical multi-file edits, or test/log triage after the approach is clear — cases where the parent only needs the conclusion, not the output. Doing focused work directly in the parent is fine; delegation is a tool, not a mandate. `mcplexer__spawn_subagent` is an admin escape hatch only.
+- **Handoff:** objective, scope/allowed paths, known facts with file refs, acceptance criteria, verification commands, return contract. Put heavier context in a task work-context and pass the task ID.
+- **Isolation:** workers use isolated git worktrees, never the parent checkout, and must not touch `~/.mcplexer/` (DB, logs, secrets, p2p, backups) — config/state goes through MCP tools.
+- **Review:** set `review_required: true` only when parent review should gate completion; score with `mcpx__review_delegation` when the judgment is worth recording (model ranking, safety, merges). Verify any reported branch, commit, or test result against actual git state before trusting it.
+- **Metrics:** the Delegations UI (`/delegations`) compares avoided frontier cost against worker spend — that comparison, not raw worker token count, is the win condition.
+- Details: `skills/token-preserving-delegation.md` (workflow, calling conventions, handoff template).
 
 ## DB lockdown — `~/.mcplexer/` is off-limits
 `~/.mcplexer/{mcplexer.db,mcplexer.db.age,api-key,secrets/,p2p/,backups/,mcplexer.log*}` is OFF-LIMITS. Enforcement:

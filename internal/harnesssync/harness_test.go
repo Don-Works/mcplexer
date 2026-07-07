@@ -1,6 +1,7 @@
 package harnesssync
 
 import (
+	"flag"
 	"os"
 	"path/filepath"
 	"strings"
@@ -8,6 +9,11 @@ import (
 
 	"github.com/pelletier/go-toml/v2"
 )
+
+// update regenerates the golden files from the current renderer output:
+//
+//	go test ./internal/harnesssync -update
+var update = flag.Bool("update", false, "rewrite testdata golden files from Render output")
 
 func TestRender_GoldenAndMarkers(t *testing.T) {
 	tests := []struct {
@@ -42,6 +48,11 @@ func TestRender_GoldenAndMarkers(t *testing.T) {
 				}
 			}
 			if tc.golden != "" {
+				if *update {
+					if err := os.WriteFile(tc.golden, []byte(got), 0o644); err != nil {
+						t.Fatalf("update golden %s: %v", tc.golden, err)
+					}
+				}
 				want, err := os.ReadFile(tc.golden)
 				if err != nil {
 					t.Fatalf("read golden %s: %v", tc.golden, err)

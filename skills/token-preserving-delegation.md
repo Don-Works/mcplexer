@@ -3,9 +3,9 @@ name: token-preserving-delegation
 description: Preserve expensive parent-model context by delegating token-heavy coding, search, audit, or test work to cheaper MCPlexer workers. Use when Claude Opus, Codex/GPT, or another high-cost caller should keep strategy and review while cheaper models such as MiniMax, GLM/Z.ai, OpenCode, or CLI-backed workers execute bounded work; includes handoff sizing, model/profile selection, savings accounting, parallel fan-out, polling, and parent scoring of results.
 ---
 
-# Token-Preserving Delegation (delegation-first)
+# Token-Preserving Delegation
 
-Delegation is the default execution path, not an optional optimisation. Use MCPlexer delegation whenever the parent model should stay strategic and avoid burning context on broad code reading, repetitive edits, test loops, or parallel investigation. When in doubt, delegate, then review and score the result.
+Delegation preserves expensive parent-model context by handing bounded, token-heavy work to cheaper workers. It wins when the work is parallel fan-out, broad code reading, repetitive edits, or test loops the parent only needs the conclusion of — and it loses when handoff + review costs more than doing focused work directly (the first-12h audit below measured exactly that failure). Delegate when it wins; work directly when it doesn't.
 
 ## Economics Guardrails (first-12h ledger audit, 2026-06-11)
 
