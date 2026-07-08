@@ -183,6 +183,7 @@ func handleSocketConn(
 	if addonCreator != nil {
 		gw.SetAddonCreator(addonCreator)
 	}
+	wireMonitoringGateway(gw, s, secretsMgr, meshMgr)
 
 	// Per-session subscription so that when any downstream's tool surface
 	// changes (discover, internal registration, downstream-emitted

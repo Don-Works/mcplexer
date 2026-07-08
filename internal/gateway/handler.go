@@ -29,6 +29,7 @@ import (
 	"github.com/don-works/mcplexer/internal/session"
 	"github.com/don-works/mcplexer/internal/skillregistry"
 	"github.com/don-works/mcplexer/internal/store"
+	"github.com/don-works/mcplexer/internal/logwatch/distill"
 	"github.com/don-works/mcplexer/internal/tasks"
 	"github.com/don-works/mcplexer/internal/telegram"
 	workersadmin "github.com/don-works/mcplexer/internal/workers/admin"
@@ -97,6 +98,8 @@ type handler struct {
 	memoryShare    *p2p.MemoryShareService   // nil = memory share over libp2p disabled
 	tasksSvc       *tasks.Service            // nil = tasks subsystem disabled
 	workerAdmin    *workersadmin.Service     // nil = worker delegation disabled
+	monitoringQry  *distill.Query            // nil = monitoring digests disabled
+	monitoringNtf  distill.Notifier          // nil = monitoring notify disabled
 	conciergeSvc   *concierge.Service        // nil = concierge surface disabled
 	brainEditor    *brain.Editor             // nil = brain subsystem disabled
 	codeIndex      *index.Service            // nil = code index subsystem disabled
@@ -190,6 +193,22 @@ func (h *handler) setTasksSvc(svc *tasks.Service) {
 
 func (h *handler) setWorkerAdmin(svc *workersadmin.Service) {
 	h.workerAdmin = svc
+}
+
+// setMonitoring wires the Monitoring query + notify services
+// post-construction (daemon boot, after the logwatch subsystem is
+// assembled). Nil values leave the monitoring.* namespace disabled.
+func (h *handler) setMonitoring(q *distill.Query, n distill.Notifier) {
+	h.monitoringQry = q
+	h.monitoringNtf = n
+}
+
+// SetMonitoring exposes setMonitoring on the Server for the daemon.
+func (s *Server) SetMonitoring(q *distill.Query, n distill.Notifier) {
+	if s == nil || s.handler == nil {
+		return
+	}
+	s.handler.setMonitoring(q, n)
 }
 
 // setConciergeSvc wires the concierge service post-construction. Same

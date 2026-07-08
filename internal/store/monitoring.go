@@ -288,4 +288,17 @@ type MonitoringStore interface {
 	ListMonitoringChannels(ctx context.Context, workspaceID string) ([]*MonitoringChannel, error)
 	UpdateMonitoringChannel(ctx context.Context, c *MonitoringChannel) error
 	DeleteMonitoringChannel(ctx context.Context, id string) error
+
+	// Distiller surface (M3). UpsertLogTemplate returns isNew — the
+	// novelty signal. Window counts come from CountLinesByTemplate so
+	// digests are stateless.
+	UpsertLogTemplate(ctx context.Context, t *LogTemplate, n int64) (bool, error)
+	GetLogTemplate(ctx context.Context, id string) (*LogTemplate, error)
+	ListLogTemplates(ctx context.Context, sourceIDs []string, since time.Time, limit int) ([]*LogTemplate, error)
+	AckLogTemplate(ctx context.Context, id, note string) error
+	InsertLogLines(ctx context.Context, lines []LogLine) error
+	PruneLogLines(ctx context.Context, sourceID string, maxAge time.Time, maxBytes int64) (int64, error)
+	CountLinesByTemplate(ctx context.Context, sourceIDs []string, since time.Time) (map[string]int64, error)
+	SearchLogLines(ctx context.Context, sourceID, q string, limit int) ([]*LogLine, error)
+	ListLogLinesByTemplate(ctx context.Context, templateID string, limit int) ([]*LogLine, error)
 }

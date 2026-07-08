@@ -1425,3 +1425,27 @@ func (m *mockRouteStore) UpdateMonitoringChannel(context.Context, *store.Monitor
 	return nil
 }
 func (m *mockRouteStore) DeleteMonitoringChannel(context.Context, string) error { return nil }
+
+func (m *mockRouteStore) UpsertLogTemplate(context.Context, *store.LogTemplate, int64) (bool, error) {
+	return false, nil
+}
+func (m *mockRouteStore) GetLogTemplate(context.Context, string) (*store.LogTemplate, error) {
+	return nil, store.ErrLogTemplateNotFound
+}
+func (m *mockRouteStore) ListLogTemplates(context.Context, []string, time.Time, int) ([]*store.LogTemplate, error) {
+	return nil, nil
+}
+func (m *mockRouteStore) AckLogTemplate(context.Context, string, string) error { return nil }
+func (m *mockRouteStore) InsertLogLines(context.Context, []store.LogLine) error { return nil }
+func (m *mockRouteStore) PruneLogLines(context.Context, string, time.Time, int64) (int64, error) {
+	return 0, nil
+}
+func (m *mockRouteStore) CountLinesByTemplate(context.Context, []string, time.Time) (map[string]int64, error) {
+	return nil, nil
+}
+func (m *mockRouteStore) SearchLogLines(context.Context, string, string, int) ([]*store.LogLine, error) {
+	return nil, nil
+}
+func (m *mockRouteStore) ListLogLinesByTemplate(context.Context, string, int) ([]*store.LogLine, error) {
+	return nil, nil
+}

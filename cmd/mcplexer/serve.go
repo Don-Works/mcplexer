@@ -1493,6 +1493,7 @@ func buildServerDeps(ctx context.Context, cfg *Config, db *sqlite.DB, settingsSv
 		if d.addonCreator != nil {
 			d.workerGateway.SetAddonCreator(d.addonCreator)
 		}
+		wireMonitoringGateway(d.workerGateway, db, d.secretsMgr, d.meshMgr)
 		d.workerDispatcher.SetBuiltinCaller(workerBuiltinAdapter{gw: d.workerGateway})
 	}
 
@@ -1690,6 +1691,11 @@ func runServer(ctx context.Context, cfg *Config, db *sqlite.DB, cfgSvc *config.S
 		})
 	}
 
+	// Monitoring collector — pull loop for remote log sources. The
+	// single-runner gate (MCPLEXER_MONITORING_RUNNER=0) keeps viewer
+	// daemons from double-pulling in a peer group.
+	startMonitoringCollector(ctx, db, d.secretsMgr, d.meshMgr)
+
 	err = g.Wait()
 
 	drainCtx, drainCancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -1841,6 +1847,7 @@ func runStdio(ctx context.Context, cfg *Config, db *sqlite.DB, settingsSvc *conf
 	if addonCreator != nil {
 		gw.SetAddonCreator(addonCreator)
 	}
+	wireMonitoringGateway(gw, db, secretsMgr, meshMgr)
 
 	unsub := manager.SubscribeToolsChanged(gw.InvalidateAndNotifyToolsChanged)
 	defer unsub()

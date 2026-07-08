@@ -2283,3 +2283,27 @@ func (m *mockStore) UpdateMonitoringChannel(context.Context, *store.MonitoringCh
 	return nil
 }
 func (m *mockStore) DeleteMonitoringChannel(context.Context, string) error { return nil }
+
+func (m *mockStore) UpsertLogTemplate(context.Context, *store.LogTemplate, int64) (bool, error) {
+	return false, nil
+}
+func (m *mockStore) GetLogTemplate(context.Context, string) (*store.LogTemplate, error) {
+	return nil, store.ErrLogTemplateNotFound
+}
+func (m *mockStore) ListLogTemplates(context.Context, []string, time.Time, int) ([]*store.LogTemplate, error) {
+	return nil, nil
+}
+func (m *mockStore) AckLogTemplate(context.Context, string, string) error { return nil }
+func (m *mockStore) InsertLogLines(context.Context, []store.LogLine) error { return nil }
+func (m *mockStore) PruneLogLines(context.Context, string, time.Time, int64) (int64, error) {
+	return 0, nil
+}
+func (m *mockStore) CountLinesByTemplate(context.Context, []string, time.Time) (map[string]int64, error) {
+	return nil, nil
+}
+func (m *mockStore) SearchLogLines(context.Context, string, string, int) ([]*store.LogLine, error) {
+	return nil, nil
+}
+func (m *mockStore) ListLogLinesByTemplate(context.Context, string, int) ([]*store.LogLine, error) {
+	return nil, nil
+}

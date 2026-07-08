@@ -46,6 +46,9 @@ func (h *handler) handleBuiltinCall(
 	case "mcpx__retrieve":
 		return h.handleRetrieve(ctx, req.Arguments)
 
+	case "mcpx__whoami":
+		return h.handleWhoami(ctx)
+
 	case "mcpx__delegate_worker":
 		return h.handleDelegateWorker(ctx, req.Arguments)
 
@@ -218,6 +221,12 @@ func (h *handler) handleBuiltinCall(
 
 	case "kv__set", "kv__get", "kv__list", "kv__delete":
 		resp, rpcErr, _ := h.dispatchKVTool(ctx, req.Name, req.Arguments)
+		return resp, rpcErr
+
+	case "monitoring__hosts", "monitoring__sources", "monitoring__channels",
+		"monitoring__stats", "monitoring__digest", "monitoring__search",
+		"monitoring__raw", "monitoring__ack", "monitoring__notify":
+		resp, rpcErr, _ := h.dispatchMonitoringTool(ctx, req.Name, req.Arguments)
 		return resp, rpcErr
 
 	case "index__build", "index__status", "index__symbols", "index__deps",

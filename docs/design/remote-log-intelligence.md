@@ -415,6 +415,16 @@ fixture corpora without SSH).
     NAME + the gateway hostname it runs on + the remote hostname having the
     issue: `[{workspace_name} · via {gateway_hostname}] {SEVERITY} ·
     {remote_host_name} ({ssh_host})`. Rendered in Go, never by the model.
+11. **Deployment topology: the always-on LXC daemon owns Monitoring**
+    (ratified 2026-07-08): the dedicated LXC mcplexer install runs the
+    collector + log-watch worker 24/7 — monitoring is a property of the
+    network, not of a personal laptop that sleeps. dev-laptop-a / dev-laptop-b
+    interact over the existing p2p mesh: alerts propagate as mesh
+    messages, filed tasks replicate via workspace links, and
+    `grant_trigger_to_peer` lets laptops fire the LXC's workers. The
+    envelope's `via {gateway_hostname}` therefore names the LXC —
+    exactly the origin attribution wanted. Local (dev-laptop-a) deploy is the
+    dev/test rig first; LXC rollout is its own milestone.
 
 ## 10. Risks
 

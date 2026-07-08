@@ -717,6 +717,7 @@ func (h *handler) codeModeBuiltinTools() []Tool {
 	var tools []Tool
 	tools = append(tools, searchToolsDefinition())
 	tools = append(tools, reloadServerToolDefinition())
+	tools = append(tools, whoamiToolDefinition())
 	if h.addonCreator != nil {
 		tools = append(tools, createAddonToolDefinition())
 	}
@@ -744,6 +745,9 @@ func (h *handler) codeModeBuiltinTools() []Tool {
 	}
 	if h.tasksSvc != nil {
 		tools = append(tools, taskToolDefinitions()...)
+	}
+	if h.monitoringQry != nil {
+		tools = append(tools, monitoringNamespaceToolDefinitions()...)
 	}
 	if h.brainEditor != nil {
 		tools = append(tools, brainToolDefinitions()...)
