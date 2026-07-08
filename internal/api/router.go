@@ -686,6 +686,26 @@ func NewRouter(deps RouterDeps) http.Handler {
 	mux.HandleFunc("POST /api/v1/descriptions/{id}/reject", rh.reject)
 	mux.HandleFunc("POST /api/v1/descriptions", rh.submit)
 
+	// Monitoring — remote hosts, log sources, alert channels
+	// (migration 128). Backs the per-workspace Monitoring page.
+	monH := &monitoringHandler{store: deps.Store}
+	mux.HandleFunc("GET /api/v1/remote-hosts", monH.listHosts)
+	mux.HandleFunc("POST /api/v1/remote-hosts", monH.createHost)
+	mux.HandleFunc("GET /api/v1/remote-hosts/{id}", monH.getHost)
+	mux.HandleFunc("PATCH /api/v1/remote-hosts/{id}", monH.updateHost)
+	mux.HandleFunc("DELETE /api/v1/remote-hosts/{id}", monH.deleteHost)
+	mux.HandleFunc("POST /api/v1/remote-hosts/{id}/repin", monH.repinHost)
+	mux.HandleFunc("GET /api/v1/log-sources", monH.listSources)
+	mux.HandleFunc("POST /api/v1/log-sources", monH.createSource)
+	mux.HandleFunc("GET /api/v1/log-sources/{id}", monH.getSource)
+	mux.HandleFunc("PATCH /api/v1/log-sources/{id}", monH.updateSource)
+	mux.HandleFunc("DELETE /api/v1/log-sources/{id}", monH.deleteSource)
+	mux.HandleFunc("GET /api/v1/monitoring-channels", monH.listChannels)
+	mux.HandleFunc("POST /api/v1/monitoring-channels", monH.createChannel)
+	mux.HandleFunc("GET /api/v1/monitoring-channels/{id}", monH.getChannel)
+	mux.HandleFunc("PATCH /api/v1/monitoring-channels/{id}", monH.updateChannel)
+	mux.HandleFunc("DELETE /api/v1/monitoring-channels/{id}", monH.deleteChannel)
+
 	mh := &meshHandler{store: deps.Store}
 	mux.HandleFunc("GET /api/v1/mesh/status", mh.status)
 

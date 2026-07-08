@@ -106,3 +106,12 @@ var (
 	// without conflating it with other concurrent-modification errors.
 	ErrTaskAlreadyClaimed = errors.New("task already claimed by another session")
 )
+
+// Monitoring sentinel errors (migration 128). Distinct from ErrNotFound
+// so admin surfaces can tell the agent which entity is missing.
+var (
+	ErrRemoteHostNotFound        = errors.New("remote host not found")
+	ErrLogSourceNotFound         = errors.New("log source not found")
+	ErrMonitoringChannelNotFound = errors.New("monitoring channel not found")
+	ErrLogTemplateNotFound       = errors.New("log template not found")
+)
