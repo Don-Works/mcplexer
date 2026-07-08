@@ -117,7 +117,25 @@ func (d *DB) AckLogTemplate(ctx context.Context, id, note string) error {
 }
 
 // InsertLogLines batch-appends redacted lines to the ring buffer.
+// logLineInsertChunk bounds each multi-row INSERT so a high-volume pull
+// can't exceed SQLite's variable ceiling (SQLITE_MAX_VARIABLE_NUMBER,
+// 32766). 4 params/row × 500 rows = 2000 vars — comfortably under it.
+const logLineInsertChunk = 500
+
 func (d *DB) InsertLogLines(ctx context.Context, lines []store.LogLine) error {
+	for start := 0; start < len(lines); start += logLineInsertChunk {
+		end := start + logLineInsertChunk
+		if end > len(lines) {
+			end = len(lines)
+		}
+		if err := d.insertLogLineChunk(ctx, lines[start:end]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (d *DB) insertLogLineChunk(ctx context.Context, lines []store.LogLine) error {
 	if len(lines) == 0 {
 		return nil
 	}

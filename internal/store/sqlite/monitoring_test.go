@@ -247,3 +247,42 @@ func TestMonitoringChannelRejectsPlaintext(t *testing.T) {
 		}
 	}
 }
+
+// TestInsertLogLines_ChunksLargeBatch is the regression for the
+// "too many SQL variables" failure: a high-volume pull (thousands of
+// lines) must insert without blowing SQLite's variable ceiling, and
+// every row must land + be window-countable.
+func TestInsertLogLines_ChunksLargeBatch(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	wsID, scopeID := seedWorkspaceAndScope(t, db, ctx)
+	h := seedRemoteHost(t, db, ctx, wsID, scopeID)
+	s := &store.LogSource{WorkspaceID: wsID, RemoteHostID: h.ID, Name: "api", Selector: "api", Enabled: true}
+	if err := db.CreateLogSource(ctx, s); err != nil {
+		t.Fatalf("create source: %v", err)
+	}
+	tpl := &store.LogTemplate{
+		ID: "t1", SourceID: s.ID, Masked: "GET / <n>", Severity: store.SeverityInfo,
+		FirstSeen: time.Now().UTC(), LastSeen: time.Now().UTC(),
+	}
+	if _, err := db.UpsertLogTemplate(ctx, tpl, 1); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+
+	const n = 4200 // > 8 chunks, and > the old single-statement variable limit
+	base := time.Now().UTC().Add(-time.Minute)
+	lines := make([]store.LogLine, n)
+	for i := range lines {
+		lines[i] = store.LogLine{SourceID: s.ID, TemplateID: "t1", TS: base.Add(time.Duration(i) * time.Millisecond), Line: "GET / 200"}
+	}
+	if err := db.InsertLogLines(ctx, lines); err != nil {
+		t.Fatalf("insert %d lines: %v", n, err)
+	}
+	counts, err := db.CountLinesByTemplate(ctx, []string{s.ID}, base.Add(-time.Hour))
+	if err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if counts["t1"] != n {
+		t.Fatalf("expected %d lines in window, got %d", n, counts["t1"])
+	}
+}
