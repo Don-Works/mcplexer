@@ -790,6 +790,7 @@ func (h *handler) buildAllBuiltinTools(ctx context.Context) []Tool {
 	tools = append(tools, contextCostStatsToolDefinition())
 	tools = append(tools, retrieveToolDefinition())
 	tools = append(tools, reloadServerToolDefinition())
+	tools = append(tools, whoamiToolDefinition())
 	if h.addonCreator != nil {
 		tools = append(tools, createAddonToolDefinition())
 	}
