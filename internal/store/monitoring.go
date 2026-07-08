@@ -192,7 +192,7 @@ func ValidateRemoteHost(h *RemoteHost) error {
 // refs. Telegram's chat_id is an internal binding id, not a credential.
 var channelRequiredRefs = map[string][]string{
 	ChannelKindGChatWebhook: {"webhook_ref"},
-	ChannelKindWhatsApp:     {"to_ref"},
+	ChannelKindWhatsApp:     {"chat_id_ref"}, // openwa chat id (e.g. 44…@c.us) — PII, always a ref
 	ChannelKindTelegram:     nil,
 	ChannelKindMesh:         nil,
 }

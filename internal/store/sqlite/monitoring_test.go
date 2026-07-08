@@ -231,7 +231,7 @@ func TestMonitoringChannelRejectsPlaintext(t *testing.T) {
 			ConfigJSON: `{"webhook_ref":"https://chat.googleapis.com/v1/spaces/x/messages?key=SECRET"}`}},
 		{"missing whatsapp ref", store.MonitoringChannel{
 			WorkspaceID: wsID, Name: "bad2", Kind: store.ChannelKindWhatsApp,
-			ConfigJSON: `{"to":"+447700900000"}`}},
+			ConfigJSON: `{"chat_id":"447700900000@c.us"}`}},
 		{"url smuggled in extra key", store.MonitoringChannel{
 			WorkspaceID: wsID, Name: "bad3", Kind: store.ChannelKindMesh,
 			ConfigJSON: `{"note":"https://hooks.example.com/t/abc"}`}},

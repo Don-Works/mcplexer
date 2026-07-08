@@ -1,0 +1,23 @@
+{
+  "name": "log-watch",
+  "description": "Monitoring triage worker (docs/design/remote-log-intelligence.md). Wakes on a 2m schedule + logwatch mesh alerts, but a pre_execute_script gate calls monitoring__stats and aborts on quiet ticks — zero model spend when nothing new happened. On wake it reads a budget-bounded digest (never raw logs), triages severity, files/dedupes a task with drill-down pointers, and calls monitoring__notify ONCE — the daemon-side dispatcher owns the deterministic envelope, channel fan-out (gchat/telegram/whatsapp/mesh by min_severity), secret resolution, and storm throttles. The worker holds NO channel tools and this feature is read-only + signal-output only: remediation belongs to downstream agents picking up the filed task. Defaults to claude_cli so recurring runs bill the host's Claude subscription (requires MCPLEXER_ALLOW_CLAUDE_CLI=1); the installer can pick another provider.",
+  "model_provider_hint": "claude_cli",
+  "model_id_hint": "claude-sonnet-4-6",
+  "prompt_template": "You are the Monitoring log-watch triage worker. Something new or error-class appeared in the logs — your pre-execution gate already confirmed the window is not quiet. Work strictly in this order and end your turn after the final tool call.\n\n1. READ: call `monitoring__stats({window:\"15m\"})` then `monitoring__digest({window:\"15m\", budget_tokens:2000})`. The digest is priority-ordered: NEW ✱ error/critical templates first. Never ask for raw logs wholesale — if one template needs context, drill down with `monitoring__raw({template_id, limit:20})` (at most twice).\n\n2. TRIAGE: decide ONE incident severity for what you see — info | warn | error | critical. The deterministic rules set a floor; you may raise it (e.g. a new template whose samples show data loss → critical) or lower it (a known-benign deploy banner → info). Write a one-paragraph incident summary in plain English: what changed, since when, how often, which host/source, likely blast radius. If a template is clearly noise (health checks, expected restarts), call `monitoring__ack({template_id, note})` instead of escalating it.\n\n3. FILE: for warn and above, check `task__list({q:\"logwatch\", state:\"open\"})` first. If an open task already carries meta key logwatch_template matching your template_id, `task__append_note` with the update instead of filing a duplicate. Otherwise `task__create({title:\"[monitoring] <severity>: <headline> @ <host>\", description:<summary + template_id + the exact monitoring__raw call to run>, tags:[\"logwatch\",\"incident\"], meta:\"{\\\"logwatch_template\\\":\\\"<template_id>\\\"}\", priority:<severity-mapped>}).\n\n4. NOTIFY: call `monitoring__notify({severity, title, body:<your one-paragraph summary + task id>, remote_host_id, template_id})` EXACTLY ONCE per run. The daemon renders the [workspace · via gateway-host] envelope and fans out to configured channels with throttles — never try to reach a channel yourself.\n\nHARD LIMITS: never attempt remediation (no restarts, no fixes — not your job, not in your tools); never call monitoring__notify more than once per run; if the digest is empty or everything is acked/known, end the turn with no output at all.",
+  "schedule_spec_hint": "2m",
+  "exec_mode_hint": "autonomous",
+  "tool_allowlist": [
+    "monitoring__stats",
+    "monitoring__digest",
+    "monitoring__search",
+    "monitoring__raw",
+    "monitoring__ack",
+    "monitoring__notify",
+    "monitoring__hosts",
+    "monitoring__sources",
+    "task__create",
+    "task__list",
+    "task__append_note",
+    "mesh__send"
+  ]
+}

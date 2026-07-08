@@ -57,6 +57,15 @@ type Dispatcher struct {
 	now         func() time.Time
 }
 
+// RegisterSender attaches (or replaces) the sender for one channel
+// kind after construction — used by daemon wiring for senders whose
+// dependencies come up later (telegram manager, downstream bridge).
+func (d *Dispatcher) RegisterSender(kind string, s Sender) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.senders[kind] = s
+}
+
 // NewDispatcher wires the dispatcher. Kinds with no registered sender
 // are skipped with a warning at notify time (e.g. whatsapp before the
 // downstream bridge is wired).
@@ -127,7 +136,7 @@ func (d *Dispatcher) Notify(ctx context.Context, n distill.Notification) error {
 		if !ch.Enabled || store.SeverityRank(ch.MinSeverity) > rank {
 			continue
 		}
-		sender, ok := d.senders[ch.Kind]
+		sender, ok := d.sender(ch.Kind)
 		if !ok {
 			slog.Warn("escalate: no sender wired for channel kind",
 				"kind", ch.Kind, "channel", ch.Name)
@@ -143,6 +152,15 @@ func (d *Dispatcher) Notify(ctx context.Context, n distill.Notification) error {
 		d.recordNotify(n.WorkspaceID, n.TemplateID)
 	}
 	return nil
+}
+
+// sender is the lock-guarded senders lookup (RegisterSender may run
+// after the dispatcher is live).
+func (d *Dispatcher) sender(kind string) (Sender, bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	s, ok := d.senders[kind]
+	return s, ok
 }
 
 // throttled returns a human-readable suppression reason or "".

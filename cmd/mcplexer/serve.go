@@ -1415,6 +1415,7 @@ func buildServerDeps(ctx context.Context, cfg *Config, db *sqlite.DB, settingsSv
 	// from /memory/consolidation. Best-effort; never blocks startup.
 	// See consolidator_autoinstall.go.
 	autoInstallConsolidator(ctx, db, workerAdminSvc)
+	autoInstallLogWatch(ctx, db, workerAdminSvc)
 
 	// M4 — mesh-trigger dispatcher. Subscribes to mesh-message inserts
 	// (local + p2p) and fires matching workers via the runner. CRUD
@@ -1494,6 +1495,11 @@ func buildServerDeps(ctx context.Context, cfg *Config, db *sqlite.DB, settingsSv
 			d.workerGateway.SetAddonCreator(d.addonCreator)
 		}
 		wireMonitoringGateway(d.workerGateway, db, d.secretsMgr, d.meshMgr)
+		if d.telegramMgr != nil {
+			registerMonitoringBridgeSenders(d.telegramMgr, d.workerGateway)
+		} else {
+			registerMonitoringBridgeSenders(nil, d.workerGateway)
+		}
 		d.workerDispatcher.SetBuiltinCaller(workerBuiltinAdapter{gw: d.workerGateway})
 	}
 

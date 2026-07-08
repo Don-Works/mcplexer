@@ -12,6 +12,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"os"
 	"strings"
@@ -70,6 +71,30 @@ func buildMonitoring(db store.Store, secretsMgr *secrets.Manager, meshMgr *mesh.
 			monitoringCollector = collect.NewManager(db, secretsMgr, distiller, nil)
 		}
 	})
+}
+
+// gatewayToolCaller adapts a gateway server into the escalate
+// dispatcher's ToolCaller so the whatsapp sender rides the full
+// dispatch pipeline (routing, secret substitution, audit).
+type gatewayToolCaller struct{ gw *gateway.Server }
+
+func (c gatewayToolCaller) CallTool(ctx context.Context, name string, args json.RawMessage) (json.RawMessage, error) {
+	return c.gw.CallTool(gateway.WithInProcessWorkerCall(ctx), name, args)
+}
+
+// registerMonitoringBridgeSenders attaches the senders whose
+// dependencies come up later in daemon boot (telegram manager, the
+// worker gateway used as the downstream bridge for openwa).
+func registerMonitoringBridgeSenders(tg escalate.TelegramBridge, gw *gateway.Server) {
+	if monitoringDispatch == nil {
+		return
+	}
+	if tg != nil {
+		monitoringDispatch.RegisterSender(store.ChannelKindTelegram, &escalate.TelegramSender{Bridge: tg})
+	}
+	if gw != nil {
+		monitoringDispatch.RegisterSender(store.ChannelKindWhatsApp, &escalate.WhatsAppSender{Caller: gatewayToolCaller{gw: gw}})
+	}
 }
 
 // wireMonitoringGateway attaches the shared services to one gateway

@@ -162,3 +162,57 @@ func TestGChatWebhookSender(t *testing.T) {
 		t.Fatal("plaintext/missing-scope config must be rejected")
 	}
 }
+
+type fakeTGBridge struct{ chatID, text, priority string }
+
+func (f *fakeTGBridge) SendByChatID(_ context.Context, chatID, text, priority string) error {
+	f.chatID, f.text, f.priority = chatID, text, priority
+	return nil
+}
+
+// TestTelegramSender maps severity onto mesh priority vocabulary and
+// targets the configured chat.
+func TestTelegramSender(t *testing.T) {
+	bridge := &fakeTGBridge{}
+	s := &TelegramSender{Bridge: bridge}
+	ch := &store.MonitoringChannel{Name: "tg", ConfigJSON: `{"chat_id":"chat-42"}`}
+	if err := s.Send(context.Background(), ch, store.SeverityCritical, "msg"); err != nil {
+		t.Fatal(err)
+	}
+	if bridge.chatID != "chat-42" || bridge.priority != "critical" || bridge.text != "msg" {
+		t.Fatalf("bridge got %+v", bridge)
+	}
+}
+
+type fakeCaller struct {
+	name string
+	args map[string]string
+}
+
+func (f *fakeCaller) CallTool(_ context.Context, name string, args json.RawMessage) (json.RawMessage, error) {
+	f.name = name
+	_ = json.Unmarshal(args, &f.args)
+	return json.RawMessage(`{}`), nil
+}
+
+// TestWhatsAppSender passes the secret:// ref VERBATIM so the gateway
+// substitutes at dispatch — the number never exists here.
+func TestWhatsAppSender(t *testing.T) {
+	caller := &fakeCaller{}
+	s := &WhatsAppSender{Caller: caller}
+	ch := &store.MonitoringChannel{Name: "wa",
+		ConfigJSON: `{"chat_id_ref":"secret://WHATSAPP_PERSONAL_CHAT_ID","session_id":"main"}`}
+	if err := s.Send(context.Background(), ch, store.SeverityCritical, "boom"); err != nil {
+		t.Fatal(err)
+	}
+	if caller.name != "openwa__send_text" ||
+		caller.args["chat_id"] != "secret://WHATSAPP_PERSONAL_CHAT_ID" ||
+		caller.args["session_id"] != "main" || caller.args["text"] != "boom" {
+		t.Fatalf("caller got %s %+v", caller.name, caller.args)
+	}
+
+	bad := &store.MonitoringChannel{Name: "bad", ConfigJSON: `{"chat_id_ref":"447700900000@c.us"}`}
+	if err := s.Send(context.Background(), bad, store.SeverityCritical, "x"); err == nil {
+		t.Fatal("plaintext chat id must be rejected")
+	}
+}
