@@ -725,4 +725,12 @@ var defaultDownstreamServers = []store.DownstreamServer{
 		Discovery:     "static",
 		Source:        "default",
 	},
+	{
+		ID:            "monitoring-builtin",
+		Name:          "Monitoring (remote log intelligence: hosts/sources/channels/stats/digest/notify)",
+		Transport:     "internal",
+		ToolNamespace: "monitoring",
+		Discovery:     "static",
+		Source:        "default",
+	},
 }
