@@ -55,7 +55,8 @@ func (h *monitoringHandler) listHosts(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *monitoringHandler) createHost(w http.ResponseWriter, r *http.Request) {
-	var host store.RemoteHost
+	// Default enabled=true: an absent flag stays true, explicit false wins.
+	host := store.RemoteHost{Enabled: true}
 	if err := decodeJSON(r, &host); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
@@ -130,7 +131,8 @@ func (h *monitoringHandler) listSources(w http.ResponseWriter, r *http.Request) 
 }
 
 func (h *monitoringHandler) createSource(w http.ResponseWriter, r *http.Request) {
-	var src store.LogSource
+	// Default enabled=true: an absent flag stays true, explicit false wins.
+	src := store.LogSource{Enabled: true}
 	if err := decodeJSON(r, &src); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
@@ -196,7 +198,8 @@ func (h *monitoringHandler) listChannels(w http.ResponseWriter, r *http.Request)
 }
 
 func (h *monitoringHandler) createChannel(w http.ResponseWriter, r *http.Request) {
-	var c store.MonitoringChannel
+	// Default enabled=true: an absent flag stays true, explicit false wins.
+	c := store.MonitoringChannel{Enabled: true}
 	if err := decodeJSON(r, &c); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
