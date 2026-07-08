@@ -39,6 +39,10 @@ type Notification struct {
 	RemoteHostAddr string
 	SourceName     string
 	TemplateID     string
+	// Test bypasses the dispatcher's throttles and stamps the title —
+	// the Monitoring UI's "send test notification" path, so operators
+	// can verify channels without burning the hourly budget.
+	Test bool
 }
 
 // Distiller implements collect.Sink.

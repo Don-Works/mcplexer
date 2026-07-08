@@ -1,5 +1,6 @@
 import { Link, useLocation } from 'react-router-dom'
 import {
+  Activity,
   Archive,
   Bell,
   Bot,
@@ -117,6 +118,7 @@ const automationNavBase: NavItem[] = [
   { label: 'Tasks', href: '/tasks', icon: <ListTodo className="h-4 w-4" />, hint: 'Operational work items per workspace; agents create them, you triage' },
   workersNavBase,
   { label: 'Delegations', href: '/delegations', icon: <GitBranch className="h-4 w-4" />, hint: 'Parent and worker context trees with token savings and review scores' },
+  { label: 'Monitoring', href: '/monitoring', icon: <Activity className="h-4 w-4" />, hint: 'Remote docker logs distilled to templates; alert channels and the log-watch worker' },
 ]
 
 // Brain: the human-curated knowledge surface. It now sits beside Memory,

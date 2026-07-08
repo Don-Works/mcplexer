@@ -8,6 +8,8 @@ package collect
 import (
 	"context"
 	"log/slog"
+	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -19,6 +21,16 @@ import (
 // tickInterval is how often the manager re-evaluates source due-ness.
 // Source cadence itself comes from each source's schedule_spec.
 const tickInterval = 15 * time.Second
+
+// RunnerEnabled reports whether THIS daemon executes monitoring jobs.
+// Default true; MCPLEXER_MONITORING_RUNNER=0 marks a viewer daemon in
+// a peer group whose always-on runner (the LXC) owns collection +
+// workers. Shared by daemon wiring and the status API so the UI's
+// peer-responsibilities panel and the actual behaviour cannot drift.
+func RunnerEnabled() bool {
+	v := strings.TrimSpace(strings.ToLower(os.Getenv("MCPLEXER_MONITORING_RUNNER")))
+	return v != "0" && v != "false" && v != "off" && v != "no"
+}
 
 // pullTimeout is the per-pull wall-clock cap (ADR 0007 §4).
 const pullTimeout = 30 * time.Second

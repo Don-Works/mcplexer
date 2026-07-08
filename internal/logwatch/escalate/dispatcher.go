@@ -110,7 +110,9 @@ func (d *Dispatcher) Notify(ctx context.Context, n distill.Notification) error {
 	if !store.ValidSeverity(n.Severity) {
 		return fmt.Errorf("escalate: invalid severity %q", n.Severity)
 	}
-	if reason := d.throttled(n.WorkspaceID, n.TemplateID); reason != "" {
+	if n.Test {
+		n.Title = "[test] " + n.Title
+	} else if reason := d.throttled(n.WorkspaceID, n.TemplateID); reason != "" {
 		slog.Info("escalate: suppressed", "workspace", n.WorkspaceID,
 			"template", n.TemplateID, "reason", reason)
 		return nil
@@ -148,7 +150,7 @@ func (d *Dispatcher) Notify(ctx context.Context, n distill.Notification) error {
 		}
 		sent++
 	}
-	if sent > 0 {
+	if sent > 0 && !n.Test {
 		d.recordNotify(n.WorkspaceID, n.TemplateID)
 	}
 	return nil

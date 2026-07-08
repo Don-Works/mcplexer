@@ -14,8 +14,6 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
-	"os"
-	"strings"
 	"sync"
 
 	"github.com/don-works/mcplexer/internal/gateway"
@@ -35,14 +33,9 @@ var (
 	monitoringColOnce   sync.Once
 )
 
-// monitoringRunnerEnabled reports whether THIS daemon executes the
-// collector loop. Default true; set MCPLEXER_MONITORING_RUNNER=0 on
-// viewer daemons (personal laptops in a peer group whose LXC owns
-// the job).
-func monitoringRunnerEnabled() bool {
-	v := strings.TrimSpace(strings.ToLower(os.Getenv("MCPLEXER_MONITORING_RUNNER")))
-	return v != "0" && v != "false" && v != "off" && v != "no"
-}
+// monitoringRunnerEnabled defers to collect.RunnerEnabled so the
+// daemon gate and the status API cannot drift.
+func monitoringRunnerEnabled() bool { return collect.RunnerEnabled() }
 
 // buildMonitoring lazily assembles the shared services. Safe to call
 // from every gateway construction site; only the first call builds.
@@ -95,6 +88,14 @@ func registerMonitoringBridgeSenders(tg escalate.TelegramBridge, gw *gateway.Ser
 	if gw != nil {
 		monitoringDispatch.RegisterSender(store.ChannelKindWhatsApp, &escalate.WhatsAppSender{Caller: gatewayToolCaller{gw: gw}})
 	}
+}
+
+// ensureMonitoringDispatch builds (once) and returns the shared
+// dispatcher — the REST Deps need it as a value, not a package var
+// that might still be nil at construction order's mercy.
+func ensureMonitoringDispatch(db store.Store, secretsMgr *secrets.Manager, meshMgr *mesh.Manager) *escalate.Dispatcher {
+	buildMonitoring(db, secretsMgr, meshMgr)
+	return monitoringDispatch
 }
 
 // wireMonitoringGateway attaches the shared services to one gateway
