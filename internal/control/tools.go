@@ -31,7 +31,7 @@ func decorateAdminDescriptions(tools []gateway.Tool) []gateway.Tool {
 }
 
 func allTools() []gateway.Tool {
-	return decorateAdminDescriptions([]gateway.Tool{
+	return decorateAdminDescriptions(append([]gateway.Tool{
 		// Server tools
 		{
 			Name:        "list_servers",
@@ -510,7 +510,7 @@ func allTools() []gateway.Tool {
 				"id": propStr("User id (user_id column)"),
 			}, []string{"id"}),
 		},
-	})
+	}, monitoringToolDefs()...))
 }
 
 // adminTools is the set of tool names that require admin (read-write) access.

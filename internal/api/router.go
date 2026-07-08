@@ -25,6 +25,7 @@ import (
 	"github.com/don-works/mcplexer/internal/hammerspoon"
 	"github.com/don-works/mcplexer/internal/install"
 	"github.com/don-works/mcplexer/internal/memory"
+	"github.com/don-works/mcplexer/internal/logwatch/distill"
 	"github.com/don-works/mcplexer/internal/mesh"
 	"github.com/don-works/mcplexer/internal/notify"
 	"github.com/don-works/mcplexer/internal/oauth"
@@ -82,6 +83,7 @@ type RouterDeps struct {
 	AddonPreview          *addon.PreviewExecutor  // optional; enables /api/v1/addons/preview-call
 	OAuthWizard           *oauth.Wizard           // optional; enables /api/v1/addons/oauth-setup
 	MeshManager           *mesh.Manager           // optional; enables /api/v1/mesh/send
+	MonitoringNotifier    distill.Notifier        // optional; enables /api/v1/monitoring/notify
 	TelegramManager       *telegram.Manager       // optional; enables chat bridge API
 	GoogleChatManager     *googlechat.Manager     // optional; enables Google Chat bridge API
 	GoogleChatJWTVerifier *googlechat.JWTVerifier // optional; required by default (fail-closed); skip with GOOGLECHAT_DISABLE_JWT_VALIDATION=true
@@ -685,6 +687,35 @@ func NewRouter(deps RouterDeps) http.Handler {
 	mux.HandleFunc("POST /api/v1/descriptions/{id}/accept", rh.accept)
 	mux.HandleFunc("POST /api/v1/descriptions/{id}/reject", rh.reject)
 	mux.HandleFunc("POST /api/v1/descriptions", rh.submit)
+
+	// Monitoring — remote hosts, log sources, alert channels
+	// (migration 128). Backs the per-workspace Monitoring page.
+	monH := &monitoringHandler{store: deps.Store}
+	mux.HandleFunc("GET /api/v1/remote-hosts", monH.listHosts)
+	mux.HandleFunc("POST /api/v1/remote-hosts", monH.createHost)
+	mux.HandleFunc("GET /api/v1/remote-hosts/{id}", monH.getHost)
+	mux.HandleFunc("PATCH /api/v1/remote-hosts/{id}", monH.updateHost)
+	mux.HandleFunc("DELETE /api/v1/remote-hosts/{id}", monH.deleteHost)
+	mux.HandleFunc("POST /api/v1/remote-hosts/{id}/repin", monH.repinHost)
+	mux.HandleFunc("GET /api/v1/log-sources", monH.listSources)
+	mux.HandleFunc("POST /api/v1/log-sources", monH.createSource)
+	mux.HandleFunc("GET /api/v1/log-sources/{id}", monH.getSource)
+	mux.HandleFunc("PATCH /api/v1/log-sources/{id}", monH.updateSource)
+	mux.HandleFunc("DELETE /api/v1/log-sources/{id}", monH.deleteSource)
+	mux.HandleFunc("GET /api/v1/monitoring-channels", monH.listChannels)
+	mux.HandleFunc("POST /api/v1/monitoring-channels", monH.createChannel)
+	mux.HandleFunc("GET /api/v1/monitoring-channels/{id}", monH.getChannel)
+	mux.HandleFunc("PATCH /api/v1/monitoring-channels/{id}", monH.updateChannel)
+	mux.HandleFunc("DELETE /api/v1/monitoring-channels/{id}", monH.deleteChannel)
+	monQ := &monitoringQueryHandler{
+		store: deps.Store, query: distill.NewQuery(deps.Store),
+		notifier: deps.MonitoringNotifier,
+	}
+	mux.HandleFunc("GET /api/v1/monitoring/status", monQ.status)
+	mux.HandleFunc("GET /api/v1/monitoring/templates", monQ.templates)
+	mux.HandleFunc("GET /api/v1/monitoring/digest", monQ.digest)
+	mux.HandleFunc("POST /api/v1/monitoring/templates/{id}/ack", monQ.ack)
+	mux.HandleFunc("POST /api/v1/monitoring/notify", monQ.notify)
 
 	mh := &meshHandler{store: deps.Store}
 	mux.HandleFunc("GET /api/v1/mesh/status", mh.status)

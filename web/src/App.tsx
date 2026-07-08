@@ -50,6 +50,7 @@ const WorkerEditorPage = lazy(() => import('@/pages/workers/WorkerEditorPage').t
 const WorkerApprovalsPage = lazy(() => import('@/pages/workers/WorkerApprovalsPage').then(m => ({ default: m.WorkerApprovalsPage })))
 const WorkerCostDashboardPage = lazy(() => import('@/pages/workers/WorkerCostDashboardPage').then(m => ({ default: m.WorkerCostDashboardPage })))
 const ModelLeaderboardPage = lazy(() => import('@/pages/workers/ModelLeaderboardPage').then(m => ({ default: m.ModelLeaderboardPage })))
+const MonitoringPage = lazy(() => import('@/pages/monitoring/MonitoringPage').then(m => ({ default: m.MonitoringPage })))
 const ModelProvidersPage = lazy(() => import('@/pages/ModelProvidersPage').then(m => ({ default: m.ModelProvidersPage })))
 const MemoryLandingPage = lazy(() => import('@/pages/memory/MemoryLandingPage').then(m => ({ default: m.MemoryLandingPage })))
 const MemoryListPage = lazy(() => import('@/pages/memory/MemoryListPage').then(m => ({ default: m.MemoryListPage })))
@@ -183,6 +184,7 @@ function App() {
             <Route path="/workers" element={<WorkersListPage />} />
             <Route path="/delegations" element={<DelegationsPage />} />
             <Route path="/delegations/models" element={<ModelRanksPage />} />
+            <Route path="/monitoring" element={<MonitoringPage />} />
             <Route path="/workers/cost" element={<WorkerCostDashboardPage />} />
             <Route path="/workers/model-leaderboard" element={<ModelLeaderboardPage />} />
             <Route path="/workers/new" element={<WorkerEditorPage />} />

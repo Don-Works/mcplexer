@@ -1415,6 +1415,7 @@ func buildServerDeps(ctx context.Context, cfg *Config, db *sqlite.DB, settingsSv
 	// from /memory/consolidation. Best-effort; never blocks startup.
 	// See consolidator_autoinstall.go.
 	autoInstallConsolidator(ctx, db, workerAdminSvc)
+	autoInstallLogWatch(ctx, db, workerAdminSvc)
 
 	// M4 — mesh-trigger dispatcher. Subscribes to mesh-message inserts
 	// (local + p2p) and fires matching workers via the runner. CRUD
@@ -1492,6 +1493,12 @@ func buildServerDeps(ctx context.Context, cfg *Config, db *sqlite.DB, settingsSv
 		d.workerGateway = gateway.NewServer(db, d.engine, d.manager, d.auditor, gateway.TransportInternal, workerGWOpts...)
 		if d.addonCreator != nil {
 			d.workerGateway.SetAddonCreator(d.addonCreator)
+		}
+		wireMonitoringGateway(d.workerGateway, db, d.secretsMgr, d.meshMgr)
+		if d.telegramMgr != nil {
+			registerMonitoringBridgeSenders(d.telegramMgr, d.workerGateway)
+		} else {
+			registerMonitoringBridgeSenders(nil, d.workerGateway)
 		}
 		d.workerDispatcher.SetBuiltinCaller(workerBuiltinAdapter{gw: d.workerGateway})
 	}
@@ -1622,6 +1629,7 @@ func runServer(ctx context.Context, cfg *Config, db *sqlite.DB, cfgSvc *config.S
 		AddonRegistry:          d.addonReg,
 		AddonCreator:           d.addonCreator,
 		MeshManager:            d.meshMgr,
+		MonitoringNotifier:     ensureMonitoringDispatch(db, d.secretsMgr, d.meshMgr),
 		AddonPreview:           addon.NewPreviewExecutorWithRequestAuth(d.authInj.HeadersForDownstream, d.authInj.ApplyToRequest),
 		OAuthWizard:            oauth.NewWizard(db, db, d.flow, d.enc),
 		TelegramManager:        d.telegramMgr,
@@ -1689,6 +1697,11 @@ func runServer(ctx context.Context, cfg *Config, db *sqlite.DB, cfgSvc *config.S
 			return nil
 		})
 	}
+
+	// Monitoring collector — pull loop for remote log sources. The
+	// single-runner gate (MCPLEXER_MONITORING_RUNNER=0) keeps viewer
+	// daemons from double-pulling in a peer group.
+	startMonitoringCollector(ctx, db, d.secretsMgr, d.meshMgr)
 
 	err = g.Wait()
 
@@ -1841,6 +1854,7 @@ func runStdio(ctx context.Context, cfg *Config, db *sqlite.DB, settingsSvc *conf
 	if addonCreator != nil {
 		gw.SetAddonCreator(addonCreator)
 	}
+	wireMonitoringGateway(gw, db, secretsMgr, meshMgr)
 
 	unsub := manager.SubscribeToolsChanged(gw.InvalidateAndNotifyToolsChanged)
 	defer unsub()

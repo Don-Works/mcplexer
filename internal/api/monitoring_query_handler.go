@@ -1,0 +1,188 @@
+// monitoring_query_handler.go — read/notify REST surface behind the
+// Monitoring page: runner status (peer responsibilities), template
+// explorer, digest preview, ack, and test notifications. CRUD lives in
+// monitoring_handler.go.
+package api
+
+import (
+	"net/http"
+	"os"
+	"time"
+
+	"github.com/don-works/mcplexer/internal/logwatch/collect"
+	"github.com/don-works/mcplexer/internal/logwatch/distill"
+	"github.com/don-works/mcplexer/internal/store"
+)
+
+type monitoringQueryHandler struct {
+	store    store.Store
+	query    *distill.Query
+	notifier distill.Notifier // nil = notify surface disabled
+}
+
+// status feeds the UI's peer-responsibilities panel: who this daemon
+// is and whether IT is the peer group's monitoring runner.
+func (h *monitoringQueryHandler) status(w http.ResponseWriter, r *http.Request) {
+	hostname, _ := os.Hostname()
+	writeJSON(w, http.StatusOK, map[string]any{
+		"gateway_hostname": hostname,
+		"runner_enabled":   collect.RunnerEnabled(),
+		"notify_enabled":   h.notifier != nil,
+	})
+}
+
+// templates lists the explorer rows: masked shapes, severity, counts,
+// novelty + ack state, joined with window counts and source names.
+func (h *monitoringQueryHandler) templates(w http.ResponseWriter, r *http.Request) {
+	wsID := workspaceIDParam(r)
+	if wsID == "" {
+		writeError(w, http.StatusBadRequest, "workspace_id query param required")
+		return
+	}
+	window := 24 * time.Hour
+	if v := r.URL.Query().Get("window"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil || d <= 0 {
+			writeError(w, http.StatusBadRequest, "invalid window — use a Go duration like 24h")
+			return
+		}
+		window = d
+	}
+	ctx := r.Context()
+	sources, err := h.store.ListLogSources(ctx, wsID)
+	if err != nil {
+		writeMonitoringErr(w, err, "list sources")
+		return
+	}
+	ids := make([]string, 0, len(sources))
+	names := map[string]string{}
+	for _, s := range sources {
+		ids = append(ids, s.ID)
+		names[s.ID] = s.Name
+	}
+	since := time.Now().UTC().Add(-window)
+	tpls, err := h.store.ListLogTemplates(ctx, ids, since, 500)
+	if err != nil {
+		writeMonitoringErr(w, err, "list templates")
+		return
+	}
+	counts, err := h.store.CountLinesByTemplate(ctx, ids, since)
+	if err != nil {
+		writeMonitoringErr(w, err, "count lines")
+		return
+	}
+	type row struct {
+		*store.LogTemplate
+		SourceName  string `json:"source_name"`
+		WindowLines int64  `json:"window_lines"`
+		New         bool   `json:"new"`
+	}
+	out := make([]row, 0, len(tpls))
+	for _, t := range tpls {
+		out = append(out, row{
+			LogTemplate: t,
+			SourceName:  names[t.SourceID],
+			WindowLines: counts[t.ID],
+			New:         !t.Acked && !t.FirstSeen.Before(since),
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"templates": out, "window": window.String()})
+}
+
+// digest renders the same budget-bounded view the log-watch worker
+// reads, so the preview IS the real thing.
+func (h *monitoringQueryHandler) digest(w http.ResponseWriter, r *http.Request) {
+	wsID := workspaceIDParam(r)
+	if wsID == "" {
+		writeError(w, http.StatusBadRequest, "workspace_id query param required")
+		return
+	}
+	opts := distill.DigestOptions{WorkspaceID: wsID}
+	q := r.URL.Query()
+	if v := q.Get("window"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil || d <= 0 {
+			writeError(w, http.StatusBadRequest, "invalid window")
+			return
+		}
+		opts.Window = d
+	}
+	if v := q.Get("budget_tokens"); v != "" {
+		var n int
+		for _, c := range v {
+			if c < '0' || c > '9' {
+				writeError(w, http.StatusBadRequest, "invalid budget_tokens")
+				return
+			}
+			n = n*10 + int(c-'0')
+		}
+		opts.BudgetTokens = n
+	}
+	if v := q.Get("min_severity"); v != "" {
+		opts.MinSeverity = v
+	}
+	text, err := h.query.Digest(r.Context(), opts)
+	if err != nil {
+		writeMonitoringErr(w, err, "render digest")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"digest": text, "approx_tokens": len(text) / 4,
+	})
+}
+
+func (h *monitoringQueryHandler) ack(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Note string `json:"note"`
+	}
+	_ = decodeJSON(r, &in)
+	if err := h.store.AckLogTemplate(r.Context(), r.PathValue("id"), in.Note); err != nil {
+		writeMonitoringErr(w, err, "ack template")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"acked": true})
+}
+
+// notify is the UI's send path — used by the "send test notification"
+// button (test=true bypasses throttles, stamps [test]) and available
+// for manual escalations.
+func (h *monitoringQueryHandler) notify(w http.ResponseWriter, r *http.Request) {
+	if h.notifier == nil {
+		writeError(w, http.StatusNotImplemented, "monitoring notify not enabled on this daemon")
+		return
+	}
+	var in struct {
+		WorkspaceID  string `json:"workspace_id"`
+		Severity     string `json:"severity"`
+		Title        string `json:"title"`
+		Body         string `json:"body"`
+		RemoteHostID string `json:"remote_host_id"`
+		TemplateID   string `json:"template_id"`
+		Test         bool   `json:"test"`
+	}
+	if err := decodeJSON(r, &in); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if in.WorkspaceID == "" || !store.ValidSeverity(in.Severity) || in.Title == "" {
+		writeError(w, http.StatusBadRequest, "workspace_id, severity (info|warn|error|critical) and title are required")
+		return
+	}
+	n := distill.Notification{
+		WorkspaceID: in.WorkspaceID, Severity: in.Severity,
+		Title: in.Title, Body: in.Body, TemplateID: in.TemplateID, Test: in.Test,
+	}
+	if in.RemoteHostID != "" {
+		host, err := h.store.GetRemoteHost(r.Context(), in.RemoteHostID)
+		if err != nil {
+			writeMonitoringErr(w, err, "resolve remote host")
+			return
+		}
+		n.RemoteHostName, n.RemoteHostAddr = host.Name, host.SSHHost
+	}
+	if err := h.notifier.Notify(r.Context(), n); err != nil {
+		writeMonitoringErr(w, err, "dispatch notification")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"dispatched": true})
+}

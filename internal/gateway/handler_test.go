@@ -2241,3 +2241,69 @@ func stringContains(s, substr string) bool {
 	}
 	return false
 }
+
+// --- MonitoringStore stubs (migration 128) ---
+
+func (m *mockStore) CreateRemoteHost(context.Context, *store.RemoteHost) error { return nil }
+func (m *mockStore) GetRemoteHost(context.Context, string) (*store.RemoteHost, error) {
+	return nil, store.ErrRemoteHostNotFound
+}
+func (m *mockStore) ListRemoteHosts(context.Context, string) ([]*store.RemoteHost, error) {
+	return nil, nil
+}
+func (m *mockStore) UpdateRemoteHost(context.Context, *store.RemoteHost) error { return nil }
+func (m *mockStore) DeleteRemoteHost(context.Context, string) error            { return nil }
+func (m *mockStore) SetRemoteHostPin(context.Context, string, string) error    { return nil }
+func (m *mockStore) CreateLogSource(context.Context, *store.LogSource) error   { return nil }
+func (m *mockStore) GetLogSource(context.Context, string) (*store.LogSource, error) {
+	return nil, store.ErrLogSourceNotFound
+}
+func (m *mockStore) ListLogSources(context.Context, string) ([]*store.LogSource, error) {
+	return nil, nil
+}
+func (m *mockStore) ListEnabledLogSources(context.Context) ([]*store.LogSource, error) {
+	return nil, nil
+}
+func (m *mockStore) UpdateLogSource(context.Context, *store.LogSource) error { return nil }
+func (m *mockStore) DeleteLogSource(context.Context, string) error           { return nil }
+func (m *mockStore) UpdateLogSourceCursor(context.Context, string, time.Time, string) error {
+	return nil
+}
+func (m *mockStore) SetLogSourceFailures(context.Context, string, int) error { return nil }
+func (m *mockStore) CreateMonitoringChannel(context.Context, *store.MonitoringChannel) error {
+	return nil
+}
+func (m *mockStore) GetMonitoringChannel(context.Context, string) (*store.MonitoringChannel, error) {
+	return nil, store.ErrMonitoringChannelNotFound
+}
+func (m *mockStore) ListMonitoringChannels(context.Context, string) ([]*store.MonitoringChannel, error) {
+	return nil, nil
+}
+func (m *mockStore) UpdateMonitoringChannel(context.Context, *store.MonitoringChannel) error {
+	return nil
+}
+func (m *mockStore) DeleteMonitoringChannel(context.Context, string) error { return nil }
+
+func (m *mockStore) UpsertLogTemplate(context.Context, *store.LogTemplate, int64) (bool, error) {
+	return false, nil
+}
+func (m *mockStore) GetLogTemplate(context.Context, string) (*store.LogTemplate, error) {
+	return nil, store.ErrLogTemplateNotFound
+}
+func (m *mockStore) ListLogTemplates(context.Context, []string, time.Time, int) ([]*store.LogTemplate, error) {
+	return nil, nil
+}
+func (m *mockStore) AckLogTemplate(context.Context, string, string) error { return nil }
+func (m *mockStore) InsertLogLines(context.Context, []store.LogLine) error { return nil }
+func (m *mockStore) PruneLogLines(context.Context, string, time.Time, int64) (int64, error) {
+	return 0, nil
+}
+func (m *mockStore) CountLinesByTemplate(context.Context, []string, time.Time) (map[string]int64, error) {
+	return nil, nil
+}
+func (m *mockStore) SearchLogLines(context.Context, string, string, int) ([]*store.LogLine, error) {
+	return nil, nil
+}
+func (m *mockStore) ListLogLinesByTemplate(context.Context, string, int) ([]*store.LogLine, error) {
+	return nil, nil
+}

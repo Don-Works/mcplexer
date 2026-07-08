@@ -193,6 +193,17 @@ var defaultRouteRules = []store.RouteRule{
 		Source:             "default",
 	},
 	{
+		ID:                 "monitoring-allow",
+		Name:               "Allow Monitoring tools",
+		Priority:           95,
+		WorkspaceID:        "global",
+		PathGlob:           "**",
+		ToolMatch:          json.RawMessage(`["monitoring__*"]`),
+		DownstreamServerID: "monitoring-builtin",
+		Policy:             "allow",
+		Source:             "default",
+	},
+	{
 		ID:        "global-deny",
 		Priority:  0,
 		PathGlob:  "**",
@@ -259,6 +270,7 @@ func ensureRequiredDefaultRouteRules(ctx context.Context, s store.Store, existin
 		"data-allow",
 		"kv-allow",
 		"index-allow",
+		"monitoring-allow",
 		hammerspoonRouteID,
 	}
 

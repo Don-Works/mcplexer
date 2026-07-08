@@ -87,6 +87,29 @@ func reloadServerToolDefinition() Tool {
 	}
 }
 
+// whoamiToolDefinition returns the built-in MCP tool that reports the
+// current session's workspace binding. It answers "what workspace am I
+// in?" — a question that has no other home: the binding is resolved by
+// the gateway from the routed workspace chain and is NOT the same as the
+// filesystem working directory an agent sees.
+func whoamiToolDefinition() Tool {
+	return Tool{
+		Name: "mcpx__whoami",
+		Description: "Report this session's identity: which mcplexer workspace it is bound to " +
+			"(workspace_id + workspace_name), the client root path, and the resolved workspace " +
+			"ancestor chain. Use this to answer \"what workspace am I in?\" / \"which workspace is " +
+			"this session\" — the workspace binding is set by the gateway from routing and is NOT the " +
+			"filesystem working directory (pwd). An empty workspace_id means the session is unscoped " +
+			"(global) with no workspace bound.",
+		InputSchema: json.RawMessage(`{"type":"object","properties":{}}`),
+		Extras: withAnnotations(ToolAnnotations{
+			Title:         "Who Am I",
+			ReadOnlyHint:  boolPtr(true),
+			OpenWorldHint: boolPtr(false),
+		}),
+	}
+}
+
 // meshToolDefinitions returns the built-in MCP tools for the agent mesh.
 func meshToolDefinitions() []Tool {
 	return []Tool{

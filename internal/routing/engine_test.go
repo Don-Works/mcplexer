@@ -1383,3 +1383,69 @@ func TestRoute_NamespaceAware(t *testing.T) {
 		})
 	}
 }
+
+// --- MonitoringStore stubs (migration 128) ---
+
+func (m *mockRouteStore) CreateRemoteHost(context.Context, *store.RemoteHost) error { return nil }
+func (m *mockRouteStore) GetRemoteHost(context.Context, string) (*store.RemoteHost, error) {
+	return nil, store.ErrRemoteHostNotFound
+}
+func (m *mockRouteStore) ListRemoteHosts(context.Context, string) ([]*store.RemoteHost, error) {
+	return nil, nil
+}
+func (m *mockRouteStore) UpdateRemoteHost(context.Context, *store.RemoteHost) error { return nil }
+func (m *mockRouteStore) DeleteRemoteHost(context.Context, string) error            { return nil }
+func (m *mockRouteStore) SetRemoteHostPin(context.Context, string, string) error    { return nil }
+func (m *mockRouteStore) CreateLogSource(context.Context, *store.LogSource) error   { return nil }
+func (m *mockRouteStore) GetLogSource(context.Context, string) (*store.LogSource, error) {
+	return nil, store.ErrLogSourceNotFound
+}
+func (m *mockRouteStore) ListLogSources(context.Context, string) ([]*store.LogSource, error) {
+	return nil, nil
+}
+func (m *mockRouteStore) ListEnabledLogSources(context.Context) ([]*store.LogSource, error) {
+	return nil, nil
+}
+func (m *mockRouteStore) UpdateLogSource(context.Context, *store.LogSource) error { return nil }
+func (m *mockRouteStore) DeleteLogSource(context.Context, string) error           { return nil }
+func (m *mockRouteStore) UpdateLogSourceCursor(context.Context, string, time.Time, string) error {
+	return nil
+}
+func (m *mockRouteStore) SetLogSourceFailures(context.Context, string, int) error { return nil }
+func (m *mockRouteStore) CreateMonitoringChannel(context.Context, *store.MonitoringChannel) error {
+	return nil
+}
+func (m *mockRouteStore) GetMonitoringChannel(context.Context, string) (*store.MonitoringChannel, error) {
+	return nil, store.ErrMonitoringChannelNotFound
+}
+func (m *mockRouteStore) ListMonitoringChannels(context.Context, string) ([]*store.MonitoringChannel, error) {
+	return nil, nil
+}
+func (m *mockRouteStore) UpdateMonitoringChannel(context.Context, *store.MonitoringChannel) error {
+	return nil
+}
+func (m *mockRouteStore) DeleteMonitoringChannel(context.Context, string) error { return nil }
+
+func (m *mockRouteStore) UpsertLogTemplate(context.Context, *store.LogTemplate, int64) (bool, error) {
+	return false, nil
+}
+func (m *mockRouteStore) GetLogTemplate(context.Context, string) (*store.LogTemplate, error) {
+	return nil, store.ErrLogTemplateNotFound
+}
+func (m *mockRouteStore) ListLogTemplates(context.Context, []string, time.Time, int) ([]*store.LogTemplate, error) {
+	return nil, nil
+}
+func (m *mockRouteStore) AckLogTemplate(context.Context, string, string) error { return nil }
+func (m *mockRouteStore) InsertLogLines(context.Context, []store.LogLine) error { return nil }
+func (m *mockRouteStore) PruneLogLines(context.Context, string, time.Time, int64) (int64, error) {
+	return 0, nil
+}
+func (m *mockRouteStore) CountLinesByTemplate(context.Context, []string, time.Time) (map[string]int64, error) {
+	return nil, nil
+}
+func (m *mockRouteStore) SearchLogLines(context.Context, string, string, int) ([]*store.LogLine, error) {
+	return nil, nil
+}
+func (m *mockRouteStore) ListLogLinesByTemplate(context.Context, string, int) ([]*store.LogLine, error) {
+	return nil, nil
+}
