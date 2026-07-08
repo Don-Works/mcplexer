@@ -19,8 +19,11 @@ import (
 // the cursor. Any error leaves the cursor untouched so the next pull
 // re-covers the window.
 func (m *Manager) pullSource(ctx context.Context, src *store.LogSource) error {
-	if src.Kind != store.LogSourceKindDocker {
-		return fmt.Errorf("logwatch: source kind %q not collected in v1", src.Kind)
+	switch src.Kind {
+	case store.LogSourceKindDocker, store.LogSourceKindCompose, store.LogSourceKindJournald:
+		// collected kinds
+	default:
+		return fmt.Errorf("logwatch: source kind %q is not collected (file kind needs byte-offset cursoring — tracked in M6)", src.Kind)
 	}
 	// Dial-time re-validation, defence in depth (ADR 0007 §1).
 	if err := store.ValidateSelector(src.Selector); err != nil {
@@ -44,7 +47,7 @@ func (m *Manager) pullSource(ctx context.Context, src *store.LogSource) error {
 	}
 	pctx, cancel := context.WithTimeout(ctx, pullTimeout)
 	defer cancel()
-	res, err := m.runner.Pull(pctx, host, cred, src.Selector, since, src.MaxPullBytes)
+	res, err := m.runner.Pull(pctx, host, cred, src, since)
 	if res.NewPin != "" {
 		// TOFU: persist the first-seen fingerprint even when the read
 		// itself failed — the identity observation stands.
@@ -56,11 +59,11 @@ func (m *Manager) pullSource(ctx context.Context, src *store.LogSource) error {
 		return err
 	}
 
-	lines, firstRaw, lastRaw := parseDockerLines(res.Output)
+	lines, firstRaw, lastRaw := parseLogLines(res.Output)
 	lines, discontinuity := reconcileCursor(lines, firstRaw, src)
 	if discontinuity {
 		lines = append([]Line{{TS: m.now().UTC(),
-			Text: "logwatch: source discontinuity — container restarted, recreated, or logs rotated"}}, lines...)
+			Text: "logwatch: source discontinuity — container/service restarted, recreated, or logs rotated"}}, lines...)
 	}
 	if res.Truncated {
 		lines = append(lines, Line{TS: m.now().UTC(),
@@ -108,20 +111,21 @@ type rawLine struct {
 	raw string
 }
 
-// parseDockerLines splits `docker logs --timestamps` output into
-// redacted Lines. Each raw line is "<RFC3339Nano> <text>"; malformed
-// lines keep their raw text and inherit the previous line's timestamp.
-// Returns the parsed lines plus the first and last raw lines
-// (pre-redaction) for cursor hashing.
-func parseDockerLines(out []byte) ([]Line, rawLine, rawLine) {
+// parseLogLines splits timestamped log output (docker/compose
+// --timestamps, journald short-iso-precise) into redacted Lines. Each
+// raw line begins with a timestamp token in one of several layouts;
+// malformed lines keep their raw text and inherit the previous line's
+// timestamp. Returns the parsed lines plus the first and last raw
+// lines (pre-redaction) for cursor hashing.
+func parseLogLines(out []byte) ([]Line, rawLine, rawLine) {
 	var lines []Line
 	var first, last rawLine
 	var prevTS time.Time
-	for _, raw := range strings.Split(string(out), "\n") {
+	for raw := range strings.SplitSeq(string(out), "\n") {
 		if strings.TrimSpace(raw) == "" {
 			continue
 		}
-		ts, text := splitDockerTimestamp(raw)
+		ts, text := splitLeadingTimestamp(raw)
 		if ts.IsZero() {
 			ts = prevTS
 			text = raw
@@ -136,16 +140,27 @@ func parseDockerLines(out []byte) ([]Line, rawLine, rawLine) {
 	return lines, first, last
 }
 
-func splitDockerTimestamp(raw string) (time.Time, string) {
+// tsLayouts are the leading-timestamp formats the collector accepts,
+// tried in order: docker/compose RFC3339Nano+Z, RFC3339, and journald
+// short-iso-precise (space-separated date/time, numeric zone).
+var tsLayouts = []string{
+	time.RFC3339Nano,
+	time.RFC3339,
+	"2006-01-02T15:04:05.000000-0700",
+	"2006-01-02T15:04:05-0700",
+}
+
+func splitLeadingTimestamp(raw string) (time.Time, string) {
 	sp := strings.IndexByte(raw, ' ')
 	if sp <= 0 {
 		return time.Time{}, raw
 	}
-	ts, err := time.Parse(time.RFC3339Nano, raw[:sp])
-	if err != nil {
-		return time.Time{}, raw
+	for _, layout := range tsLayouts {
+		if ts, err := time.Parse(layout, raw[:sp]); err == nil {
+			return ts.UTC(), raw[sp+1:]
+		}
 	}
-	return ts.UTC(), raw[sp+1:]
+	return time.Time{}, raw
 }
 
 // reconcileCursor implements continuity checking: the pull requests
@@ -168,12 +183,12 @@ func lineHash(raw string) string {
 	return hex.EncodeToString(sum[:8])
 }
 
-// sshRunner is the production Runner: fixed command builder + bounded
-// sshx run.
+// sshRunner is the production Runner: fixed per-kind command builder +
+// bounded sshx run.
 type sshRunner struct{}
 
-func (sshRunner) Pull(ctx context.Context, host *store.RemoteHost, cred sshx.Credential, selector string, since time.Time, maxBytes int64) (sshx.Result, error) {
-	cmd, err := sshx.DockerLogsCommand(selector, since)
+func (sshRunner) Pull(ctx context.Context, host *store.RemoteHost, cred sshx.Credential, src *store.LogSource, since time.Time) (sshx.Result, error) {
+	cmd, err := sshx.CommandForSource(src, since)
 	if err != nil {
 		return sshx.Result{}, err
 	}
@@ -182,7 +197,7 @@ func (sshRunner) Pull(ctx context.Context, host *store.RemoteHost, cred sshx.Cre
 		return sshx.Result{}, err
 	}
 	defer client.Close()
-	res, err := client.Run(ctx, cmd, maxBytes)
+	res, err := client.Run(ctx, cmd, src.MaxPullBytes)
 	res.NewPin = client.NewPin()
 	return res, err
 }

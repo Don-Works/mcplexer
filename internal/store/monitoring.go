@@ -243,7 +243,7 @@ func ValidateLogSource(s *LogSource) error {
 	case LogSourceKindDocker, LogSourceKindCompose, LogSourceKindJournald, LogSourceKindFile:
 	default:
 		return &FieldError{Code: "invalid_source_kind", Field: "kind", Value: s.Kind,
-			Message: "kind must be docker|compose|journald|file (only docker collects in v1)"}
+			Message: "kind must be docker|compose|journald|file (docker/compose/journald are collected; file needs byte-offset cursoring — tracked)"}
 	}
 	if strings.TrimSpace(s.Name) == "" {
 		return &FieldError{Code: "missing_name", Field: "name", Message: "name is required"}

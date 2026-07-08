@@ -367,7 +367,7 @@ costs ~nothing.
 | M3 | Distiller + `monitoring.*` namespace (incl. `notify` dispatcher + envelope) + anomaly rules | 10k-line synthetic corpus → <50 templates; digest respects budget_tokens ±10%; `monitoring.stats` returns in <50ms; new-error-template fires exactly one alert under storm test; every channel payload carries the deterministic envelope |
 | M4 | Built-in `log-watch` worker template + autoinstall + escalation engine + levers | quiet tick = blocked run, zero spend; seeded error storm → 1 task + 1 gchat message, no dupes; critical path sends whatsapp via secret ref; policy editable via `update_worker` |
 | M5 | "Monitoring" page per workspace: hosts/sources/channels CRUD (settable gchat webhooks), template explorer, digest preview with token estimate, min_severity levers, install-worker button | e2e: add host → add source → add gchat_webhook channel → see templates → flip lever → worker installed; PWA passes existing lint/build |
-| M6 | Stretch: journald/file/compose kinds, follow-mode streaming, `logs.ack` UI, embedding-assisted residual clustering, mesh transport for paired peers | per-item |
+| M6 | Stretch — DONE: journald (systemd unit) + compose (project) source kinds via fixed read-only argv templates, multi-format leading-timestamp parsing, UI kind selector; `monitoring.ack` shipped in M3. REMAINING: file kind (needs byte-offset cursoring, not time), follow-mode streaming, embedding-assisted residual clustering, mesh transport for paired peers | journald/compose collected + tested; file explicitly refused with a clear message |
 
 Rough sizing: M1–M4 are each ~2–4 focused sessions; M5 similar on the web
 side. M2 and M3 are parallelizable after M1 lands (M3 can develop against

@@ -52,10 +52,11 @@ type SecretReader interface {
 	Get(ctx context.Context, scopeID, key string) ([]byte, error)
 }
 
-// Runner executes one bounded pull. The production runner wraps sshx;
-// tests substitute a fake so no network is involved.
+// Runner executes one bounded pull for a source. The production runner
+// wraps sshx and builds the fixed per-kind command; tests substitute a
+// fake so no network is involved.
 type Runner interface {
-	Pull(ctx context.Context, host *store.RemoteHost, cred sshx.Credential, selector string, since time.Time, maxBytes int64) (sshx.Result, error)
+	Pull(ctx context.Context, host *store.RemoteHost, cred sshx.Credential, src *store.LogSource, since time.Time) (sshx.Result, error)
 }
 
 // Line is one redacted, timestamped log line handed to the sink.

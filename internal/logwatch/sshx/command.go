@@ -19,17 +19,48 @@ import (
 // two layers: every variable token is (1) validated against a strict
 // charset and (2) single-quoted. Constant flags are literals.
 
-// tokenRe is the charset every variable token must match BEFORE
+// tokenRe is the charset every selector token must match BEFORE
 // quoting. Deliberately excludes quotes, whitespace, and every shell
-// metacharacter. Timestamps (RFC3339Nano) fit: letters, digits,
-// ':', '.', '-', 'T', 'Z', '+'.
+// metacharacter.
 var tokenRe = regexp.MustCompile(`^[A-Za-z0-9._:+/-]+$`)
+
+// tsTokenRe is the charset for timestamp tokens. Wider than tokenRe (it
+// admits a single space for the journald "2006-01-02 15:04:05" layout)
+// but still excludes every shell metacharacter and quote.
+var tsTokenRe = regexp.MustCompile(`^[A-Za-z0-9:.+ -]+$`)
 
 func quoteToken(kind, tok string) (string, error) {
 	if !tokenRe.MatchString(tok) {
 		return "", fmt.Errorf("sshx: %s token %q fails charset validation", kind, tok)
 	}
 	return "'" + tok + "'", nil
+}
+
+func quoteTimestamp(tok string) (string, error) {
+	if !tsTokenRe.MatchString(tok) {
+		return "", fmt.Errorf("sshx: timestamp token %q fails charset validation", tok)
+	}
+	return "'" + tok + "'", nil
+}
+
+// CommandForSource builds the fixed read-only pull command for a
+// source's kind. This is the ONLY place a remote command string is
+// constructed; every kind has a literal template with quoted variable
+// tokens, so no source config can inject a mutating command.
+func CommandForSource(src *store.LogSource, since time.Time) (string, error) {
+	if err := store.ValidateSelector(src.Selector); err != nil {
+		return "", err
+	}
+	switch src.Kind {
+	case store.LogSourceKindDocker:
+		return DockerLogsCommand(src.Selector, since)
+	case store.LogSourceKindCompose:
+		return ComposeLogsCommand(src.Selector, since)
+	case store.LogSourceKindJournald:
+		return JournaldCommand(src.Selector, since)
+	default:
+		return "", fmt.Errorf("sshx: source kind %q has no read-only command template", src.Kind)
+	}
 }
 
 // DockerLogsCommand builds the fixed read-only pull command:
@@ -40,10 +71,7 @@ func quoteToken(kind, tok string) (string, error) {
 // re-validated here even though the store validated it at CRUD time —
 // dial-time defence in depth per ADR 0007.
 func DockerLogsCommand(selector string, since time.Time) (string, error) {
-	if err := store.ValidateSelector(selector); err != nil {
-		return "", err
-	}
-	sel, err := quoteToken("selector", selector)
+	sel, err := quoteSelector(selector)
 	if err != nil {
 		return "", err
 	}
@@ -56,4 +84,57 @@ func DockerLogsCommand(selector string, since time.Time) (string, error) {
 		cmd += " --since " + ts
 	}
 	return cmd + " " + sel, nil
+}
+
+// ComposeLogsCommand pulls one compose project's aggregated logs:
+//
+//	docker compose -p '<project>' logs --no-color --timestamps --since '<cursor>'
+//
+// The selector is the compose project name. Requires the compose v2
+// plugin on the remote host.
+func ComposeLogsCommand(project string, since time.Time) (string, error) {
+	proj, err := quoteSelector(project)
+	if err != nil {
+		return "", err
+	}
+	cmd := "docker compose -p " + proj + " logs --no-color --timestamps"
+	if !since.IsZero() {
+		ts, err := quoteToken("since", since.UTC().Format(time.RFC3339Nano))
+		if err != nil {
+			return "", err
+		}
+		cmd += " --since " + ts
+	}
+	return cmd, nil
+}
+
+// JournaldCommand pulls one systemd unit's journal:
+//
+//	journalctl -u '<unit>' -o short-iso-precise --no-pager --since '<cursor>'
+//
+// short-iso-precise gives a leading RFC3339-ish timestamp the collector
+// parses. since uses journald's "2006-01-02 15:04:05" local-ish layout,
+// which journalctl parses as UTC when TZ is unset on the pull.
+func JournaldCommand(unit string, since time.Time) (string, error) {
+	u, err := quoteSelector(unit)
+	if err != nil {
+		return "", err
+	}
+	cmd := "journalctl -u " + u + " -o short-iso-precise --no-pager --utc"
+	if !since.IsZero() {
+		ts, err := quoteTimestamp(since.UTC().Format("2006-01-02 15:04:05"))
+		if err != nil {
+			return "", err
+		}
+		cmd += " --since " + ts
+	}
+	return cmd, nil
+}
+
+// quoteSelector validates + quotes a selector token.
+func quoteSelector(selector string) (string, error) {
+	if err := store.ValidateSelector(selector); err != nil {
+		return "", err
+	}
+	return quoteToken("selector", selector)
 }

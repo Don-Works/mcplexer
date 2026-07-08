@@ -70,7 +70,7 @@ func monitoringToolDefs() []gateway.Tool {
 				"workspace_id":   propStr("Workspace (required)."),
 				"remote_host_id": propStr("Remote host this source lives on (required)."),
 				"name":           propStr("Source name, unique per workspace (required)."),
-				"kind":           propStr("docker (default; the v1 collection contract) | compose | journald | file."),
+				"kind":           propStr("docker (default; the deploy contract) | compose (project name) | journald (systemd unit) | file (not yet collected). docker/compose/journald pull incrementally."),
 				"selector":       propStr("Docker container name, ^[A-Za-z0-9._/-]+$ (required)."),
 				"schedule_spec":  propStr("Pull cadence: Go duration ('2m' default) or cron expression."),
 				"max_pull_bytes": propInt("Per-pull byte cap. Default 4194304 (4 MiB)."),

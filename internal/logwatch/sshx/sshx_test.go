@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"golang.org/x/crypto/ssh"
+
+	"github.com/don-works/mcplexer/internal/store"
 )
 
 // TestDockerLogsCommand_Shape pins the exact wire command — the fixed
@@ -100,5 +102,38 @@ func TestHostKeyPinning(t *testing.T) {
 	var mismatch *HostKeyMismatchError
 	if !errors.As(err, &mismatch) {
 		t.Fatalf("expected HostKeyMismatchError, got %v", err)
+	}
+}
+
+// TestCommandForSource_Kinds pins each fixed read-only template.
+func TestCommandForSource_Kinds(t *testing.T) {
+	since := time.Date(2026, 7, 8, 14, 0, 0, 0, time.UTC)
+	cases := []struct {
+		kind, selector, want string
+	}{
+		{"docker", "api", "docker logs --timestamps --since '2026-07-08T14:00:00Z' 'api'"},
+		{"compose", "intervals", "docker compose -p 'intervals' logs --no-color --timestamps --since '2026-07-08T14:00:00Z'"},
+		{"journald", "nginx.service", "journalctl -u 'nginx.service' -o short-iso-precise --no-pager --utc --since '2026-07-08 14:00:00'"},
+	}
+	for _, c := range cases {
+		src := &store.LogSource{Kind: c.kind, Selector: c.selector}
+		got, err := CommandForSource(src, since)
+		if err != nil {
+			t.Fatalf("%s: %v", c.kind, err)
+		}
+		if got != c.want {
+			t.Errorf("%s:\n got %q\nwant %q", c.kind, got, c.want)
+		}
+	}
+
+	// file kind has no read-only template yet.
+	if _, err := CommandForSource(&store.LogSource{Kind: "file", Selector: "/var/log/app.log"}, since); err == nil {
+		t.Fatal("file kind must have no command template")
+	}
+	// injection stays rejected across all kinds.
+	for _, k := range []string{"docker", "compose", "journald"} {
+		if _, err := CommandForSource(&store.LogSource{Kind: k, Selector: "x; rm -rf /"}, since); err == nil {
+			t.Errorf("%s: injection selector must be rejected", k)
+		}
 	}
 }

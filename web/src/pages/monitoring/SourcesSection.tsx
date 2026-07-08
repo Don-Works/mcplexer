@@ -18,7 +18,13 @@ interface Props {
   refetch: () => void
 }
 
-const emptyDraft = { name: '', remote_host_id: '', selector: '', schedule_spec: '2m' }
+type SourceKind = 'docker' | 'compose' | 'journald'
+const emptyDraft = { name: '', remote_host_id: '', selector: '', schedule_spec: '2m', kind: 'docker' as SourceKind }
+const KIND_HINT: Record<SourceKind, string> = {
+  docker: 'container name',
+  compose: 'compose project name',
+  journald: 'systemd unit (e.g. nginx.service)',
+}
 
 function cursorAge(ts?: string): string {
   if (!ts) return 'never pulled'
@@ -36,7 +42,7 @@ export function SourcesSection({ workspaceId, sources, hosts, refetch }: Props) 
 
   async function submit() {
     try {
-      await createLogSource({ ...draft, workspace_id: workspaceId, kind: 'docker', enabled: true })
+      await createLogSource({ ...draft, workspace_id: workspaceId, enabled: true })
       toast.success(`source ${draft.name} added — first pull runs within its cadence`)
       setDraft(emptyDraft)
       setAdding(false)
@@ -72,7 +78,7 @@ export function SourcesSection({ workspaceId, sources, hosts, refetch }: Props) 
               <span className="w-32 truncate font-medium">{s.name}</span>
               <span className="w-28 truncate text-xs text-muted-foreground">{hostName(s.remote_host_id)}</span>
               <span className="flex-1 truncate font-mono text-xs text-muted-foreground">
-                docker:{s.selector} · every {s.schedule_spec}
+                {s.kind}:{s.selector} · every {s.schedule_spec}
               </span>
               <span className="text-xs text-muted-foreground">{cursorAge(s.cursor_ts)}</span>
               {s.consecutive_failures > 0 && (
@@ -103,7 +109,14 @@ export function SourcesSection({ workspaceId, sources, hosts, refetch }: Props) 
             <option value="">host…</option>
             {hosts.map(h => <option key={h.id} value={h.id}>{h.name}</option>)}
           </select>
-          <Input placeholder="container name" value={draft.selector} className="font-mono"
+          <select className="border border-border bg-background px-2 text-sm"
+            value={draft.kind}
+            onChange={e => setDraft({ ...draft, kind: e.target.value as SourceKind })}>
+            <option value="docker">docker</option>
+            <option value="compose">compose</option>
+            <option value="journald">journald</option>
+          </select>
+          <Input placeholder={KIND_HINT[draft.kind]} value={draft.selector} className="font-mono"
             onChange={e => setDraft({ ...draft, selector: e.target.value })} />
           <Input placeholder="cadence (2m, 30s, cron)" value={draft.schedule_spec} className="font-mono"
             onChange={e => setDraft({ ...draft, schedule_spec: e.target.value })} />

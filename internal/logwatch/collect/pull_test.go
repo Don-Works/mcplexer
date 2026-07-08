@@ -56,10 +56,12 @@ type fakeRunner struct {
 	newPin    string
 	err       error
 	gotSince  time.Time
+	gotKind   string
 }
 
-func (r *fakeRunner) Pull(_ context.Context, _ *store.RemoteHost, _ sshx.Credential, _ string, since time.Time, _ int64) (sshx.Result, error) {
+func (r *fakeRunner) Pull(_ context.Context, _ *store.RemoteHost, _ sshx.Credential, src *store.LogSource, since time.Time) (sshx.Result, error) {
 	r.gotSince = since
+	r.gotKind = src.Kind
 	return sshx.Result{Output: []byte(r.out), Truncated: r.truncated, NewPin: r.newPin}, r.err
 }
 
@@ -215,12 +217,34 @@ func TestPull_ErrorLeavesCursor(t *testing.T) {
 	}
 }
 
-// TestPull_NonDockerRefused pins the v1 collection contract.
-func TestPull_NonDockerRefused(t *testing.T) {
+// TestPull_JournaldAndCompose: M6 kinds flow through the same pull
+// pipeline, and the runner sees the right kind.
+func TestPull_JournaldAndCompose(t *testing.T) {
+	for _, kind := range []string{store.LogSourceKindJournald, store.LogSourceKindCompose} {
+		runner := &fakeRunner{out: "2026-07-08T14:00:00.000000Z hello from " + kind + "\n"}
+		m, _, sink := newFixture(runner)
+		src := srcDocker()
+		src.Kind = kind
+		src.Selector = "myunit"
+		if err := m.pullSource(context.Background(), src); err != nil {
+			t.Fatalf("%s pull: %v", kind, err)
+		}
+		if runner.gotKind != kind {
+			t.Fatalf("runner saw kind %q, want %q", runner.gotKind, kind)
+		}
+		if len(sink.lines) != 1 {
+			t.Fatalf("%s: expected 1 line, got %d", kind, len(sink.lines))
+		}
+	}
+}
+
+// TestPull_FileRefused: plain-file kind still needs byte-offset
+// cursoring (tracked in M6), so it is not collected yet.
+func TestPull_FileRefused(t *testing.T) {
 	m, _, _ := newFixture(&fakeRunner{})
 	src := srcDocker()
-	src.Kind = store.LogSourceKindJournald
+	src.Kind = store.LogSourceKindFile
 	if err := m.pullSource(context.Background(), src); err == nil {
-		t.Fatal("journald must be refused in v1")
+		t.Fatal("file kind must be refused until byte-offset cursoring lands")
 	}
 }
