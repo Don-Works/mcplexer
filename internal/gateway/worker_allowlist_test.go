@@ -84,8 +84,10 @@ func TestWorkerWorkspaceAccessReadWriteAndPreferredRouting(t *testing.T) {
 		t.Fatalf("currentWorkspaceID = %q, want home", got)
 	}
 	ancestors := h.routingWorkspaceAncestors(ctx)
-	if len(ancestors) != 2 || ancestors[0].ID != "home" {
-		t.Fatalf("routing ancestors = %+v, want home first", ancestors)
+	// home (preferred) first, then readonly, then the global workspace
+	// appended so builtin routes (mcpx__*, task__*, …) resolve.
+	if len(ancestors) != 3 || ancestors[0].ID != "home" || ancestors[len(ancestors)-1].ID != "global" {
+		t.Fatalf("routing ancestors = %+v, want [home, readonly, global]", ancestors)
 	}
 	if rpc := h.requireWorkerWorkspaceAccess(ctx, "readonly", false); rpc != nil {
 		t.Fatalf("read access to readonly workspace denied: %v", rpc)

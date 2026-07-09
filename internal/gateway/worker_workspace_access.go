@@ -12,6 +12,11 @@ import (
 
 type workerWorkspaceAccessKey struct{}
 
+// globalWorkspaceID is the seeded workspace that holds the builtin
+// route allows (mcpx__*, task__*, monitoring__*, …). Worker routing
+// must include it so in-process tool calls resolve.
+const globalWorkspaceID = "global"
+
 // WorkerWorkspaceGrant is the gateway-facing shape of one worker
 // workspace grant. RootPath/Name are optional routing aids; Access is
 // "read" or "write" (write implies read).
@@ -114,16 +119,31 @@ func (h *handler) currentSubpath(ctx context.Context) string {
 
 func (h *handler) routingWorkspaceAncestors(ctx context.Context) []routing.WorkspaceAncestor {
 	if c, ok := workerWorkspaceAccessFromContext(ctx); ok {
-		out := make([]routing.WorkspaceAncestor, 0, len(c.Grants))
+		out := make([]routing.WorkspaceAncestor, 0, len(c.Grants)+1)
+		haveGlobal := false
 		for _, g := range c.Grants {
 			if !grantCanRead(g.Access) {
 				continue
+			}
+			if g.WorkspaceID == globalWorkspaceID {
+				haveGlobal = true
 			}
 			out = append(out, routing.WorkspaceAncestor{
 				ID:       g.WorkspaceID,
 				Name:     g.WorkspaceName,
 				RootPath: g.RootPath,
 			})
+		}
+		// Append the global workspace last so the builtin routes
+		// (mcpx__*, task__*, monitoring__*, …) live in the "global"
+		// route table match. Without this an in-process (API-provider)
+		// worker's tool calls fail with "no matching route" because
+		// RouteWithFallback only queries each ancestor's own rules and
+		// the worker's home workspace has none of the builtin allows.
+		// The session path already spans workspace ∪ parent ∪ global;
+		// this brings the worker path in line.
+		if !haveGlobal {
+			out = append(out, routing.WorkspaceAncestor{ID: globalWorkspaceID, Name: "Global"})
 		}
 		return out
 	}
