@@ -347,6 +347,14 @@ func mergeWorkerCaps(base Caps, w *store.Worker) (Caps, int) {
 	lifetimeOutputCap := 0
 	if w.MaxToolCalls > 0 {
 		c.MaxToolCalls = w.MaxToolCalls
+		// Iterations (model turns) must be allowed to at least match the
+		// tool-call budget — otherwise a reasoning model that makes one
+		// tool call per turn hits the base iteration cap (12) long before
+		// its tool budget, cutting the run short mid-triage. Raise the
+		// iteration ceiling to track the operator-set tool budget.
+		if c.MaxIterations < w.MaxToolCalls {
+			c.MaxIterations = w.MaxToolCalls
+		}
 	}
 	if w.MaxOutputTokens > 0 {
 		// Worker-set output cap is treated as a lifetime/aggregate cap
