@@ -114,17 +114,31 @@ func workspaceHasEnabledSources(ctx context.Context, db store.Store, workspaceID
 }
 
 // installLogWatchWorker installs from the seed template, then stamps
-// the gate script + budgets + the wake trigger.
+// the gate script + budgets + the wake trigger. Model overrides come
+// from env so an operator can run the triage worker on their own
+// provider (e.g. GLM/Z.AI via openai_compat) instead of the template's
+// claude_cli default:
+//
+//	MCPLEXER_LOGWATCH_MODEL_PROVIDER=openai_compat
+//	MCPLEXER_LOGWATCH_MODEL_ID=glm-5.2
+//	MCPLEXER_LOGWATCH_MODEL_ENDPOINT=https://api.z.ai/api/coding/paas/v4
+//	MCPLEXER_LOGWATCH_SECRET_SCOPE=<scope id holding api_key>  (optional; else auto-picked)
 func installLogWatchWorker(ctx context.Context, workers *workersadmin.Service, workspaceID, scopeID string) error {
 	enabled := true
+	if s := strings.TrimSpace(os.Getenv("MCPLEXER_LOGWATCH_SECRET_SCOPE")); s != "" {
+		scopeID = s
+	}
 	installed, err := workers.InstallFromTemplate(ctx, workersadmin.InstallFromTemplateInput{
-		TemplateName:  autoLogWatchTemplate,
-		WorkerName:    autoLogWatchName,
-		WorkspaceID:   workspaceID,
-		SecretScopeID: scopeID,
-		ScheduleSpec:  autoLogWatchSchedule,
-		ExecMode:      "autonomous",
-		Enabled:       &enabled,
+		TemplateName:     autoLogWatchTemplate,
+		WorkerName:       autoLogWatchName,
+		WorkspaceID:      workspaceID,
+		SecretScopeID:    scopeID,
+		ScheduleSpec:     autoLogWatchSchedule,
+		ExecMode:         "autonomous",
+		Enabled:          &enabled,
+		ModelProvider:    strings.TrimSpace(os.Getenv("MCPLEXER_LOGWATCH_MODEL_PROVIDER")),
+		ModelID:          strings.TrimSpace(os.Getenv("MCPLEXER_LOGWATCH_MODEL_ID")),
+		ModelEndpointURL: strings.TrimSpace(os.Getenv("MCPLEXER_LOGWATCH_MODEL_ENDPOINT")),
 	})
 	if err != nil {
 		return err

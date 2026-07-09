@@ -75,6 +75,13 @@ type InstallFromTemplateInput struct {
 	ScheduleSpec    string            `json:"schedule_spec,omitempty"`
 	ExecMode        string            `json:"exec_mode,omitempty"`
 	Enabled         *bool             `json:"enabled,omitempty"`
+	// Model overrides — when set, replace the template's model hints so a
+	// template that defaults to (say) claude_cli can be installed against
+	// an operator's own provider (e.g. openai_compat → a GLM/Z.AI endpoint)
+	// without editing the template. Empty = use the template hint.
+	ModelProvider    string `json:"model_provider,omitempty"`
+	ModelID          string `json:"model_id,omitempty"`
+	ModelEndpointURL string `json:"model_endpoint_url,omitempty"`
 }
 
 // modelAPIKeySlotName is the well-known secret-slot name the runner
@@ -239,8 +246,9 @@ func (s *Service) buildCreateInputFromTemplate(
 	return CreateInput{
 		Name:                  in.WorkerName,
 		Description:           tmpl.Description,
-		ModelProvider:         tmpl.ModelProviderHint,
-		ModelID:               tmpl.ModelIDHint,
+		ModelProvider:         defaultStr(strings.TrimSpace(in.ModelProvider), tmpl.ModelProviderHint),
+		ModelID:               defaultStr(strings.TrimSpace(in.ModelID), tmpl.ModelIDHint),
+		ModelEndpointURL:      strings.TrimSpace(in.ModelEndpointURL),
 		SecretScopeID:         scopeID,
 		SkillName:             tmpl.SkillName,
 		SkillVersion:          tmpl.SkillVersion,
