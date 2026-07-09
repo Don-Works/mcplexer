@@ -145,7 +145,7 @@ func installLogWatchWorker(ctx context.Context, workers *workersadmin.Service, w
 	}
 	gate := logWatchGate
 	maxTools := 20
-	maxWall := 120
+	maxWall := 300
 	maxFail := 5
 	if _, err := workers.Update(ctx, workersadmin.UpdateInput{
 		ID:                     installed.ID,
