@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"strings"
 
 	"github.com/don-works/mcplexer/internal/store"
 )
@@ -15,13 +16,53 @@ type severityRule struct {
 	sev string
 }
 
-// defaultRules run in order; first match wins. The synthetic
-// "logwatch:" collector events class as warn so discontinuities and
-// truncations surface in digests without waking the worker alone.
-var defaultRules = []severityRule{
-	{regexp.MustCompile(`(?i)\b(panic|fatal|out of memory|oom-?kill(ed)?|sigsegv|segfault|data race)\b`), store.SeverityCritical},
+// criticalKeywordRe matches unambiguous catastrophe keywords. These win
+// even over an explicit lower log level — a line that says "panic" is
+// critical no matter what level field it carries.
+var criticalKeywordRe = regexp.MustCompile(`(?i)\b(panic|fatal|out of memory|oom-?kill(ed)?|sigsegv|segfault|data race)\b`)
+
+// keywordRules are the fallback keyword heuristics, tried only when the
+// line has no explicit structured log level. First match wins. The
+// synthetic "logwatch:" collector events class as warn.
+var keywordRules = []severityRule{
 	{regexp.MustCompile(`(?i)(\berror\b|\berr=|exception|traceback|stack trace|refused|timed? ?out|unavailable|\bfailed\b|\bfailure\b)`), store.SeverityError},
 	{regexp.MustCompile(`(?i)(\bwarn(ing)?\b|^logwatch:)`), store.SeverityWarn},
+}
+
+// jsonLevelRe / mapLevel extract an app's OWN structured log level so a
+// benign `info … {"file":"Failed"}` line isn't mifrom-classified error by
+// the keyword heuristics (the "Failed" filename would otherwise match).
+var jsonLevelRe = regexp.MustCompile(`(?i)"level"\s*:\s*"([a-z]+)"`)
+
+func mapLevel(s string) string {
+	switch strings.ToLower(strings.Trim(s, ":[]()")) {
+	case "panic", "fatal", "critical", "crit", "emerg", "alert":
+		return store.SeverityCritical
+	case "error", "err":
+		return store.SeverityError
+	case "warn", "warning":
+		return store.SeverityWarn
+	case "info", "information", "debug", "trace", "notice", "verbose":
+		return store.SeverityInfo
+	}
+	return ""
+}
+
+// explicitLevel returns the line's own structured log level, or "" when
+// none is discernible. Checks a JSON `"level":"…"` field first, then a
+// bare leading level token (the common "<msg-level> pkg/file …" form,
+// after the docker timestamp has already been split off).
+func explicitLevel(line string) string {
+	if m := jsonLevelRe.FindStringSubmatch(line); m != nil {
+		if lvl := mapLevel(m[1]); lvl != "" {
+			return lvl
+		}
+	}
+	first := line
+	if i := strings.IndexAny(line, " \t"); i > 0 {
+		first = line[:i]
+	}
+	return mapLevel(first)
 }
 
 // Classifier applies per-source overrides before the defaults.
@@ -61,12 +102,25 @@ func NewClassifier(rulesJSON string) (*Classifier, error) {
 // Classify returns the severity of one line (overrides first, then
 // defaults, then info).
 func (c *Classifier) Classify(line string) string {
+	// 1. Operator-configured overrides win outright.
 	for _, r := range c.overrides {
 		if r.re.MatchString(line) {
 			return r.sev
 		}
 	}
-	for _, r := range defaultRules {
+	// 2. Unambiguous catastrophe keywords (panic/OOM/…) — safety first,
+	//    even over a lower explicit level.
+	if criticalKeywordRe.MatchString(line) {
+		return store.SeverityCritical
+	}
+	// 3. The app's OWN structured level, when present. This is the
+	//    authoritative signal and prevents keyword false-positives on
+	//    message payloads (e.g. a filename literally named "Failed").
+	if lvl := explicitLevel(line); lvl != "" {
+		return lvl
+	}
+	// 4. Keyword heuristics for unstructured lines.
+	for _, r := range keywordRules {
 		if r.re.MatchString(line) {
 			return r.sev
 		}

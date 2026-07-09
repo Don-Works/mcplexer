@@ -69,13 +69,21 @@ func TestClassifier_DefaultsAndOverrides(t *testing.T) {
 		t.Fatal(err)
 	}
 	for line, want := range map[string]string{
-		"panic: runtime error":                   store.SeverityCritical,
-		"OOM-killed container":                   store.SeverityCritical,
-		"ERROR pgx: connection refused":          store.SeverityError,
-		"request timed out after 30s":            store.SeverityError,
-		"WARN slow query":                        store.SeverityWarn,
-		"logwatch: pull truncated at 100 bytes":  store.SeverityWarn,
-		"GET /healthz 200":                       store.SeverityInfo,
+		"panic: runtime error":                  store.SeverityCritical,
+		"OOM-killed container":                  store.SeverityCritical,
+		"ERROR pgx: connection refused":         store.SeverityError,
+		"request timed out after 30s":           store.SeverityError,
+		"WARN slow query":                       store.SeverityWarn,
+		"logwatch: pull truncated at 100 bytes": store.SeverityWarn,
+		"GET /healthz 200":                      store.SeverityInfo,
+		// explicit level beats keyword false-positives (the production
+		// case GLM-5.2 flagged: a filename literally named "Failed")
+		`info acme/service.go:76 ignoring file as it is not an xml {"file": "Failed"}`: store.SeverityInfo,
+		`{"level":"info","msg":"job failed to find any orders"}`:                        store.SeverityInfo,
+		`error acme/service.go:80 connection refused`:                                  store.SeverityError,
+		`{"level":"error","msg":"db down"}`:                                             store.SeverityError,
+		// but an explicit low level never masks a real catastrophe keyword
+		`info worker panic: nil deref`: store.SeverityCritical,
 	} {
 		if got := c.Classify(line); got != want {
 			t.Errorf("Classify(%q) = %q, want %q", line, got, want)

@@ -30,11 +30,14 @@ func (d *DB) UpsertLogTemplate(ctx context.Context, t *store.LogTemplate, n int6
 	if n <= 0 {
 		return false, errors.New("UpsertLogTemplate: n must be positive")
 	}
+	// Refresh severity on every occurrence so an improved classifier
+	// (or a per-source rule change) propagates to templates first seen
+	// under the old classification, instead of being frozen at insert.
 	res, err := d.q.ExecContext(ctx, `
 		UPDATE log_templates SET count = count + ?, last_seen = ?,
-			sample_last = ?
+			sample_last = ?, severity = ?
 		WHERE id = ?`,
-		n, formatTime(t.LastSeen.UTC()), t.SampleLast, t.ID)
+		n, formatTime(t.LastSeen.UTC()), t.SampleLast, t.Severity, t.ID)
 	if err != nil {
 		return false, fmt.Errorf("upsert log template: %w", err)
 	}
