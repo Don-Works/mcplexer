@@ -211,7 +211,8 @@ func (h *handler) enforceWorkerRouteAccess(
 	originalTool string,
 	routeResult *routing.RouteResult,
 ) *RPCError {
-	if _, ok := workerWorkspaceAccessFromContext(ctx); !ok || routeResult == nil {
+	c, ok := workerWorkspaceAccessFromContext(ctx)
+	if !ok || routeResult == nil {
 		return nil
 	}
 	wsID := routeResult.MatchedWorkspaceID
@@ -220,6 +221,16 @@ func (h *handler) enforceWorkerRouteAccess(
 	}
 	readOnly := false
 	if _, ok := builtinDownstreamIDs[routeResult.DownstreamServerID]; ok {
+		// Builtin routes (mcpx__*, task__*, monitoring__*, …) all live in
+		// the "global" workspace by seeding convention — that is NOT a real
+		// target workspace, and no worker is granted write to it. The actual
+		// workspace a builtin operates on is the worker's own (or an explicit
+		// workspace_id arg, which the per-tool handlers gate via
+		// requireWorkerWorkspaceAccess). So gate the builtin entrypoint
+		// against the worker's home workspace, which it always holds.
+		if wsID == globalWorkspaceID && c.PreferredWorkspaceID != "" {
+			wsID = c.PreferredWorkspaceID
+		}
 		readOnly = h.isGatewayReadOnlyTool(ctx, toolName)
 	} else {
 		readOnly = h.isReadOnlyTool(ctx, routeResult.DownstreamServerID, originalTool)
