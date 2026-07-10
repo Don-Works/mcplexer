@@ -270,7 +270,13 @@ func NewAdapter(cfg Config) (ModelAdapter, error) {
 	}
 	client := cfg.HTTPClient
 	if client == nil {
-		client = &http.Client{Timeout: 60 * time.Second}
+		// 180s, not 60s: reasoning models (GLM-5.2, o-series, …) can take
+		// well over a minute to first byte on a large context before they
+		// start streaming. The caller's context deadline (worker wall-clock)
+		// is the real per-run bound; this client ceiling only guards against
+		// a truly wedged connection. 60s was cutting off valid slow replies
+		// with "Client.Timeout exceeded while awaiting headers".
+		client = &http.Client{Timeout: 180 * time.Second}
 	}
 
 	switch cfg.Provider {

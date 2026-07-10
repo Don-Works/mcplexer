@@ -79,6 +79,8 @@ func TestClassifier_DefaultsAndOverrides(t *testing.T) {
 		// explicit level beats keyword false-positives (the production
 		// case GLM-5.2 flagged: a filename literally named "Failed")
 		`info acme/service.go:76 ignoring file as it is not an xml {"file": "Failed"}`: store.SeverityInfo,
+		// app timestamp BEFORE the level (Acme real format: "<ts> info <pkg> <msg>")
+		"2026-07-10T08:23:08.923Z\tinfo\tacme/service.go:110\tignoring file as it is not an xml\t{\"file\": \"Failed\"}": store.SeverityInfo,
 		`{"level":"info","msg":"job failed to find any orders"}`:                        store.SeverityInfo,
 		`error acme/service.go:80 connection refused`:                                  store.SeverityError,
 		`{"level":"error","msg":"db down"}`:                                             store.SeverityError,

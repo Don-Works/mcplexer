@@ -49,20 +49,30 @@ func mapLevel(s string) string {
 }
 
 // explicitLevel returns the line's own structured log level, or "" when
-// none is discernible. Checks a JSON `"level":"…"` field first, then a
-// bare leading level token (the common "<msg-level> pkg/file …" form,
-// after the docker timestamp has already been split off).
+// none is discernible. Checks a JSON `"level":"…"` field first, then the
+// first few whitespace-delimited tokens for a bare level word. Scanning
+// several tokens (not just the first) handles the very common
+// "<app-timestamp> <level> <pkg> <msg>" layout — e.g. the Acme logs
+// emit "2026-…Z\tinfo\tacme/service.go:110\t…", where the level is the
+// SECOND field after docker's own timestamp has been split off.
 func explicitLevel(line string) string {
 	if m := jsonLevelRe.FindStringSubmatch(line); m != nil {
 		if lvl := mapLevel(m[1]); lvl != "" {
 			return lvl
 		}
 	}
-	first := line
-	if i := strings.IndexAny(line, " \t"); i > 0 {
-		first = line[:i]
+	// Only the leading fields carry the level; scanning the whole line
+	// would match level words inside the message payload. 3 tokens covers
+	// "<ts> <level> …" and "<ts> <caller> <level> …" without over-reaching.
+	for i, tok := range strings.Fields(line) {
+		if i >= 3 {
+			break
+		}
+		if lvl := mapLevel(tok); lvl != "" {
+			return lvl
+		}
 	}
-	return mapLevel(first)
+	return ""
 }
 
 // Classifier applies per-source overrides before the defaults.
