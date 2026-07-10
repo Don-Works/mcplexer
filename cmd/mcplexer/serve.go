@@ -58,6 +58,7 @@ import (
 	"github.com/don-works/mcplexer/internal/store/sqlite"
 	"github.com/don-works/mcplexer/internal/tasks"
 	"github.com/don-works/mcplexer/internal/telegram"
+	"github.com/don-works/mcplexer/internal/usage"
 	workersadmin "github.com/don-works/mcplexer/internal/workers/admin"
 	"github.com/don-works/mcplexer/internal/workers/runner"
 	"github.com/don-works/mcplexer/internal/workers/schedulebridge"
@@ -343,6 +344,7 @@ type serverDeps struct {
 	secretPromptMgr *ephemeral.Manager
 	secretPromptBus *ephemeral.Bus
 	backupSvc       *backup.Service
+	usageSvc        *usage.Service
 
 	// v0.13.0 — mesh__send_secret transfer keypair. nil = receive half of
 	// peer-to-peer secret transfer is disabled (sender side still works
@@ -426,6 +428,7 @@ func buildServerDeps(ctx context.Context, cfg *Config, db *sqlite.DB, settingsSv
 		return nil, err
 	}
 	d.authInj, d.flow, d.enc, d.secretsMgr = authInj, fm, enc, secretsMgr
+	d.usageSvc = buildUsageService(db, secretsMgr)
 
 	// v0.13.0 — load the dedicated age X25519 transfer keypair used for
 	// peer→peer secret transfer (`mesh__send_secret`). Best-effort: a
@@ -946,6 +949,7 @@ func buildServerDeps(ctx context.Context, cfg *Config, db *sqlite.DB, settingsSv
 	// agent's CWD is at or under the data directory.
 	internalBackend := control.NewInternalBackend(db, d.backupSvc)
 	internalBackend.SetEncryptor(d.enc)
+	internalBackend.SetUsageService(d.usageSvc)
 	// Route/workspace/server mutations via MCP admin tools must invalidate
 	// the routing rules cache immediately (the REST handlers already do);
 	// otherwise new routes only take effect after the 30s cache TTL.
@@ -1612,6 +1616,7 @@ func runServer(ctx context.Context, cfg *Config, db *sqlite.DB, cfgSvc *config.S
 		Store:                  db,
 		ConfigSvc:              cfgSvc,
 		SettingsSvc:            settingsSvc,
+		UsageSvc:               d.usageSvc,
 		Engine:                 d.engine,
 		Manager:                d.manager,
 		FlowManager:            d.flow,
@@ -1756,6 +1761,7 @@ func runStdio(ctx context.Context, cfg *Config, db *sqlite.DB, settingsSvc *conf
 	stdioBackupSvc := backup.New(filepath.Dir(cfg.DBDSN), cfg.DBDSN, mcplexerVersion)
 	stdioInternalBackend := control.NewInternalBackend(db, stdioBackupSvc)
 	stdioInternalBackend.SetEncryptor(stdioEnc)
+	stdioInternalBackend.SetUsageService(buildUsageService(db, secretsMgr))
 	stdioInternalBackend.SetRouteInvalidator(engine.InvalidateAllRoutes)
 	// Workers admin tools live on the same InternalBackend; stdio mode
 	// has no runner so RunNow falls back to the stub placeholder path

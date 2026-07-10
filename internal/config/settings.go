@@ -179,6 +179,10 @@ type Settings struct {
 	// MemoryEmbedModel is the embedding model id for local/auto providers.
 	// It MUST emit 1536-dim vectors (memories_vec is FLOAT[1536]).
 	MemoryEmbedModel string `json:"memory_embed_model,omitempty"`
+	// UsageSources contains non-secret metadata for AI subscription usage
+	// collectors. Credentials remain in auth scopes; these rows only point at
+	// the scope/key to read when a provider supports a first-party usage API.
+	UsageSources []UsageSourceSettings `json:"usage_sources,omitempty"`
 }
 
 // DefaultSettings returns settings with sensible defaults.
@@ -409,6 +413,9 @@ func validateSettings(s Settings) error {
 		}
 	}
 	if _, err := NormalizeRemoteSkillServerURL(s.RemoteSkillServerURL); err != nil {
+		return err
+	}
+	if err := ValidateUsageSources(s.UsageSources); err != nil {
 		return err
 	}
 

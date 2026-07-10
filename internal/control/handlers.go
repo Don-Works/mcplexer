@@ -75,6 +75,10 @@ var handlers = map[string]handlerFunc{
 	"list_users":        handleListUsers,
 	"get_user":          handleGetUser,
 	"list_user_devices": handleListUserDevices,
+	// AI subscription usage source configuration. Snapshot/refresh dispatch
+	// through InternalBackend because they need the live usage service.
+	"configure_usage_source": handleConfigureUsageSource,
+	"remove_usage_source":    handleRemoveUsageSource,
 }
 
 // textResult wraps a text string in MCP CallToolResult format.

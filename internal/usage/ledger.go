@@ -1,16 +1,17 @@
-// Package usage — ledger.go aggregates usage from the worker_runs
-// ledger table. This is the "auto" source for providers whose billing
-// data lives in mcplexer's own database.
 package usage
 
 import (
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/don-works/mcplexer/internal/store"
 )
 
-// LedgerAggregate is the result of aggregating worker_runs for one
-// subscription bucket over a time window.
+// LedgerRun remains an alias so focused aggregation tests can construct the
+// same projection returned by store.UsageStore.
+type LedgerRun = store.UsageLedgerRun
+
 type LedgerAggregate struct {
 	Requests              int
 	InputTokens           int
@@ -21,104 +22,151 @@ type LedgerAggregate struct {
 	AccountingMissingRuns int
 }
 
-// LedgerRun is a slim projection of a WorkerRun used for aggregation.
-type LedgerRun struct {
-	ModelProvider      string
-	ModelID            string
-	BillingModel       string
-	SubscriptionBucket string
-	RealCostUSD        float64
-	InputTokens        int
-	OutputTokens       int
-	CostUSD            int
-	Status             string
-}
-
-// AggregateLedger computes the LedgerAggregate for a set of runs.
-// Runs are filtered by subscriptionBucket; runs with empty/zero
-// tokens AND zero cost on success are counted as accounting-missing.
-func AggregateLedger(runs []LedgerRun, bucket string) LedgerAggregate {
-	var agg LedgerAggregate
-	for _, r := range runs {
-		if r.SubscriptionBucket != bucket {
+func AggregateLedger(runs []LedgerRun, provider string) LedgerAggregate {
+	var out LedgerAggregate
+	for _, run := range runs {
+		if !runBelongsToProvider(run, provider) {
 			continue
 		}
-		agg.Requests++
-		agg.InputTokens += r.InputTokens
-		agg.OutputTokens += r.OutputTokens
-		agg.CostUSD += r.RealCostUSD
-		if r.Status == "success" && r.InputTokens == 0 && r.OutputTokens == 0 && r.RealCostUSD == 0 {
-			agg.AccountingMissingRuns++
+		out.Requests++
+		out.InputTokens += run.InputTokens
+		out.OutputTokens += run.OutputTokens
+		out.CostUSD += observedCost(run)
+		if accountingMissing(run) {
+			out.AccountingMissingRuns++
 		}
 	}
-	return agg
+	return out
 }
 
-// AggregateOpenRouterByHarness groups OpenRouter-prefixed runs by
-// harness (model_provider) and model. Runs whose ModelID starts with
-// "openrouter/" are attributed to the harness indicated by
-// ModelProvider.
-func AggregateOpenRouterByHarness(runs []LedgerRun) []store.ORHarnessUsage {
-	type harnessKey struct {
-		provider string
-		model    string
+func runBelongsToProvider(run LedgerRun, provider string) bool {
+	if strings.EqualFold(run.SubscriptionBucket, provider) {
+		return true
 	}
+	p := strings.ToLower(run.ModelProvider)
+	m := strings.ToLower(run.ModelID)
+	switch provider {
+	case store.ProviderClaude:
+		return p == "claude_cli"
+	case store.ProviderCodex:
+		return p == "codex_cli"
+	case store.ProviderGrok:
+		return p == "grok_cli"
+	case store.ProviderMiMo:
+		return p == "mimo_cli" && !strings.HasPrefix(m, "openrouter/")
+	case store.ProviderMiniMax:
+		return p == "opencode_cli" && strings.HasPrefix(m, "minimax/")
+	case store.ProviderZAI:
+		return p == "opencode_cli" && strings.HasPrefix(m, "zai-coding-plan/")
+	default:
+		return false
+	}
+}
+
+func observedCost(run LedgerRun) float64 {
+	if run.RealCostUSD != 0 {
+		return run.RealCostUSD
+	}
+	if run.BillingModel == "subscription" || run.BillingModel == "free" {
+		return 0
+	}
+	return run.CostUSD
+}
+
+func accountingMissing(run LedgerRun) bool {
+	return run.Status == "success" && run.InputTokens == 0 &&
+		run.OutputTokens == 0 && run.RealCostUSD == 0 && run.CostUSD == 0
+}
+
+func AggregateOpenRouterByHarness(runs []LedgerRun) []store.ORHarnessUsage {
 	harnesses := make(map[string]*store.ORHarnessUsage)
 	models := make(map[string]map[string]*store.ORModelUsage)
-
-	for _, r := range runs {
-		if !isOpenRouterModel(r.ModelID) {
+	for _, run := range runs {
+		if !isOpenRouterModel(run.ModelID) {
 			continue
 		}
-		h := r.ModelProvider
-		if h == "" {
-			h = "unknown"
+		harness := harnessLabel(run.ModelProvider)
+		if harnesses[harness] == nil {
+			harnesses[harness] = &store.ORHarnessUsage{
+				Harness: harness, CostKind: store.ObservedCostMetered,
+			}
+			models[harness] = make(map[string]*store.ORModelUsage)
 		}
-		modelName := r.ModelID
-
-		if _, ok := harnesses[h]; !ok {
-			harnesses[h] = &store.ORHarnessUsage{Harness: h}
-			models[h] = make(map[string]*store.ORModelUsage)
-		}
-		he := harnesses[h]
-		he.Requests++
-		he.InputTokens += r.InputTokens
-		he.OutputTokens += r.OutputTokens
-		he.CostUSD += r.RealCostUSD
-		if r.Status == "success" && r.InputTokens == 0 && r.OutputTokens == 0 && r.RealCostUSD == 0 {
-			he.AccountingMissingRuns++
-		}
-
-		if _, ok := models[h][modelName]; !ok {
-			models[h][modelName] = &store.ORModelUsage{Model: modelName}
-		}
-		me := models[h][modelName]
-		me.Requests++
-		me.InputTokens += r.InputTokens
-		me.OutputTokens += r.OutputTokens
-		me.CostUSD += r.RealCostUSD
+		addOpenRouterRun(harnesses[harness], models[harness], run)
 	}
-
-	result := make([]store.ORHarnessUsage, 0, len(harnesses))
-	for _, he := range harnesses {
-		ml := models[he.Harness]
-		he.Models = make([]store.ORModelUsage, 0, len(ml))
-		for _, me := range ml {
-			he.Models = append(he.Models, *me)
-		}
-		result = append(result, *he)
-	}
-	return result
+	return sortedHarnesses(harnesses, models)
 }
 
-// isOpenRouterModel checks if a model_id uses the openrouter/ prefix.
+func addOpenRouterRun(
+	harness *store.ORHarnessUsage,
+	models map[string]*store.ORModelUsage,
+	run LedgerRun,
+) {
+	cost := observedCost(run)
+	harness.Requests++
+	harness.InputTokens += run.InputTokens
+	harness.OutputTokens += run.OutputTokens
+	harness.CostUSD += cost
+	if accountingMissing(run) {
+		harness.AccountingMissingRuns++
+	}
+	model := models[run.ModelID]
+	if model == nil {
+		model = &store.ORModelUsage{Model: run.ModelID}
+		models[run.ModelID] = model
+	}
+	model.Requests++
+	model.InputTokens += run.InputTokens
+	model.OutputTokens += run.OutputTokens
+	model.CostUSD += cost
+}
+
+func sortedHarnesses(
+	harnesses map[string]*store.ORHarnessUsage,
+	models map[string]map[string]*store.ORModelUsage,
+) []store.ORHarnessUsage {
+	names := make([]string, 0, len(harnesses))
+	for name := range harnesses {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	out := make([]store.ORHarnessUsage, 0, len(names))
+	for _, name := range names {
+		modelNames := make([]string, 0, len(models[name]))
+		for model := range models[name] {
+			modelNames = append(modelNames, model)
+		}
+		sort.Strings(modelNames)
+		for _, model := range modelNames {
+			harnesses[name].Models = append(harnesses[name].Models, *models[name][model])
+		}
+		out = append(out, *harnesses[name])
+	}
+	return out
+}
+
+func harnessLabel(provider string) string {
+	label := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(provider)), "_cli")
+	if label == "" {
+		return "unknown"
+	}
+	return label
+}
+
 func isOpenRouterModel(modelID string) bool {
-	return len(modelID) > 11 && modelID[:11] == "openrouter/"
+	modelID = strings.ToLower(strings.TrimSpace(modelID))
+	return len(modelID) > len("openrouter/") && strings.HasPrefix(modelID, "openrouter/")
 }
 
-// WindowSince computes the start of a UTC day window.
 func WindowSince(days int) time.Time {
-	now := time.Now().UTC()
+	return windowSince(time.Now(), days)
+}
+
+func windowSince(now time.Time, days int) time.Time {
+	if days <= 0 {
+		days = 30
+	}
+	now = now.UTC()
 	return time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC).
 		AddDate(0, 0, -(days - 1))
 }

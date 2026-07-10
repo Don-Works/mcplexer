@@ -2,7 +2,6 @@ package collectors
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -14,35 +13,21 @@ import (
 
 const zaiDefaultBase = "https://api.z.ai"
 
-// ZAICollector fetches quota data from Z.AI (zhipu).
+// ZAICollector fetches Coding Plan quota data from Z.AI or BigModel.
 type ZAICollector struct {
 	Client httpClient
 	Secret SecretReader
 }
 
-// Fetch calls the Z.AI usage/quota/limit endpoint. The Authorization
-// header is the raw token (no "Bearer " prefix).
 func (c *ZAICollector) Fetch(
 	ctx context.Context, cfg store.SourceConfig,
 ) (store.CollectorResult, error) {
 	start := time.Now()
-	token, err := c.Secret.Get(ctx, cfg.SecretKey)
+	token, err := requireSecret(ctx, c.Secret, cfg.AuthScopeID, cfg.SecretKey)
 	if err != nil {
-		return collectorError(store.ProviderZAI, cfg, store.StatusUnconfigured,
-			fmt.Sprintf("secret read: %v", err), start), nil
+		return collectorError(store.ProviderZAI, cfg, store.StatusUnconfigured, err.Error(), start), nil
 	}
-	if token == "" {
-		return collectorError(store.ProviderZAI, cfg, store.StatusUnconfigured,
-			"no API key configured", start), nil
-	}
-
-	base := zaiDefaultBase
-	if cfg.BaseURL != "" {
-		base = strings.TrimRight(cfg.BaseURL, "/")
-	}
-	url := base + "/api/monitor/usage/quota/limit"
-
-	body, status, err := c.doFetch(ctx, url, token)
+	body, status, err := c.doFetch(ctx, zaiURL(cfg.BaseURL), token)
 	if err != nil {
 		return collectorError(store.ProviderZAI, cfg, store.StatusError,
 			fmt.Sprintf("request failed: %v", err), start), nil
@@ -51,80 +36,175 @@ func (c *ZAICollector) Fetch(
 		return collectorError(store.ProviderZAI, cfg, store.StatusError,
 			fmt.Sprintf("HTTP %d", status), start), nil
 	}
-
 	windows, err := parseZAIResponse(body)
 	if err != nil {
 		return collectorError(store.ProviderZAI, cfg, store.StatusError,
 			fmt.Sprintf("parse: %v", err), start), nil
 	}
-
-	snap := baseSnapshot(store.ProviderZAI, cfg, "api")
-	snap.Status = store.StatusOK
-	snap.UpdatedAt = timePtr(start)
-	snap.Windows = windows
-	return store.CollectorResult{Snapshot: snap, Duration: time.Since(start)}, nil
+	snapshot := baseSnapshot(store.ProviderZAI, cfg, "api")
+	snapshot.Status, snapshot.UpdatedAt, snapshot.Windows = store.StatusOK, timePtr(start), windows
+	return store.CollectorResult{Snapshot: snapshot, Duration: time.Since(start)}, nil
 }
 
-func (c *ZAICollector) doFetch(
-	ctx context.Context, url, token string,
-) ([]byte, int, error) {
+func zaiURL(base string) string {
+	if base == "" {
+		base = zaiDefaultBase
+	}
+	return strings.TrimRight(base, "/") + "/api/monitor/usage/quota/limit"
+}
+
+func (c *ZAICollector) doFetch(ctx context.Context, url, token string) ([]byte, int, error) {
 	req, err := newRawAuthRequest(ctx, url, token)
 	if err != nil {
 		return nil, 0, err
 	}
-	resp, err := c.Client.Do(req)
+	resp, err := requestClient(c.Client).Do(req)
 	if err != nil {
 		return nil, 0, err
 	}
 	defer func() { _ = resp.Body.Close() }()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if err != nil {
-		return nil, resp.StatusCode, err
-	}
-	return body, resp.StatusCode, nil
-}
-
-// zaiResponse is the expected response. The shape is a JSON object with
-// a "data" field containing an array of quota entries.
-type zaiResponse struct {
-	Data []zaiQuotaEntry `json:"data"`
-}
-
-type zaiQuotaEntry struct {
-	Name      string  `json:"name"`
-	Used      float64 `json:"used"`
-	Total     float64 `json:"total"`
-	Remaining float64 `json:"remaining"`
-	Unit      string  `json:"unit"`
+	return body, resp.StatusCode, err
 }
 
 func parseZAIResponse(body []byte) ([]store.UsageWindow, error) {
-	var resp zaiResponse
-	if err := json.Unmarshal(body, &resp); err != nil {
+	root, err := decodeJSON(body)
+	if err != nil {
 		return nil, fmt.Errorf("unmarshal zai: %w", err)
 	}
-	if len(resp.Data) == 0 {
-		return nil, fmt.Errorf("empty data array")
+	entries, ok := findArrayByKey(root, "limits", 0)
+	if !ok {
+		entries, ok = findZAIQuotaArray(root, 0)
 	}
-	windows := make([]store.UsageWindow, 0, len(resp.Data))
-	for _, q := range resp.Data {
-		unit := q.Unit
-		if unit == "" {
-			unit = store.UnitCredits
+	if !ok || len(entries) == 0 {
+		return nil, fmt.Errorf("no quota limits")
+	}
+	windows := make([]store.UsageWindow, 0, len(entries))
+	for _, raw := range entries {
+		entry, objectErr := mustObject(raw)
+		if objectErr != nil {
+			continue
 		}
-		var usedPct float64
-		if q.Total > 0 {
-			usedPct = (q.Used / q.Total) * 100
+		if window, mapped := mapZAIWindow(entry); mapped {
+			windows = append(windows, window)
 		}
-		windows = append(windows, store.UsageWindow{
-			ID:          "zai_" + strings.ToLower(q.Name),
-			Label:       q.Name,
-			UsedPercent: usedPct,
-			Used:        q.Used,
-			Limit:       q.Total,
-			Remaining:   q.Remaining,
-			Unit:        unit,
-		})
+	}
+	if len(windows) == 0 {
+		return nil, fmt.Errorf("no supported quota limits")
 	}
 	return windows, nil
+}
+
+func findZAIQuotaArray(value any, depth int) ([]any, bool) {
+	if depth > 8 {
+		return nil, false
+	}
+	switch typed := value.(type) {
+	case []any:
+		for _, item := range typed {
+			if entry, ok := item.(map[string]any); ok && isZAILimitEntry(entry) {
+				return typed, true
+			}
+		}
+		for _, child := range typed {
+			if result, ok := findZAIQuotaArray(child, depth+1); ok {
+				return result, true
+			}
+		}
+	case map[string]any:
+		for _, child := range typed {
+			if result, ok := findZAIQuotaArray(child, depth+1); ok {
+				return result, true
+			}
+		}
+	}
+	return nil, false
+}
+
+func isZAILimitEntry(entry map[string]any) bool {
+	limitType, ok := lookupString(entry, "type")
+	if !ok {
+		return false
+	}
+	return strings.EqualFold(limitType, "TOKENS_LIMIT") || strings.EqualFold(limitType, "TIME_LIMIT")
+}
+
+func mapZAIWindow(entry map[string]any) (store.UsageWindow, bool) {
+	limitType, ok := lookupString(entry, "type")
+	if !ok {
+		return store.UsageWindow{}, false
+	}
+	window := store.UsageWindow{
+		ID: identifier("zai", limitType), UsedPercent: optionalNumber(entry, "percentage"),
+		Used: optionalNumber(entry, "currentValue"), Limit: optionalNumber(entry, "usage"),
+		Remaining: optionalNumber(entry, "remaining"),
+		ResetsAt:  lookupTimestamp(entry, "nextResetTime", "resetsAt"),
+	}
+	switch strings.ToUpper(limitType) {
+	case "TOKENS_LIMIT":
+		window.Label, window.Unit, window.DurationMinutes = "Token usage (5 hour)", store.UnitTokens, 300
+	case "TIME_LIMIT":
+		window.Label, window.Unit = "MCP usage (monthly)", store.UnitRequests
+		if window.Used == nil {
+			window.Used = sumZAIUsageDetails(entry)
+		}
+	default:
+		return store.UsageWindow{}, false
+	}
+	completeWindowValues(&window)
+	return window, hasWindowMeasurement(window)
+}
+
+func sumZAIUsageDetails(entry map[string]any) *float64 {
+	value, ok := lookupValue(entry, "usageDetails")
+	if !ok {
+		return nil
+	}
+	details, ok := value.([]any)
+	if !ok || len(details) == 0 {
+		return nil
+	}
+	var total float64
+	measured := false
+	for _, raw := range details {
+		detail, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		if usage, ok := lookupNumber(detail, "usage", "currentValue"); ok {
+			total, measured = total+*usage, true
+		}
+	}
+	if !measured {
+		return nil
+	}
+	return numberPtr(total)
+}
+
+func optionalNumber(values map[string]any, names ...string) *float64 {
+	value, _ := lookupNumber(values, names...)
+	return value
+}
+
+func completeWindowValues(window *store.UsageWindow) {
+	if window.Limit == nil {
+		return
+	}
+	if window.Used == nil && window.Remaining != nil {
+		window.Used = numberPtr(nonNegative(*window.Limit - *window.Remaining))
+	}
+	if window.Remaining == nil && window.Used != nil {
+		window.Remaining = numberPtr(nonNegative(*window.Limit - *window.Used))
+	}
+}
+
+func hasWindowMeasurement(window store.UsageWindow) bool {
+	return window.UsedPercent != nil || window.Used != nil || window.Remaining != nil
+}
+
+func nonNegative(value float64) float64 {
+	if value < 0 {
+		return 0
+	}
+	return value
 }

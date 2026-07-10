@@ -1,6 +1,8 @@
 package clistats
 
 import (
+	"os"
+	"strings"
 	"testing"
 )
 
@@ -14,6 +16,8 @@ func TestStripANSI(t *testing.T) {
 		{"bold", "\x1b[1mhello\x1b[0m", "hello"},
 		{"color", "\x1b[32m1.5K\x1b[0m", "1.5K"},
 		{"nested", "\x1b[1;31m\x1b[4mtest\x1b[0m\x1b[0m", "test"},
+		{"cursor movement", "\x1b[1Ahello", "hello"},
+		{"OSC title", "\x1b]0;private title\x07hello", "hello"},
 		{"no escape", "no codes here", "no codes here"},
 	}
 	for _, tt := range tests {
@@ -111,5 +115,61 @@ func TestParseModelStatsTable(t *testing.T) {
 	}
 	if results[1].Requests != 500 {
 		t.Errorf("requests[1] = %d, want 500", results[1].Requests)
+	}
+}
+
+func TestParseModelStatsBlocksRealFixture(t *testing.T) {
+	raw, err := os.ReadFile("testdata/mimo_stats.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	results := ParseModelStatsTable(strings.Split(string(raw), "\n"))
+	if len(results) != 2 {
+		t.Fatalf("models = %d, want 2: %+v", len(results), results)
+	}
+	first := results[0]
+	if first.Model != "xiaomi/mimo-v2.5-pro" || first.Requests != 339 {
+		t.Fatalf("first model = %+v", first)
+	}
+	if first.InputTokens != 2_800_000 || first.OutputTokens != 132_600 {
+		t.Errorf("first token counts = %+v", first)
+	}
+	if first.CacheReadTokens != 33_400_000 || first.CacheWriteTokens != 0 {
+		t.Errorf("first cache counts = %+v", first)
+	}
+	if first.CostUSD != 1.4539 {
+		t.Errorf("first cost = %f, want 1.4539", first.CostUSD)
+	}
+	second := results[1]
+	if second.Model != "anthropic/claude-opus-4-8" || second.CacheWriteTokens != 1_500_000 {
+		t.Errorf("second model = %+v", second)
+	}
+}
+
+func TestParseModelStatsBlocksANSIAndMalformed(t *testing.T) {
+	lines := []string{
+		"\x1b[1;35m│                      MODEL USAGE                       │\x1b[0m",
+		"│  Messages                                          999 │", // orphan metric
+		"├────────────────────────────────────────────────────────┤",
+		"│ \x1b[36mopenrouter/example-model\x1b[0m                            │",
+		"│  Messages                                           12 │",
+		"│  Input Tokens                                      nope │",
+		"│  Output Tokens                                     1.2K │",
+		"│  Cache Read                                           - │",
+		"│  Cache Write                                         25 │",
+		"│  Cost                                            $0.125 │",
+		"\x1b[1A└────────────────────────────────────────────────────────┘",
+		"│                      TOOL USAGE                        │",
+	}
+	results := ParseModelStatsTable(lines)
+	if len(results) != 1 {
+		t.Fatalf("models = %d, want 1: %+v", len(results), results)
+	}
+	got := results[0]
+	if got.Model != "openrouter/example-model" || got.Requests != 12 {
+		t.Errorf("model = %+v", got)
+	}
+	if got.InputTokens != 0 || got.OutputTokens != 1200 || got.CacheWriteTokens != 25 {
+		t.Errorf("malformed numeric handling = %+v", got)
 	}
 }

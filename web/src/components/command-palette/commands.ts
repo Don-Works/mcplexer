@@ -65,6 +65,7 @@ const PAGES: CommandEntry[] = [
   { id: 'page-backups', label: 'Backups', to: '/backups', keywords: 'backup restore snapshot export settings', icon: createElement(Archive, { className: iconClass }) },
   { id: 'page-advanced', label: 'Advanced', to: '/advanced', keywords: 'credentials oauth providers descriptions config', icon: createElement(Sliders, { className: iconClass }) },
   { id: 'page-settings', label: 'Settings', to: '/settings', keywords: 'preferences config settings', icon: createElement(Settings, { className: iconClass }) },
+  { id: 'page-usage', label: 'AI usage', to: '/usage', keywords: 'usage subscription allowance provider tokens cost ai dashboard', icon: createElement(Gauge, { className: iconClass }) },
   { id: 'page-worker-cost', label: 'Worker cost', to: '/workers/cost', keywords: 'spend dollars budget mtd cost dashboard ai', icon: createElement(DollarSign, { className: iconClass }) },
   { id: 'page-model-ranks', label: 'Model ranks', to: '/delegations/models', keywords: 'models ranking delegation capacity quality review task kind mimo minimax grok', icon: createElement(Gauge, { className: iconClass }) },
   { id: 'page-model-leaderboard', label: 'Model leaderboard', to: '/workers/model-leaderboard', keywords: 'models ranking leaderboard delegation capacity quality mimo minimax grok', icon: createElement(Gauge, { className: iconClass }) },

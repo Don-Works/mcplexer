@@ -94,6 +94,7 @@ const workspaceNav: NavItem[] = [
 
 const monitorNav: NavItem[] = [
   { label: 'Dashboard', href: '/', icon: <LayoutDashboard className="h-4 w-4" />, hint: 'Live view of tool calls, sessions, errors' },
+  { label: 'AI usage', href: '/usage', icon: <Gauge className="h-4 w-4" />, hint: 'Subscription allowances and observed consumption across providers' },
   { label: 'Notifications', href: '/signals', icon: <Bell className="h-4 w-4" />, hint: 'Notifications and high-priority events from agents and peers' },
   { label: 'Audit', href: '/audit', icon: <FileText className="h-4 w-4" />, hint: 'Searchable history of every tool call routed through the gateway' },
 ]

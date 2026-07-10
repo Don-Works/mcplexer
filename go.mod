@@ -8,6 +8,7 @@ require (
 	github.com/Microsoft/go-winio v0.6.2
 	github.com/SherClockHolmes/webpush-go v1.4.0
 	github.com/adrg/frontmatter v0.2.0
+	github.com/creack/pty/v2 v2.0.1
 	github.com/dop251/goja v0.0.0-20260311135729-065cd970411c
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/getkin/kin-openapi v0.137.0

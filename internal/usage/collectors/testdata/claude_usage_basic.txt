@@ -1,0 +1,14 @@
+[Screen Reader Mode: on via flag]
+Claude Code v2.1.206
+warning: Safe mode: all customizations are disabled
+$you: /usage
+Settings  Status   Config   Usage   Stats
+Current session
+11% 11% used
+Resets 7:40pm (Europe/London)
+Current week (all models)
+8% 8% used
+Resets Jul 12 at 12pm (Europe/London)
+Current week (Fable)
+2% 2% used
+Resets Jul 12 at 12pm (Europe/London)

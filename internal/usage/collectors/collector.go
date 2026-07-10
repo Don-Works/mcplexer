@@ -6,18 +6,49 @@ package collectors
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 )
 
-// SecretReader retrieves a secret value by key. Returns empty string
-// when the secret is not configured (not an error).
+// SecretReader matches secrets.Manager without exposing secret values in
+// usage configuration. Scope and key are both required for a lookup.
 type SecretReader interface {
-	Get(ctx context.Context, key string) (string, error)
+	Get(ctx context.Context, scopeID, key string) ([]byte, error)
 }
 
 // httpClient is the interface collectors use. *http.Client satisfies it.
 type httpClient interface {
 	Do(req *http.Request) (*http.Response, error)
+}
+
+func readSecret(ctx context.Context, reader SecretReader, scopeID, key string) ([]byte, error) {
+	if reader == nil {
+		return nil, nil
+	}
+	if scopeID == "" || key == "" {
+		return nil, nil
+	}
+	return reader.Get(ctx, scopeID, key)
+}
+
+func requestClient(client httpClient) httpClient {
+	if client == nil {
+		return http.DefaultClient
+	}
+	return client
+}
+
+func numberPtr(value float64) *float64 { return &value }
+
+func requireSecret(ctx context.Context, reader SecretReader, scopeID, key string) (string, error) {
+	token, err := readSecret(ctx, reader, scopeID, key)
+	if err != nil {
+		return "", fmt.Errorf("secret read: %w", err)
+	}
+	if len(token) == 0 {
+		return "", fmt.Errorf("no API key configured")
+	}
+	return string(token), nil
 }
 
 // newBearerRequest builds an HTTP GET with Authorization: Bearer <token>.

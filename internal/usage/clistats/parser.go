@@ -1,7 +1,4 @@
-// Package clistats parses the output of AI CLI stat commands
-// (opencode stats --days N --models, mimo stats --days N --models).
-// Output contains ANSI escape codes, thousands separators, and
-// K/M/B suffixes that must be stripped before aggregation.
+// Package clistats parses output from AI CLI stat commands.
 package clistats
 
 import (
@@ -9,72 +6,60 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode"
 )
 
-// ANSI regex matches ANSI escape sequences.
-var ansiRe = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]`)
-
-// thousandsSep matches comma-separated numbers (e.g. "1,234,567").
-var thousandsSep = regexp.MustCompile(`,`)
+var (
+	ansiRe       = regexp.MustCompile(`\x1b(?:\][^\x07\x1b]*(?:\x07|\x1b\\)|\[[0-?]*[ -/]*[@-~]|[@-_])`)
+	thousandsSep = regexp.MustCompile(`,`)
+)
 
 // ModelStats holds parsed per-model stats from CLI output.
 type ModelStats struct {
-	Model        string
-	Requests     int
-	InputTokens  int
-	OutputTokens int
-	CostUSD      float64
+	Model            string
+	Requests         int
+	InputTokens      int
+	OutputTokens     int
+	CacheReadTokens  int
+	CacheWriteTokens int
+	CostUSD          float64
 }
 
-// StripANSI removes ANSI escape codes from a string.
+// StripANSI removes CSI, OSC, and short ANSI escape sequences.
 func StripANSI(s string) string {
 	return ansiRe.ReplaceAllString(s, "")
 }
 
-// ParseNumericSuffix converts strings like "1.5K", "2M", "1,234" to
-// an integer. Handles K (thousands), M (millions), B (billions) suffixes
-// and comma-separated thousands.
+// ParseNumericSuffix converts values such as 1.5K, 2M, and 1,234 to an integer.
 func ParseNumericSuffix(s string) int {
-	s = strings.TrimSpace(s)
+	s = strings.TrimSpace(StripANSI(s))
 	if s == "" || s == "-" {
 		return 0
 	}
-
-	// Strip ANSI first.
-	s = StripANSI(s)
-
-	// Check for suffix.
 	multiplier := 1.0
 	upper := strings.ToUpper(s)
-	switch {
-	case strings.HasSuffix(upper, "B"):
-		multiplier = 1_000_000_000
-		s = strings.TrimSuffix(upper, "B")
-	case strings.HasSuffix(upper, "M"):
-		multiplier = 1_000_000
-		s = strings.TrimSuffix(upper, "M")
-	case strings.HasSuffix(upper, "K"):
-		multiplier = 1_000
-		s = strings.TrimSuffix(upper, "K")
+	for suffix, multiple := range map[string]float64{
+		"B": 1_000_000_000, "M": 1_000_000, "K": 1_000,
+	} {
+		if strings.HasSuffix(upper, suffix) {
+			multiplier = multiple
+			s = strings.TrimSpace(upper[:len(upper)-1])
+			break
+		}
 	}
-
-	// Remove commas.
 	s = thousandsSep.ReplaceAllString(s, "")
-	s = strings.TrimSpace(s)
-
-	f, err := strconv.ParseFloat(s, 64)
+	f, err := strconv.ParseFloat(strings.TrimSpace(s), 64)
 	if err != nil {
 		return 0
 	}
 	return int(math.Round(f * multiplier))
 }
 
-// ParseUSD converts a dollar string like "$1.23" or "1.23" to float64.
+// ParseUSD converts a dollar value to float64.
 func ParseUSD(s string) float64 {
-	s = strings.TrimSpace(s)
-	s = StripANSI(s)
-	s = strings.TrimPrefix(s, "$")
-	s = strings.TrimSpace(s)
+	s = strings.TrimSpace(StripANSI(s))
+	s = strings.TrimSpace(strings.TrimPrefix(s, "$"))
+	s = thousandsSep.ReplaceAllString(s, "")
 	if s == "" || s == "-" {
 		return 0
 	}
@@ -82,41 +67,151 @@ func ParseUSD(s string) float64 {
 	return f
 }
 
-// ParseModelStatsTable parses a table of model stats from CLI output.
-// Each row has: Model | Requests | Input Tokens | Output Tokens | Cost
-// Returns the parsed stats. Lines are ANSI-stripped before parsing.
+// ParseModelStatsTable parses box-drawing model blocks and legacy pipe rows.
 func ParseModelStatsTable(lines []string) []ModelStats {
+	if hasModelUsageSection(lines) {
+		return parseModelBlocks(lines, false)
+	}
+	if stats := parseLegacyRows(lines); len(stats) > 0 {
+		return stats
+	}
+	return parseModelBlocks(lines, true)
+}
+
+func hasModelUsageSection(lines []string) bool {
+	for _, line := range lines {
+		if boxContent(line) == "MODEL USAGE" {
+			return true
+		}
+	}
+	return false
+}
+
+func parseModelBlocks(lines []string, inside bool) []ModelStats {
+	var results []ModelStats
+	var current *ModelStats
+	fields := 0
+	flush := func() {
+		if current != nil && fields > 0 {
+			results = append(results, *current)
+		}
+		current, fields = nil, 0
+	}
+	for _, line := range lines {
+		content := boxContent(line)
+		if content == "MODEL USAGE" {
+			inside = true
+			continue
+		}
+		if !inside || content == "" {
+			continue
+		}
+		if isBorder(line) {
+			flush()
+			continue
+		}
+		if isOtherSection(content) {
+			flush()
+			break
+		}
+		label, value, ok := splitMetric(content)
+		if ok {
+			if current != nil {
+				applyMetric(current, label, value)
+				fields++
+			}
+			continue
+		}
+		flush()
+		if validModelName(content) {
+			current = &ModelStats{Model: content}
+		}
+	}
+	flush()
+	return results
+}
+
+func splitMetric(content string) (string, string, bool) {
+	labels := []string{"Input Tokens", "Output Tokens", "Cache Read", "Cache Write", "Messages", "Cost"}
+	for _, label := range labels {
+		if !strings.HasPrefix(content, label) {
+			continue
+		}
+		value := strings.TrimSpace(strings.TrimPrefix(content, label))
+		return label, value, value != ""
+	}
+	return "", "", false
+}
+
+func applyMetric(stat *ModelStats, label, value string) {
+	switch label {
+	case "Messages":
+		stat.Requests = ParseNumericSuffix(value)
+	case "Input Tokens":
+		stat.InputTokens = ParseNumericSuffix(value)
+	case "Output Tokens":
+		stat.OutputTokens = ParseNumericSuffix(value)
+	case "Cache Read":
+		stat.CacheReadTokens = ParseNumericSuffix(value)
+	case "Cache Write":
+		stat.CacheWriteTokens = ParseNumericSuffix(value)
+	case "Cost":
+		stat.CostUSD = ParseUSD(value)
+	}
+}
+
+func boxContent(line string) string {
+	s := strings.TrimSpace(StripANSI(strings.TrimSuffix(line, "\r")))
+	s = strings.TrimSpace(strings.TrimPrefix(s, "│"))
+	s = strings.TrimSpace(strings.TrimSuffix(s, "│"))
+	return s
+}
+
+func isBorder(line string) bool {
+	s := strings.TrimSpace(StripANSI(line))
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if !strings.ContainsRune("┌┐└┘├┤┬┴┼─═╭╮╰╯", r) {
+			return false
+		}
+	}
+	return true
+}
+
+func isOtherSection(content string) bool {
+	return content == "TOOL USAGE" || content == "OVERVIEW" || content == "COST & TOKENS"
+}
+
+func validModelName(content string) bool {
+	if content == "" || strings.EqualFold(content, "model") || strings.EqualFold(content, "total") {
+		return false
+	}
+	for _, r := range content {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			return true
+		}
+	}
+	return false
+}
+
+func parseLegacyRows(lines []string) []ModelStats {
 	var results []ModelStats
 	for _, line := range lines {
-		stripped := StripANSI(line)
-		cols := splitTableColumns(stripped)
+		cols := strings.Split(StripANSI(line), "|")
 		if len(cols) < 5 {
 			continue
 		}
 		model := strings.TrimSpace(cols[0])
-		if model == "" || model == "Model" || model == "TOTAL" {
-			continue
-		}
-		if strings.HasPrefix(model, "---") || strings.HasPrefix(model, "===") {
+		if !validModelName(model) || model == "Model" || model == "TOTAL" {
 			continue
 		}
 		results = append(results, ModelStats{
-			Model:        model,
-			Requests:     ParseNumericSuffix(cols[1]),
-			InputTokens:  ParseNumericSuffix(cols[2]),
-			OutputTokens: ParseNumericSuffix(cols[3]),
-			CostUSD:      ParseUSD(cols[4]),
+			Model: model, Requests: ParseNumericSuffix(cols[1]),
+			InputTokens: ParseNumericSuffix(cols[2]), OutputTokens: ParseNumericSuffix(cols[3]),
+			CostUSD: ParseUSD(cols[4]),
 		})
 	}
 	return results
-}
-
-// splitTableColumns splits a table row by | separator.
-func splitTableColumns(line string) []string {
-	parts := strings.Split(line, "|")
-	var out []string
-	for _, p := range parts {
-		out = append(out, strings.TrimSpace(p))
-	}
-	return out
 }

@@ -1,246 +1,204 @@
-// Package usage — service.go implements the Snapshot method that
-// aggregates usage data from all sources and returns the JSON contract.
-// Five-minute slow-probe cache; force bypasses. Never includes secrets
-// in errors/logs/cache keys.
 package usage
 
 import (
 	"context"
-	"fmt"
+	"sync"
 	"time"
 
 	"github.com/don-works/mcplexer/internal/store"
+	"github.com/don-works/mcplexer/internal/usage/clistats"
 )
 
-const slowProbeCacheDuration = 5 * time.Minute
+const (
+	slowProbeCacheDuration = 5 * time.Minute
+	maxWindowDays          = 365
+)
 
-// WorkerRunQuerier abstracts the store methods the service needs for
-// querying worker_runs. This interface lets tests inject a mock.
-type WorkerRunQuerier interface {
-	ListWorkerRuns(ctx context.Context, workerID string, limit int) ([]*store.WorkerRun, error)
-	ListWorkers(ctx context.Context, workspaceID string, enabledOnly bool) ([]*store.Worker, error)
-}
-
-// ProviderCollector is the interface for HTTP-based provider collectors.
 type ProviderCollector interface {
-	Fetch(ctx context.Context, cfg store.SourceConfig) (store.CollectorResult, error)
+	Fetch(context.Context, store.SourceConfig) (store.CollectorResult, error)
 }
 
-// ORCollector is the interface for the OpenRouter collector.
 type ORCollector interface {
-	Fetch(ctx context.Context, cfg store.SourceConfig) (store.ORCollectorResult, error)
+	Fetch(context.Context, store.SourceConfig) (store.ORCollectorResult, error)
 }
 
-// Service orchestrates usage data collection.
+// LocalStatsCollector reads an installed harness's local usage database.
+// Implementations must use direct argv execution, never a shell.
+type LocalStatsCollector interface {
+	Stats(context.Context, int) ([]clistats.ModelStats, error)
+}
+
 type Service struct {
 	Store       store.UsageStore
-	WorkerRuns  WorkerRunQuerier
-	Collectors  map[string]ProviderCollector // keyed by provider
+	Collectors  map[string]ProviderCollector
 	ORCollector ORCollector
-	WindowDays  int
+	LocalStats  map[string]LocalStatsCollector // opencode, mimo
+
+	mu              sync.Mutex
+	providerCache   map[string]providerCacheEntry
+	orCache         map[string]openRouterCacheEntry
+	localCache      map[string]localCacheEntry
+	providerFlights map[string]*providerFlight
+	orFlights       map[string]*openRouterFlight
+	localFlights    map[string]*localStatsFlight
+	now             func() time.Time
 }
 
-// Snapshot returns the full usage snapshot. When force is false and a
-// cached snapshot is less than 5 minutes old, the cached version is
-// returned. Otherwise the service refreshes from all sources.
 func (s *Service) Snapshot(
-	ctx context.Context, configs []store.SourceConfig, days int, force bool,
+	ctx context.Context,
+	configs []store.SourceConfig,
+	days int,
+	force bool,
 ) (store.UsageSnapshot, error) {
-	if days <= 0 {
-		days = 30
+	days = normalizeDays(days)
+	now := s.clock()().UTC()
+	runs, ledgerErr := s.loadLedger(ctx, days, now)
+	local := s.loadLocalStats(ctx, days, force)
+	byProvider := normalizeConfigs(configs)
+
+	providers := make([]store.ProviderSnapshot, len(store.AllProviders))
+	var openrouter store.OpenRouterSnapshot
+	var wg sync.WaitGroup
+	for index, provider := range store.AllProviders {
+		wg.Add(1)
+		go func(i int, name string) {
+			defer wg.Done()
+			providers[i] = s.providerSnapshot(
+				ctx, name, byProvider[name], runs, local, ledgerErr, force, now,
+			)
+		}(index, provider)
 	}
-	if !force {
-		cached, ok := s.tryCache(ctx, days)
-		if ok {
-			return cached, nil
-		}
-	}
-	providers, err := s.collectProviders(ctx, configs, days)
-	if err != nil {
-		return store.UsageSnapshot{}, fmt.Errorf("collect providers: %w", err)
-	}
-	or := s.collectOpenRouter(ctx, configs)
-	providers = ensureAllProviders(providers, configs)
-	snapshot := store.UsageSnapshot{
-		GeneratedAt: time.Now().UTC(),
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		openrouter = s.openRouterSnapshot(
+			ctx, byProvider[store.ProviderOpenRouter], runs, local, force, now,
+		)
+	}()
+	wg.Wait()
+	return store.UsageSnapshot{
+		GeneratedAt: now,
 		WindowDays:  days,
 		Providers:   providers,
-		OpenRouter:  or,
-	}
-	s.cacheSnapshot(ctx, snapshot)
-	return snapshot, nil
+		OpenRouter:  openrouter,
+	}, nil
 }
 
-func (s *Service) collectProviders(
-	ctx context.Context, configs []store.SourceConfig, days int,
-) ([]store.ProviderSnapshot, error) {
-	var result []store.ProviderSnapshot
+func (s *Service) loadLedger(
+	ctx context.Context,
+	days int,
+	now time.Time,
+) ([]store.UsageLedgerRun, error) {
+	if s.Store == nil {
+		return nil, nil
+	}
+	return s.Store.ListUsageLedgerRuns(ctx, windowSince(now, days))
+}
+
+func normalizeDays(days int) int {
+	if days <= 0 {
+		return 30
+	}
+	if days > maxWindowDays {
+		return maxWindowDays
+	}
+	return days
+}
+
+func normalizeConfigs(configs []store.SourceConfig) map[string]store.SourceConfig {
+	out := make(map[string]store.SourceConfig, len(configs)+1)
 	for _, cfg := range configs {
 		if !cfg.Enabled {
 			continue
 		}
-		result = append(result, s.collectOneProvider(ctx, cfg, days))
+		if cfg.Label == "" {
+			cfg.Label = store.ProviderLabels[cfg.Provider]
+		}
+		cfg.Kind = inferSourceKind(cfg)
+		out[cfg.Provider] = cfg
 	}
-	return result, nil
+	applyDefaultSourceConfigs(out)
+	return out
 }
 
-func (s *Service) collectOneProvider(
-	ctx context.Context, cfg store.SourceConfig, days int,
-) store.ProviderSnapshot {
-	switch cfg.Kind {
-	case store.SourceKindAuto:
-		return s.collectFromLedger(ctx, cfg, days)
-	case store.SourceKindAPI:
-		return s.collectFromAPI(ctx, cfg)
-	case store.SourceKindManual:
-		return store.ProviderSnapshot{
-			Provider: cfg.Provider, Label: cfg.Label,
-			Status: store.StatusPartial, Source: "manual",
-			Detail: "manual source — awaiting CLI stats or config",
-		}
-	default:
-		return store.ProviderSnapshot{
-			Provider: cfg.Provider, Label: cfg.Label,
-			Status: store.StatusUnconfigured,
-		}
+func applyDefaultSourceConfigs(out map[string]store.SourceConfig) {
+	defaults := []store.SourceConfig{
+		{
+			Provider: store.ProviderClaude,
+			Kind:     store.SourceKindCLI,
+			Label:    store.ProviderLabels[store.ProviderClaude],
+			Enabled:  true,
+		},
+		{
+			Provider: store.ProviderCodex,
+			Kind:     store.SourceKindCLI,
+			Label:    store.ProviderLabels[store.ProviderCodex],
+			Enabled:  true,
+		},
+		{
+			Provider: store.ProviderGrok,
+			Kind:     store.SourceKindCLI,
+			Label:    store.ProviderLabels[store.ProviderGrok],
+			Enabled:  true,
+		},
+		localAPIConfig(store.ProviderMiniMax, store.LocalAuthKeyMiniMax),
+		localAPIConfig(store.ProviderZAI, store.LocalAuthKeyZAI),
+		{
+			Provider:    store.ProviderMiMo,
+			Kind:        store.SourceKindCLI,
+			Label:       store.ProviderLabels[store.ProviderMiMo],
+			AuthScopeID: store.LocalAuthScopeMiMo,
+			SecretKey:   store.LocalAuthKeyMiMoXiaomi,
+			Enabled:     true,
+		},
+		{
+			Provider:    store.ProviderOpenRouter,
+			Kind:        store.SourceKindAPI,
+			Label:       "OpenRouter",
+			AuthScopeID: store.LocalAuthScopeOpenCode,
+			SecretKey:   store.LocalAuthKeyOpenRouter,
+			Enabled:     true,
+		},
 	}
-}
-
-func (s *Service) collectFromLedger(
-	ctx context.Context, cfg store.SourceConfig, days int,
-) store.ProviderSnapshot {
-	snap := store.ProviderSnapshot{
-		Provider: cfg.Provider, Label: cfg.Label, Plan: cfg.Plan,
-		Source: "auto", SourceLabel: cfg.Label, Windows: []store.UsageWindow{},
-	}
-	if s.WorkerRuns == nil {
-		snap.Status = store.StatusUnavailable
-		snap.Error = "worker run store not available"
-		return snap
-	}
-	workers, err := s.WorkerRuns.ListWorkers(ctx, "", false)
-	if err != nil {
-		snap.Status = store.StatusError
-		snap.Error = fmt.Sprintf("list workers: %v", err)
-		return snap
-	}
-	var allRuns []LedgerRun
-	for _, w := range workers {
-		runs, err := s.WorkerRuns.ListWorkerRuns(ctx, w.ID, 0)
-		if err != nil {
+	for _, cfg := range defaults {
+		if _, ok := out[cfg.Provider]; ok {
 			continue
 		}
-		for _, r := range runs {
-			allRuns = append(allRuns, LedgerRun{
-				ModelProvider: r.ModelProvider, ModelID: r.ModelID,
-				BillingModel: r.BillingModel, SubscriptionBucket: r.SubscriptionBucket,
-				RealCostUSD: r.RealCostUSD, InputTokens: r.InputTokens,
-				OutputTokens: r.OutputTokens, CostUSD: int(r.CostUSD), Status: r.Status,
-			})
-		}
+		out[cfg.Provider] = cfg
 	}
-	agg := AggregateLedger(allRuns, cfg.Provider)
-	snap.Observed = store.ObservedUsage{
-		Requests: agg.Requests, InputTokens: agg.InputTokens,
-		OutputTokens: agg.OutputTokens, CostUSD: agg.CostUSD,
-		AccountingMissingRuns: agg.AccountingMissingRuns,
-	}
-	snap.Status = store.StatusOK
-	now := time.Now().UTC()
-	snap.UpdatedAt = &now
-	return snap
 }
 
-func (s *Service) collectFromAPI(
-	ctx context.Context, cfg store.SourceConfig,
-) store.ProviderSnapshot {
-	collector, ok := s.Collectors[cfg.Provider]
-	if !ok {
-		return store.ProviderSnapshot{
-			Provider: cfg.Provider, Label: cfg.Label,
-			Status: store.StatusUnavailable, Error: "no collector registered",
-		}
+func localAPIConfig(provider, secretKey string) store.SourceConfig {
+	return store.SourceConfig{
+		Provider:    provider,
+		Kind:        store.SourceKindAPI,
+		Label:       store.ProviderLabels[provider],
+		AuthScopeID: store.LocalAuthScopeOpenCode,
+		SecretKey:   secretKey,
+		Enabled:     true,
 	}
-	result, err := collector.Fetch(ctx, cfg)
-	if err != nil {
-		return store.ProviderSnapshot{
-			Provider: cfg.Provider, Label: cfg.Label,
-			Status: store.StatusError, Error: fmt.Sprintf("collector: %v", err),
-		}
-	}
-	return result.Snapshot
 }
 
-func (s *Service) collectOpenRouter(
-	ctx context.Context, configs []store.SourceConfig,
-) store.OpenRouterSnapshot {
-	if s.ORCollector == nil {
-		return store.OpenRouterSnapshot{Status: store.StatusUnconfigured}
+func inferSourceKind(cfg store.SourceConfig) string {
+	if cfg.Kind != "" {
+		return cfg.Kind
 	}
-	var cfg store.SourceConfig
-	found := false
-	for _, c := range configs {
-		if c.Provider == store.ProviderOpenRouter {
-			cfg, found = c, true
-			break
-		}
+	if cfg.Limit > 0 && cfg.AuthScopeID == "" {
+		return store.SourceKindManual
 	}
-	if !found || !cfg.Enabled {
-		return store.OpenRouterSnapshot{Status: store.StatusUnconfigured}
+	if cfg.AuthScopeID != "" {
+		return store.SourceKindAPI
 	}
-	result, err := s.ORCollector.Fetch(ctx, cfg)
-	if err != nil {
-		return store.OpenRouterSnapshot{Status: store.StatusError, Error: fmt.Sprintf("openrouter: %v", err)}
+	switch cfg.Provider {
+	case store.ProviderClaude, store.ProviderCodex, store.ProviderGrok, store.ProviderMiMo:
+		return store.SourceKindCLI
 	}
-	snapshot := result.Snapshot
-	s.mergeORFromLedger(ctx, &snapshot)
-	now := time.Now().UTC()
-	snapshot.UpdatedAt = &now
-	return snapshot
+	return store.SourceKindAuto
 }
 
-func (s *Service) mergeORFromLedger(ctx context.Context, snapshot *store.OpenRouterSnapshot) {
-	if s.WorkerRuns == nil {
-		return
+func (s *Service) clock() func() time.Time {
+	if s.now != nil {
+		return s.now
 	}
-	workers, err := s.WorkerRuns.ListWorkers(ctx, "", false)
-	if err != nil {
-		return
-	}
-	var allRuns []LedgerRun
-	for _, w := range workers {
-		runs, _ := s.WorkerRuns.ListWorkerRuns(ctx, w.ID, 0)
-		for _, r := range runs {
-			allRuns = append(allRuns, LedgerRun{
-				ModelProvider: r.ModelProvider, ModelID: r.ModelID,
-				InputTokens: r.InputTokens, OutputTokens: r.OutputTokens,
-				RealCostUSD: r.RealCostUSD, Status: r.Status,
-			})
-		}
-	}
-	snapshot.ByHarness = AggregateOpenRouterByHarness(allRuns)
-}
-
-func ensureAllProviders(
-	providers []store.ProviderSnapshot, configs []store.SourceConfig,
-) []store.ProviderSnapshot {
-	existing := make(map[string]bool, len(providers))
-	for _, p := range providers {
-		existing[p.Provider] = true
-	}
-	configMap := make(map[string]store.SourceConfig, len(configs))
-	for _, c := range configs {
-		configMap[c.Provider] = c
-	}
-	for _, name := range store.AllProviders {
-		if existing[name] {
-			continue
-		}
-		cfg := configMap[name]
-		providers = append(providers, store.ProviderSnapshot{
-			Provider: name, Label: cfg.Label,
-			Status: store.StatusUnconfigured, Source: "none",
-		})
-	}
-	return providers
+	return time.Now
 }

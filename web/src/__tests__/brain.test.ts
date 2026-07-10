@@ -38,7 +38,7 @@ describe('brain api client', () => {
 
     const got = await getBrainStatus()
 
-    expect(request).toHaveBeenCalledWith('/brain/status')
+    expect(request).toHaveBeenCalledWith('/brain/status', undefined)
     expect(got).toEqual(payload)
   })
 

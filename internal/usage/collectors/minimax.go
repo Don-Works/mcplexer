@@ -2,10 +2,11 @@ package collectors
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/don-works/mcplexer/internal/store"
@@ -13,33 +14,21 @@ import (
 
 const miniMaxDefaultURL = "https://www.minimax.io/v1/token_plan/remains"
 
-// MiniMaxCollector fetches token plan balance from MiniMax.
+// MiniMaxCollector fetches Token Plan quota windows from MiniMax.
 type MiniMaxCollector struct {
 	Client httpClient
 	Secret SecretReader
 }
 
-// Fetch calls the MiniMax token_plan/remains endpoint.
 func (c *MiniMaxCollector) Fetch(
 	ctx context.Context, cfg store.SourceConfig,
 ) (store.CollectorResult, error) {
 	start := time.Now()
-	token, err := c.Secret.Get(ctx, cfg.SecretKey)
+	token, err := requireSecret(ctx, c.Secret, cfg.AuthScopeID, cfg.SecretKey)
 	if err != nil {
-		return collectorError(store.ProviderMiniMax, cfg, store.StatusUnconfigured,
-			fmt.Sprintf("secret read: %v", err), start), nil
+		return collectorError(store.ProviderMiniMax, cfg, store.StatusUnconfigured, err.Error(), start), nil
 	}
-	if token == "" {
-		return collectorError(store.ProviderMiniMax, cfg, store.StatusUnconfigured,
-			"no API key configured", start), nil
-	}
-
-	url := miniMaxDefaultURL
-	if cfg.BaseURL != "" {
-		url = cfg.BaseURL + "/v1/token_plan/remains"
-	}
-
-	body, status, err := c.doFetch(ctx, url, token)
+	body, status, err := c.doFetch(ctx, miniMaxURL(cfg.BaseURL), token)
 	if err != nil {
 		return collectorError(store.ProviderMiniMax, cfg, store.StatusError,
 			fmt.Sprintf("request failed: %v", err), start), nil
@@ -48,87 +37,204 @@ func (c *MiniMaxCollector) Fetch(
 		return collectorError(store.ProviderMiniMax, cfg, store.StatusError,
 			fmt.Sprintf("HTTP %d", status), start), nil
 	}
-
-	window, err := parseMiniMaxResponse(body)
+	windows, err := parseMiniMaxResponse(body)
 	if err != nil {
 		return collectorError(store.ProviderMiniMax, cfg, store.StatusError,
 			fmt.Sprintf("parse: %v", err), start), nil
 	}
-
-	snap := baseSnapshot(store.ProviderMiniMax, cfg, "api")
-	snap.Status = store.StatusOK
-	snap.UpdatedAt = timePtr(start)
-	snap.Windows = []store.UsageWindow{window}
-	return store.CollectorResult{Snapshot: snap, Duration: time.Since(start)}, nil
+	snapshot := baseSnapshot(store.ProviderMiniMax, cfg, "api")
+	snapshot.Status, snapshot.UpdatedAt, snapshot.Windows = store.StatusOK, timePtr(start), windows
+	return store.CollectorResult{Snapshot: snapshot, Duration: time.Since(start)}, nil
 }
 
-func (c *MiniMaxCollector) doFetch(
-	ctx context.Context, url, token string,
-) ([]byte, int, error) {
+func miniMaxURL(base string) string {
+	if base == "" {
+		return miniMaxDefaultURL
+	}
+	return strings.TrimRight(base, "/") + "/v1/token_plan/remains"
+}
+
+func (c *MiniMaxCollector) doFetch(ctx context.Context, url, token string) ([]byte, int, error) {
 	req, err := newBearerRequest(ctx, url, token)
 	if err != nil {
 		return nil, 0, err
 	}
-	resp, err := c.Client.Do(req)
+	resp, err := requestClient(c.Client).Do(req)
 	if err != nil {
 		return nil, 0, err
 	}
 	defer func() { _ = resp.Body.Close() }()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	return body, resp.StatusCode, err
+}
+
+func parseMiniMaxResponse(body []byte) ([]store.UsageWindow, error) {
+	root, err := decodeJSON(body)
 	if err != nil {
-		return nil, resp.StatusCode, err
+		return nil, fmt.Errorf("unmarshal minimax: %w", err)
 	}
-	return body, resp.StatusCode, nil
+	var windows []store.UsageWindow
+	collectMiniMaxWindows(root, &windows, 0)
+	windows = dedupeMiniMaxWindows(windows)
+	if len(windows) == 0 {
+		return nil, fmt.Errorf("response contains no measurable quota window")
+	}
+	return windows, nil
 }
 
-// miniMaxResponse is the expected response shape.
-type miniMaxResponse struct {
-	TotalTokensRemain int64 `json:"total_tokens_remain"`
-	TotalTokensGrant  int64 `json:"total_tokens_grant"`
+func collectMiniMaxWindows(value any, windows *[]store.UsageWindow, depth int) {
+	if depth > 8 {
+		return
+	}
+	switch typed := value.(type) {
+	case map[string]any:
+		if window, ok := mapMiniMaxWindow(typed, len(*windows)); ok {
+			*windows = append(*windows, window)
+		}
+		for _, child := range typed {
+			collectMiniMaxWindows(child, windows, depth+1)
+		}
+	case []any:
+		for _, child := range typed {
+			collectMiniMaxWindows(child, windows, depth+1)
+		}
+	}
 }
 
-func parseMiniMaxResponse(body []byte) (store.UsageWindow, error) {
-	var resp miniMaxResponse
-	if err := json.Unmarshal(body, &resp); err != nil {
-		return store.UsageWindow{}, fmt.Errorf("unmarshal minimax: %w", err)
+func mapMiniMaxWindow(values map[string]any, index int) (store.UsageWindow, bool) {
+	label := miniMaxLabel(values)
+	window := store.UsageWindow{
+		ID: identifier("minimax", label, fmt.Sprint(index)), Label: label,
+		Used: miniMaxNumber(values, "used", "usage", "currentValue", "usedTokens",
+			"currentIntervalUsageCount", "consumed"),
+		Limit: miniMaxNumber(values, "limit", "total", "grant", "totalTokensGrant",
+			"currentIntervalTotalCount", "promptLimit", "quota"),
+		Remaining: miniMaxNumber(values, "remaining", "remain", "totalTokensRemain",
+			"currentIntervalRemainingCount", "promptRemain", "available"),
+		UsedPercent: miniMaxPercentage(values), ResetsAt: lookupTimestamp(values,
+			"nextResetTime", "resetsAt", "resetAt", "endTime", "expireTime"),
 	}
-	used := float64(resp.TotalTokensGrant - resp.TotalTokensRemain)
-	if used < 0 {
-		used = 0
+	completeWindowValues(&window)
+	if window.Used != nil && window.Limit != nil && *window.Limit > 0 {
+		window.UsedPercent = numberPtr((*window.Used / *window.Limit) * 100)
 	}
-	limit := float64(resp.TotalTokensGrant)
-	var usedPct float64
-	if limit > 0 {
-		usedPct = (used / limit) * 100
-	}
-	return store.UsageWindow{
-		ID:          "minimax_tokens",
-		Label:       "Token Plan",
-		UsedPercent: usedPct,
-		Used:        used,
-		Limit:       limit,
-		Remaining:   float64(resp.TotalTokensRemain),
-		Unit:        store.UnitTokens,
-	}, nil
+	window.Unit = inferMiniMaxUnit(values, label, window)
+	window.DurationMinutes = inferMiniMaxDuration(values, label)
+	return window, hasWindowMeasurement(window)
 }
 
-// baseSnapshot builds a ProviderSnapshot with common fields.
+func miniMaxNumber(values map[string]any, names ...string) *float64 {
+	result, _ := lookupNumber(values, names...)
+	return result
+}
+
+func miniMaxPercentage(values map[string]any) *float64 {
+	if value, ok := lookupNumber(values, "usedPercent", "usedPercentage", "percentage"); ok {
+		return value
+	}
+	if value, ok := lookupNumber(values, "usageRatio"); ok {
+		if *value >= 0 && *value <= 1 {
+			return numberPtr(*value * 100)
+		}
+		return value
+	}
+	if value, ok := lookupNumber(values, "usagePercent", "remainingPercentage", "remainPercent"); ok {
+		return numberPtr(nonNegative(100 - *value))
+	}
+	return nil
+}
+
+func miniMaxLabel(values map[string]any) string {
+	if label, ok := lookupString(values, "label", "name", "windowName", "modelName", "type"); ok {
+		return label
+	}
+	return "Token Plan"
+}
+
+func inferMiniMaxUnit(values map[string]any, label string, window store.UsageWindow) string {
+	if unit, ok := lookupString(values, "unit"); ok {
+		normalized := normalizedKey(unit)
+		if strings.Contains(normalized, "token") {
+			return store.UnitTokens
+		}
+		if strings.Contains(normalized, "request") || strings.Contains(normalized, "call") {
+			return store.UnitRequests
+		}
+	}
+	keys := normalizedKey(label)
+	for key := range values {
+		keys += normalizedKey(key)
+	}
+	if strings.Contains(keys, "token") {
+		return store.UnitTokens
+	}
+	if strings.Contains(keys, "count") || strings.Contains(keys, "request") || strings.Contains(keys, "call") {
+		return store.UnitRequests
+	}
+	if window.Used == nil && window.Limit == nil && window.Remaining == nil {
+		return store.UnitPercent
+	}
+	return store.UnitRequests
+}
+
+func inferMiniMaxDuration(values map[string]any, label string) int {
+	if duration, ok := lookupNumber(values, "windowMinutes", "windowDurationMins"); ok {
+		return int(*duration)
+	}
+	if duration, ok := lookupNumber(values, "windowHours"); ok {
+		return int(*duration * 60)
+	}
+	start := lookupTimestamp(values, "startTime")
+	end := lookupTimestamp(values, "endTime")
+	if start != nil && end != nil && end.After(*start) {
+		return int(end.Sub(*start).Minutes())
+	}
+	normalized := normalizedKey(label)
+	switch {
+	case strings.Contains(normalized, "weekly") || strings.Contains(normalized, "week"):
+		return 7 * 24 * 60
+	case strings.Contains(normalized, "daily") || strings.Contains(normalized, "day"):
+		return 24 * 60
+	case strings.Contains(normalized, "5hour") || strings.Contains(normalized, "5h"):
+		return 5 * 60
+	default:
+		return 0
+	}
+}
+
+func dedupeMiniMaxWindows(windows []store.UsageWindow) []store.UsageWindow {
+	bySignature := make(map[string]store.UsageWindow, len(windows))
+	for _, window := range windows {
+		signature := fmt.Sprintf("%s|%s|%s|%s|%s", normalizedKey(window.Label),
+			pointerText(window.UsedPercent), pointerText(window.Used),
+			pointerText(window.Limit), pointerText(window.Remaining))
+		bySignature[signature] = window
+	}
+	keys := make([]string, 0, len(bySignature))
+	for key := range bySignature {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	result := make([]store.UsageWindow, 0, len(keys))
+	for index, key := range keys {
+		window := bySignature[key]
+		window.ID = identifier("minimax", window.Label, fmt.Sprint(index))
+		result = append(result, window)
+	}
+	return result
+}
+
 func baseSnapshot(provider string, cfg store.SourceConfig, source string) store.ProviderSnapshot {
 	return store.ProviderSnapshot{
-		Provider:    provider,
-		Label:       cfg.Label,
-		Plan:        cfg.Plan,
-		Source:      source,
-		SourceLabel: cfg.Label,
-		Windows:     []store.UsageWindow{},
+		Provider: provider, Label: cfg.Label, Plan: cfg.Plan, Source: source,
+		Windows: []store.UsageWindow{},
 	}
 }
 
 func collectorError(provider string, cfg store.SourceConfig, status, msg string, start time.Time) store.CollectorResult {
-	snap := baseSnapshot(provider, cfg, "api")
-	snap.Status = status
-	snap.Error = msg
-	return store.CollectorResult{Snapshot: snap, Duration: time.Since(start)}
+	snapshot := baseSnapshot(provider, cfg, "api")
+	snapshot.Status, snapshot.Error = status, msg
+	return store.CollectorResult{Snapshot: snapshot, Duration: time.Since(start)}
 }
 
-func timePtr(t time.Time) *time.Time { return &t }
+func timePtr(value time.Time) *time.Time { return &value }

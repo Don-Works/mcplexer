@@ -67,7 +67,7 @@ func TestAutoInstallLogWatch(t *testing.T) {
 	if !strings.Contains(w.PreExecuteScript, `abort("quiet")`) {
 		t.Fatalf("zero-spend gate missing: %q", w.PreExecuteScript)
 	}
-	if w.MaxToolCalls != 15 || w.MaxWallClockSeconds != 120 || w.MaxConsecutiveFailures != 5 {
+	if w.MaxToolCalls != 20 || w.MaxWallClockSeconds != 300 || w.MaxConsecutiveFailures != 5 {
 		t.Fatalf("caps not stamped: %+v", w)
 	}
 	if strings.Contains(w.ToolAllowlistJSON, "telegram") || strings.Contains(w.ToolAllowlistJSON, "openwa") {

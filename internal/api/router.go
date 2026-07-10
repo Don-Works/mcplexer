@@ -24,8 +24,8 @@ import (
 	"github.com/don-works/mcplexer/internal/googlechat"
 	"github.com/don-works/mcplexer/internal/hammerspoon"
 	"github.com/don-works/mcplexer/internal/install"
-	"github.com/don-works/mcplexer/internal/memory"
 	"github.com/don-works/mcplexer/internal/logwatch/distill"
+	"github.com/don-works/mcplexer/internal/memory"
 	"github.com/don-works/mcplexer/internal/mesh"
 	"github.com/don-works/mcplexer/internal/notify"
 	"github.com/don-works/mcplexer/internal/oauth"
@@ -63,6 +63,7 @@ type RouterDeps struct {
 	Store                 store.Store
 	ConfigSvc             *config.Service
 	SettingsSvc           *config.SettingsService // optional; enables settings API
+	UsageSvc              usageSnapshotter        // optional; enables AI usage dashboard
 	Engine                *routing.Engine
 	Manager               *downstream.Manager     // optional; enables tool discovery
 	FlowManager           *oauth.FlowManager      // optional; enables OAuth flows
@@ -585,6 +586,12 @@ func NewRouter(deps RouterDeps) http.Handler {
 		sh := &settingsHandler{svc: deps.SettingsSvc, meshMgr: deps.MeshManager}
 		mux.HandleFunc("GET /api/v1/settings", sh.get)
 		mux.HandleFunc("PUT /api/v1/settings", sh.update)
+	}
+
+	if deps.UsageSvc != nil {
+		uh := &usageHandler{svc: deps.UsageSvc, settings: deps.SettingsSvc}
+		mux.HandleFunc("GET /api/v1/usage", uh.get)
+		mux.HandleFunc("POST /api/v1/usage/refresh", uh.refresh)
 	}
 
 	// Token-compression savings dashboard — reads the durable ledger the

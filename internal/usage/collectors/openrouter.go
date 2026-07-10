@@ -27,12 +27,9 @@ func (c *OpenRouterCollector) Fetch(
 	ctx context.Context, cfg store.SourceConfig,
 ) (store.ORCollectorResult, error) {
 	start := time.Now()
-	token, err := c.Secret.Get(ctx, cfg.SecretKey)
+	token, err := requireSecret(ctx, c.Secret, cfg.AuthScopeID, cfg.SecretKey)
 	if err != nil {
-		return orError(store.StatusUnconfigured, fmt.Sprintf("secret read: %v", err), start), nil
-	}
-	if token == "" {
-		return orError(store.StatusUnconfigured, "no API key configured", start), nil
+		return orError(store.StatusUnconfigured, err.Error(), start), nil
 	}
 
 	url := openRouterKeyURL
@@ -56,8 +53,9 @@ func (c *OpenRouterCollector) Fetch(
 
 	return store.ORCollectorResult{
 		Snapshot: store.OpenRouterSnapshot{
-			Status:  store.StatusOK,
-			Credits: credits,
+			Status:    store.StatusOK,
+			Credits:   credits,
+			UpdatedAt: timePtr(start),
 		},
 		Duration: time.Since(start),
 	}, nil
@@ -70,7 +68,7 @@ func (c *OpenRouterCollector) doFetch(
 	if err != nil {
 		return nil, 0, err
 	}
-	resp, err := c.Client.Do(req)
+	resp, err := requestClient(c.Client).Do(req)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -87,11 +85,12 @@ type orKeyResponse struct {
 }
 
 type orKeyData struct {
-	Usage        float64 `json:"usage"`
-	Limit        float64 `json:"limit"`
-	UsageDaily   float64 `json:"usage_daily"`
-	UsageWeekly  float64 `json:"usage_weekly"`
-	UsageMonthly float64 `json:"usage_monthly"`
+	Usage          *float64 `json:"usage"`
+	Limit          *float64 `json:"limit"`
+	LimitRemaining *float64 `json:"limit_remaining"`
+	UsageDaily     *float64 `json:"usage_daily"`
+	UsageWeekly    *float64 `json:"usage_weekly"`
+	UsageMonthly   *float64 `json:"usage_monthly"`
 }
 
 func parseORCredits(body []byte) (store.ORCreditInfo, error) {
@@ -99,18 +98,27 @@ func parseORCredits(body []byte) (store.ORCreditInfo, error) {
 	if err := json.Unmarshal(body, &resp); err != nil {
 		return store.ORCreditInfo{}, fmt.Errorf("unmarshal openrouter response: %w", err)
 	}
-	remaining := resp.Data.Limit - resp.Data.Usage
-	if remaining < 0 {
-		remaining = 0
+	if !hasORCreditData(resp.Data) {
+		return store.ORCreditInfo{}, fmt.Errorf("openrouter response contains no key usage fields")
+	}
+	remaining := resp.Data.LimitRemaining
+	if remaining == nil && resp.Data.Limit != nil && resp.Data.Usage != nil {
+		value := *resp.Data.Limit - *resp.Data.Usage
+		if value < 0 {
+			value = 0
+		}
+		remaining = numberPtr(value)
 	}
 	return store.ORCreditInfo{
-		Usage:        resp.Data.Usage,
-		Limit:        resp.Data.Limit,
-		Remaining:    remaining,
-		UsageDaily:   resp.Data.UsageDaily,
-		UsageWeekly:  resp.Data.UsageWeekly,
+		Usage: resp.Data.Usage, Limit: resp.Data.Limit, Remaining: remaining,
+		UsageDaily: resp.Data.UsageDaily, UsageWeekly: resp.Data.UsageWeekly,
 		UsageMonthly: resp.Data.UsageMonthly,
 	}, nil
+}
+
+func hasORCreditData(data orKeyData) bool {
+	return data.Usage != nil || data.Limit != nil || data.LimitRemaining != nil ||
+		data.UsageDaily != nil || data.UsageWeekly != nil || data.UsageMonthly != nil
 }
 
 func orError(status, msg string, start time.Time) store.ORCollectorResult {

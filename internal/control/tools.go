@@ -510,7 +510,11 @@ func allTools() []gateway.Tool {
 				"id": propStr("User id (user_id column)"),
 			}, []string{"id"}),
 		},
-	}, monitoringToolDefs()...))
+	}, supplementaryToolDefs()...))
+}
+
+func supplementaryToolDefs() []gateway.Tool {
+	return append(monitoringToolDefs(), usageToolDefs()...)
 }
 
 // adminTools is the set of tool names that require admin (read-write) access.
@@ -581,6 +585,10 @@ var adminTools = map[string]bool{
 	"brain_init":    true,
 	"brain_import":  true,
 	"brain_disable": true,
+	// Usage source mutators persist non-secret collector metadata. Reads and
+	// refreshes remain read-only, though every tool is still CWD-gated.
+	"configure_usage_source": true,
+	"remove_usage_source":    true,
 	// M0.7 — read-only MCP-parity tools are NOT in adminTools (they're
 	// classed alongside list_workers / status — visible to read-only
 	// admin sessions). They remain CWD-gated like every mcplexer__*.

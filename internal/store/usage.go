@@ -2,8 +2,8 @@
 // subscription usage dashboard (task 01KX685FTG7CJ7X591KNSYGPSD).
 //
 // SourceConfig defines one provider's data source. UsageSnapshot is the
-// serialised JSON contract returned by /api/v1/usage. The store persists
-// per-provider snapshots so the service can cache slow-probe results.
+// serialised JSON contract returned by /api/v1/usage. Slow external probes
+// are cached in memory by the usage service.
 package store
 
 import (
@@ -15,8 +15,39 @@ import (
 const (
 	SourceKindAuto   = "auto"   // aggregate from worker_runs
 	SourceKindAPI    = "api"    // HTTP API call
-	SourceKindManual = "manual" // CLI stats or manual config
+	SourceKindCLI    = "cli"    // local first-party CLI statistics
+	SourceKindManual = "manual" // operator-supplied allowance
 )
+
+// Local auth scope sentinels resolve at runtime from installed CLI auth files.
+// They are never persisted and are not valid encrypted auth-scope IDs.
+const (
+	LocalAuthScopeOpenCode = "local:opencode"
+	LocalAuthScopeMiMo     = "local:mimo"
+)
+
+// LocalAuthKeys are the only secret_key values accepted with local scopes.
+const (
+	LocalAuthKeyMiniMax    = "minimax"
+	LocalAuthKeyZAI        = "zai-coding-plan"
+	LocalAuthKeyOpenRouter = "openrouter"
+	LocalAuthKeyMiMoXiaomi = "xiaomi"
+)
+
+// IsLocalAuthRef reports whether scopeID and secretKey identify a built-in
+// CLI credential lookup. User-supplied paths or keys are never accepted.
+func IsLocalAuthRef(scopeID, secretKey string) bool {
+	switch scopeID {
+	case LocalAuthScopeOpenCode:
+		switch secretKey {
+		case LocalAuthKeyMiniMax, LocalAuthKeyZAI, LocalAuthKeyOpenRouter:
+			return true
+		}
+	case LocalAuthScopeMiMo:
+		return secretKey == LocalAuthKeyMiMoXiaomi
+	}
+	return false
+}
 
 // Provider keys in the JSON contract.
 const (
@@ -55,12 +86,21 @@ var AllProviders = []string{
 	ProviderZAI, ProviderGrok, ProviderMiMo,
 }
 
+// ProviderLabels are the stable display labels used when the operator has
+// not supplied a custom label.
+var ProviderLabels = map[string]string{
+	ProviderClaude: "Claude", ProviderCodex: "Codex",
+	ProviderMiniMax: "MiniMax", ProviderZAI: "Z.AI",
+	ProviderGrok: "Grok", ProviderMiMo: "MiMo",
+}
+
 // SourceConfig configures one provider's usage data source.
 type SourceConfig struct {
 	Provider      string  `json:"provider"`
-	Kind          string  `json:"kind"` // auto|api|manual
+	Kind          string  `json:"kind"` // auto|api|cli|manual
 	Label         string  `json:"label"`
 	Plan          string  `json:"plan,omitempty"`
+	Harness       string  `json:"harness,omitempty"`
 	AuthScopeID   string  `json:"auth_scope_id,omitempty"`
 	SecretKey     string  `json:"secret_key,omitempty"` // secret:// ref name
 	BaseURL       string  `json:"base_url,omitempty"`
@@ -71,12 +111,18 @@ type SourceConfig struct {
 	Enabled       bool    `json:"enabled"`
 }
 
+// ObservedCostKind values describe how observed cost_usd should be read.
+const (
+	ObservedCostEstimate = "estimate" // local CLI list-price estimate
+	ObservedCostMetered  = "metered"  // mcplexer worker-run accounting
+)
+
 // ProviderSnapshot is one provider's usage data in the JSON contract.
 type ProviderSnapshot struct {
 	Provider    string        `json:"provider"`
 	Label       string        `json:"label"`
 	Plan        string        `json:"plan,omitempty"`
-	Status      string        `json:"status"` // ok|partial|unconfigured|unavailable|error
+	Status      string        `json:"status"` // composite; see allowance/observed status
 	Source      string        `json:"source"`
 	SourceLabel string        `json:"source_label"`
 	Observed    ObservedUsage `json:"observed"`
@@ -85,6 +131,20 @@ type ProviderSnapshot struct {
 	Stale       bool          `json:"stale"`
 	Error       string        `json:"error,omitempty"`
 	Detail      string        `json:"detail,omitempty"`
+
+	// Allowance lineage — live or configured quota windows.
+	AllowanceStatus      string     `json:"allowance_status,omitempty"`
+	AllowanceSource      string     `json:"allowance_source,omitempty"`
+	AllowanceSourceLabel string     `json:"allowance_source_label,omitempty"`
+	AllowanceUpdatedAt   *time.Time `json:"allowance_updated_at,omitempty"`
+	AllowanceStale       bool       `json:"allowance_stale,omitempty"`
+	AllowanceError       string     `json:"allowance_error,omitempty"`
+
+	// Observed lineage — local accounting over window_days.
+	ObservedSource      string     `json:"observed_source,omitempty"`
+	ObservedSourceLabel string     `json:"observed_source_label,omitempty"`
+	ObservedUpdatedAt   *time.Time `json:"observed_updated_at,omitempty"`
+	ObservedCostKind    string     `json:"observed_cost_kind,omitempty"`
 }
 
 // ObservedUsage holds aggregated usage metrics.
@@ -102,10 +162,10 @@ type ObservedUsage struct {
 type UsageWindow struct {
 	ID              string     `json:"id"`
 	Label           string     `json:"label"`
-	UsedPercent     float64    `json:"used_percent,omitempty"`
-	Used            float64    `json:"used,omitempty"`
-	Limit           float64    `json:"limit,omitempty"`
-	Remaining       float64    `json:"remaining,omitempty"`
+	UsedPercent     *float64   `json:"used_percent,omitempty"`
+	Used            *float64   `json:"used,omitempty"`
+	Limit           *float64   `json:"limit,omitempty"`
+	Remaining       *float64   `json:"remaining,omitempty"`
 	Unit            string     `json:"unit"`
 	ResetsAt        *time.Time `json:"resets_at,omitempty"`
 	DurationMinutes int        `json:"duration_minutes,omitempty"`
@@ -113,12 +173,12 @@ type UsageWindow struct {
 
 // ORCreditInfo holds OpenRouter credit balance data.
 type ORCreditInfo struct {
-	Usage        float64 `json:"usage,omitempty"`
-	Limit        float64 `json:"limit,omitempty"`
-	Remaining    float64 `json:"remaining,omitempty"`
-	UsageDaily   float64 `json:"usage_daily,omitempty"`
-	UsageWeekly  float64 `json:"usage_weekly,omitempty"`
-	UsageMonthly float64 `json:"usage_monthly,omitempty"`
+	Usage        *float64 `json:"usage,omitempty"`
+	Limit        *float64 `json:"limit,omitempty"`
+	Remaining    *float64 `json:"remaining,omitempty"`
+	UsageDaily   *float64 `json:"usage_daily,omitempty"`
+	UsageWeekly  *float64 `json:"usage_weekly,omitempty"`
+	UsageMonthly *float64 `json:"usage_monthly,omitempty"`
 }
 
 // ORHarnessUsage is one harness's usage in the OpenRouter breakdown.
@@ -130,6 +190,7 @@ type ORHarnessUsage struct {
 	CacheReadTokens       int            `json:"cache_read_tokens"`
 	CacheWriteTokens      int            `json:"cache_write_tokens"`
 	CostUSD               float64        `json:"cost_usd"`
+	CostKind              string         `json:"cost_kind,omitempty"`
 	AccountingMissingRuns int            `json:"accounting_missing_runs"`
 	Models                []ORModelUsage `json:"models"`
 }
@@ -161,18 +222,20 @@ type UsageSnapshot struct {
 	OpenRouter  OpenRouterSnapshot `json:"openrouter"`
 }
 
-// CachedProviderSnapshot is the SQLite-persisted row for one provider.
-type CachedProviderSnapshot struct {
-	Provider  string    `json:"provider"`
-	Snapshot  string    `json:"snapshot"` // JSON-encoded ProviderSnapshot
-	UpdatedAt time.Time `json:"updated_at"`
-}
-
-// CachedOpenRouter is the SQLite-persisted OpenRouter snapshot.
-type CachedOpenRouter struct {
-	ID        int       `json:"id"`
-	Snapshot  string    `json:"snapshot"` // JSON-encoded OpenRouterSnapshot
-	UpdatedAt time.Time `json:"updated_at"`
+// UsageLedgerRun is the minimal worker_runs projection needed by the usage
+// dashboard. Keeping the time-window query in the store avoids loading every
+// worker and then silently truncating each worker's run history.
+type UsageLedgerRun struct {
+	StartedAt          time.Time
+	ModelProvider      string
+	ModelID            string
+	BillingModel       string
+	SubscriptionBucket string
+	RealCostUSD        float64
+	CostUSD            float64
+	InputTokens        int
+	OutputTokens       int
+	Status             string
 }
 
 // CollectorResult is what a provider collector returns.
@@ -187,23 +250,9 @@ type ORCollectorResult struct {
 	Duration time.Duration
 }
 
-// UsageStore persists cached usage snapshots.
+// UsageStore exposes the local accounting ledger used by the dashboard.
 type UsageStore interface {
-	// UpsertCachedProviderSnapshot inserts or replaces a provider
-	// snapshot. UpdatedAt is stamped by the caller.
-	UpsertCachedProviderSnapshot(ctx context.Context, s *CachedProviderSnapshot) error
-
-	// GetCachedProviderSnapshot returns one provider's cached snapshot.
-	// ErrNotFound when no row exists.
-	GetCachedProviderSnapshot(ctx context.Context, provider string) (*CachedProviderSnapshot, error)
-
-	// ListCachedProviderSnapshots returns every cached provider snapshot.
-	ListCachedProviderSnapshots(ctx context.Context) ([]CachedProviderSnapshot, error)
-
-	// UpsertCachedOpenRouter inserts or replaces the OpenRouter snapshot.
-	UpsertCachedOpenRouter(ctx context.Context, s *CachedOpenRouter) error
-
-	// GetCachedOpenRouter returns the cached OpenRouter snapshot.
-	// ErrNotFound when no row exists.
-	GetCachedOpenRouter(ctx context.Context) (*CachedOpenRouter, error)
+	// ListUsageLedgerRuns returns every worker run at or after since, ordered
+	// newest first. It is the authoritative observed-usage window.
+	ListUsageLedgerRuns(ctx context.Context, since time.Time) ([]UsageLedgerRun, error)
 }

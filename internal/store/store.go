@@ -48,7 +48,6 @@ type Store interface {
 	CodeIndexStore
 	CompressionStatsStore
 	MonitoringStore
-	UsageStore
 	Tx(ctx context.Context, fn func(Store) error) error
 	Ping(ctx context.Context) error
 	Close() error

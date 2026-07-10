@@ -13,11 +13,14 @@ interface UseApiReturn<T> extends UseApiState<T> {
 type ApiFetcher<T> = (signal: AbortSignal) => Promise<T>
 
 // Hard timeout for a single fetch — caps the "Loading…" spinner so a
-// hung request never silently strands the user. 15s is generous; even
-// the dashboard endpoint (the heaviest one) returns in ~50ms.
+// hung request never silently strands the user. Most reads use 15s; pages
+// that intentionally run bounded external probes can opt into longer.
 const FETCH_TIMEOUT_MS = 15_000
 
-export function useApi<T>(fetcher: ApiFetcher<T>): UseApiReturn<T> {
+export function useApi<T>(
+  fetcher: ApiFetcher<T>,
+  timeoutMs = FETCH_TIMEOUT_MS,
+): UseApiReturn<T> {
   const [state, setState] = useState<UseApiState<T>>({
     data: null,
     loading: true,
@@ -49,11 +52,11 @@ export function useApi<T>(fetcher: ApiFetcher<T>): UseApiReturn<T> {
         setState((prev) => ({
           data: prev.data,
           loading: false,
-          error: `Request timed out after ${FETCH_TIMEOUT_MS / 1000}s — try again`,
+          error: `Request timed out after ${timeoutMs / 1000}s — try again`,
         }))
         active = false
       }
-    }, FETCH_TIMEOUT_MS)
+    }, timeoutMs)
 
     fetcher(controller.signal)
       .then((data) => {
@@ -75,7 +78,7 @@ export function useApi<T>(fetcher: ApiFetcher<T>): UseApiReturn<T> {
       controller.abort()
       clearTimeout(timeoutId)
     }
-  }, [fetcher, trigger])
+  }, [fetcher, timeoutMs, trigger])
 
   return { ...state, refetch }
 }

@@ -1662,7 +1662,7 @@ function CompactDelegationRow({
           {expanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
         </button>
 
-        <Badge variant="outline" className={cn('shrink-0 text-[10px]', statusClass(delegation.status))}>
+        <Badge variant="outline" className={cn('shrink-0 text-[10px]', delegationStatusBadgeClass(delegation.status))}>
           {delegation.status}
         </Badge>
 
@@ -2718,12 +2718,14 @@ function workerTokenDelta(agg: DelegationContext['aggregate']) {
   return agg.worker_token_delta ?? agg.net_tokens_delta ?? 0
 }
 
-function statusClass(status: string) {
+// Exported for regression tests: needs_review is a pending workflow state, not a failure.
+export function delegationStatusBadgeClass(status: string) {
   if (status === 'success') return statusBadgeClass('success')
   if (status === 'running') return statusBadgeClass('running')
   if (status === 'partial') return statusBadgeClass('partial')
   if (status === 'interrupted') return statusBadgeClass('paused')
-  if (status === 'needs_review' || status === 'failure') return statusBadgeClass('failure')
+  if (status === 'needs_review') return statusBadgeClass('cancelled')
+  if (status === 'failure' || status === 'rejected') return statusBadgeClass('failure')
   return statusBadgeClass('paused')
 }
 

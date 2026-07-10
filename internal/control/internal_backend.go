@@ -11,6 +11,7 @@ import (
 	"github.com/don-works/mcplexer/internal/secrets"
 	"github.com/don-works/mcplexer/internal/skillregistry"
 	"github.com/don-works/mcplexer/internal/store"
+	"github.com/don-works/mcplexer/internal/usage"
 	workersadmin "github.com/don-works/mcplexer/internal/workers/admin"
 	"github.com/don-works/mcplexer/internal/workertemplates"
 )
@@ -34,6 +35,7 @@ type InternalBackend struct {
 	brainGit     *brain.Git                // optional; nil means brain_push/brain_status return a structured error
 	brainSecrets *brainSecretsConfig       // optional; nil means brain_migrate_secrets returns a structured error
 	brainMig     *brainMigrationConfig     // optional; nil means brain_init/import/verify/disable return a structured error
+	usageSvc     *usage.Service            // optional; nil means usage snapshot tools error gracefully
 
 	// routeInvalidator is called after any successful route/workspace/server
 	// mutation so the routing engine's rules cache picks up the change
@@ -117,6 +119,12 @@ func (b *InternalBackend) SetWorkerAdmin(s *workersadmin.Service) {
 	b.workerSvc = s
 }
 
+// SetUsageService wires the unified AI subscription dashboard into the
+// CWD-gated admin MCP surface.
+func (b *InternalBackend) SetUsageService(s *usage.Service) {
+	b.usageSvc = s
+}
+
 // SetWorkerTemplateRegistry wires the worker_templates registry so the
 // list_worker_templates admin tool can read directly from it. Optional —
 // when unset, the tool returns a structured error.
@@ -185,6 +193,9 @@ func (b *InternalBackend) Call(
 ) (json.RawMessage, error) {
 	if len(args) == 0 {
 		args = json.RawMessage("{}")
+	}
+	if usageSnapshotToolNames[toolName] {
+		return b.callUsageSnapshot(ctx, toolName, args), nil
 	}
 	// Worker admin tools need the *admin.Service that lives on the
 	// InternalBackend, so they short-circuit the (store, args) handler

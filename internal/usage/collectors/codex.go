@@ -1,220 +1,173 @@
 package collectors
 
 import (
-	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"os/exec"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/don-works/mcplexer/internal/store"
 )
 
-// CodexCollector gathers usage data from the Codex CLI via stdio JSON
-// lines. It initializes with clientInfo, sends account/usage/read, and
-// parses rate-limit + token-summary responses. Stdin is closed after
-// requests; the process is bounded by context timeout.
+const (
+	codexTimeout   = 15 * time.Second
+	codexOutputCap = 2 << 20
+)
+
+// CodexRunFunc is injectable so parser and protocol tests never launch a live
+// CLI. The default starts `codex app-server --stdio` under a timeout.
+type CodexRunFunc func(ctx context.Context, binary string, input []byte) ([]byte, error)
+
 type CodexCollector struct {
-	// CodexBinary is the path to the codex CLI binary. Empty = "codex".
 	CodexBinary string
+	Run         CodexRunFunc
 }
 
-// Fetch spawns a codex process, sends the init + usage request, and
-// parses the output. Returns partial status on parse/timeout errors.
 func (c *CodexCollector) Fetch(
 	ctx context.Context, cfg store.SourceConfig,
 ) (store.CollectorResult, error) {
 	start := time.Now()
-
-	bin := c.CodexBinary
-	if bin == "" {
-		bin = "codex"
+	input, err := codexRequests()
+	if err != nil {
+		return codexError(cfg, fmt.Sprintf("encode requests: %v", err), start), nil
 	}
-
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	bounded, cancel := context.WithTimeout(ctx, codexTimeout)
 	defer cancel()
+	output, runErr := c.runner()(bounded, c.binary(), input)
+	parsed := parseCodexOutput(output)
+	if runErr != nil {
+		parsed.errors = append(parsed.errors, cleanCodexError(runErr))
+	}
+	return codexResult(cfg, parsed, start), nil
+}
 
-	cmd := exec.CommandContext(ctx, bin)
+func (c *CodexCollector) binary() string {
+	if c.CodexBinary == "" {
+		return "codex"
+	}
+	return c.CodexBinary
+}
+
+func (c *CodexCollector) runner() CodexRunFunc {
+	if c.Run != nil {
+		return c.Run
+	}
+	return runCodexAppServer
+}
+
+func codexRequests() ([]byte, error) {
+	messages := []any{
+		map[string]any{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": map[string]any{
+			"clientInfo": map[string]string{"name": "mcplexer-usage", "version": "1.0.0"},
+		}},
+		map[string]any{"jsonrpc": "2.0", "id": 2, "method": "account/rateLimits/read", "params": nil},
+		map[string]any{"jsonrpc": "2.0", "id": 3, "method": "account/usage/read", "params": nil},
+	}
+	var input bytes.Buffer
+	for _, message := range messages {
+		encoded, err := json.Marshal(message)
+		if err != nil {
+			return nil, err
+		}
+		input.Write(encoded)
+		input.WriteByte('\n')
+	}
+	return input.Bytes(), nil
+}
+
+func runCodexAppServer(ctx context.Context, binary string, input []byte) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, binary, "app-server", "--stdio")
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
-		return codexError(cfg, fmt.Sprintf("stdin pipe: %v", err), start), nil
+		return nil, fmt.Errorf("codex app-server stdin: %w", err)
 	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return codexError(cfg, fmt.Sprintf("stdout pipe: %v", err), start), nil
+		return nil, fmt.Errorf("codex app-server stdout: %w", err)
 	}
-
+	output := newCappedBuffer(codexOutputCap)
+	stderr := newCappedBuffer(64 << 10)
+	cmd.Stderr = stderr
 	if err := cmd.Start(); err != nil {
-		return codexError(cfg, fmt.Sprintf("start: %v", err), start), nil
+		return nil, fmt.Errorf("codex app-server: %w", err)
 	}
-
-	// Send initialize request.
-	initMsg := map[string]any{
-		"jsonrpc": "2.0",
-		"id":      1,
-		"method":  "initialize",
-		"params": map[string]any{
-			"clientInfo": map[string]string{
-				"name":    "mcplexer-usage",
-				"version": "1.0.0",
-			},
-		},
-	}
-	if err := writeJSONLine(stdin, initMsg); err != nil {
-		return codexError(cfg, fmt.Sprintf("write init: %v", err), start), nil
-	}
-
-	// Send account/usage/read request.
-	usageMsg := map[string]any{
-		"jsonrpc": "2.0",
-		"id":      2,
-		"method":  "account/usage/read",
-	}
-	if err := writeJSONLine(stdin, usageMsg); err != nil {
-		return codexError(cfg, fmt.Sprintf("write usage: %v", err), start), nil
-	}
-
-	// Close stdin to signal we're done.
+	protocolErr := exchangeCodexProtocol(input, stdin, stdout, output)
 	_ = stdin.Close()
-
-	windows, err := readCodexWindows(bufio.NewScanner(stdout), 5*time.Second)
-	if err != nil {
-		_ = cmd.Process.Kill()
-		return codexError(cfg, fmt.Sprintf("read: %v", err), start), nil
+	waitErr := cmd.Wait()
+	if ctx.Err() != nil {
+		return output.Bytes(), fmt.Errorf("codex app-server timed out: %w", ctx.Err())
 	}
-	_ = cmd.Wait()
-
-	snap := baseSnapshot(store.ProviderCodex, cfg, "api")
-	snap.Status = store.StatusOK
-	snap.UpdatedAt = timePtr(start)
-	snap.Windows = windows
-	return store.CollectorResult{Snapshot: snap, Duration: time.Since(start)}, nil
+	if protocolErr != nil {
+		return output.Bytes(), fmt.Errorf("codex app-server protocol: %w", protocolErr)
+	}
+	if waitErr != nil {
+		return output.Bytes(), fmt.Errorf("codex app-server: %w", waitErr)
+	}
+	return output.Bytes(), nil
 }
 
-func writeJSONLine(w interface{ Write([]byte) (int, error) }, v any) error {
-	data, err := json.Marshal(v)
-	if err != nil {
-		return err
-	}
-	data = append(data, '\n')
-	_, err = w.Write(data)
-	return err
+type cappedBuffer struct {
+	mu     sync.RWMutex
+	buffer bytes.Buffer
+	limit  int
 }
 
-// readCodexWindows scans stdout for the usage response. Codex returns
-// rateLimits and account/usage/read results as JSON-RPC responses.
-func readCodexWindows(scanner *bufio.Scanner, timeout time.Duration) ([]store.UsageWindow, error) {
-	timer := time.NewTimer(timeout)
-	defer timer.Stop()
+func newCappedBuffer(limit int) *cappedBuffer { return &cappedBuffer{limit: limit} }
 
-	var windows []store.UsageWindow
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		for scanner.Scan() {
-			line := strings.TrimSpace(scanner.Text())
-			if line == "" {
-				continue
-			}
-			w := tryParseCodexUsageLine(line)
-			if w != nil {
-				windows = append(windows, w...)
-			}
-		}
-	}()
-
-	select {
-	case <-done:
-	case <-timer.C:
-		return windows, fmt.Errorf("timeout reading codex output")
+func (b *cappedBuffer) Write(value []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	written := len(value)
+	remaining := b.limit - b.buffer.Len()
+	if remaining > len(value) {
+		remaining = len(value)
 	}
-	return windows, nil
+	if remaining > 0 {
+		_, _ = b.buffer.Write(value[:remaining])
+	}
+	return written, nil
 }
 
-// tryParseCodexUsageLine attempts to parse one JSON line for usage data.
-// Returns nil if the line doesn't contain relevant data.
-func tryParseCodexUsageLine(line string) []store.UsageWindow {
-	var msg json.RawMessage
-	if err := json.Unmarshal([]byte(line), &msg); err != nil {
-		return nil
-	}
-
-	// Try rateLimits response.
-	if windows := parseCodexRateLimits(msg); len(windows) > 0 {
-		return windows
-	}
-
-	// Try account/usage/read result.
-	return parseCodexUsageRead(msg)
+func (b *cappedBuffer) Bytes() []byte {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	return append([]byte(nil), b.buffer.Bytes()...)
 }
 
-type codexMsg struct {
-	Method string          `json:"method"`
-	Result json.RawMessage `json:"result"`
-	Params json.RawMessage `json:"params"`
+func codexResult(cfg store.SourceConfig, parsed codexParsed, start time.Time) store.CollectorResult {
+	snapshot := baseSnapshot(store.ProviderCodex, cfg, "api")
+	snapshot.Windows = parsed.windows
+	if parsed.plan != "" {
+		snapshot.Plan = parsed.plan
+	}
+	if len(parsed.windows) == 0 {
+		parsed.errors = append(parsed.errors, "codex returned no usage data")
+	}
+	if len(parsed.errors) > 0 {
+		snapshot.Status, snapshot.Error = store.StatusPartial, strings.Join(parsed.errors, "; ")
+	} else {
+		snapshot.Status = store.StatusOK
+	}
+	if len(parsed.windows) > 0 {
+		snapshot.UpdatedAt = timePtr(start)
+	}
+	return store.CollectorResult{Snapshot: snapshot, Duration: time.Since(start)}
 }
 
-type codexRateLimit struct {
-	Name               string `json:"name"`
-	UsedPercent        int    `json:"usedPercent"`
-	WindowDurationMins int    `json:"windowDurationMins"`
-	ResetsAt           int64  `json:"resetsAt"`
+func cleanCodexError(err error) string {
+	message := strings.ReplaceAll(err.Error(), "\n", " ")
+	if len(message) > 240 {
+		message = message[:240]
+	}
+	return message
 }
 
-func parseCodexRateLimits(msg json.RawMessage) []store.UsageWindow {
-	var m struct {
-		Params struct {
-			RateLimits []codexRateLimit `json:"rateLimits"`
-		} `json:"params"`
-	}
-	if err := json.Unmarshal(msg, &m); err != nil || len(m.Params.RateLimits) == 0 {
-		return nil
-	}
-	windows := make([]store.UsageWindow, 0, len(m.Params.RateLimits))
-	for _, rl := range m.Params.RateLimits {
-		var resetsAt *time.Time
-		if rl.ResetsAt > 0 {
-			t := time.Unix(rl.ResetsAt, 0).UTC()
-			resetsAt = &t
-		}
-		windows = append(windows, store.UsageWindow{
-			ID:              "codex_" + strings.ToLower(rl.Name),
-			Label:           rl.Name,
-			UsedPercent:     float64(rl.UsedPercent),
-			Unit:            store.UnitPercent,
-			ResetsAt:        resetsAt,
-			DurationMinutes: rl.WindowDurationMins,
-		})
-	}
-	return windows
-}
-
-func parseCodexUsageRead(msg json.RawMessage) []store.UsageWindow {
-	var m struct {
-		Result struct {
-			TotalTokens int     `json:"totalTokens"`
-			TotalCost   float64 `json:"totalCost"`
-		} `json:"result"`
-	}
-	if err := json.Unmarshal(msg, &m); err != nil {
-		return nil
-	}
-	if m.Result.TotalTokens == 0 && m.Result.TotalCost == 0 {
-		return nil
-	}
-	return []store.UsageWindow{{
-		ID:    "codex_usage",
-		Label: "Token Usage",
-		Used:  float64(m.Result.TotalTokens),
-		Unit:  store.UnitTokens,
-	}}
-}
-
-func codexError(cfg store.SourceConfig, msg string, start time.Time) store.CollectorResult {
-	snap := baseSnapshot(store.ProviderCodex, cfg, "api")
-	snap.Status = store.StatusPartial
-	snap.Error = msg
-	return store.CollectorResult{Snapshot: snap, Duration: time.Since(start)}
+func codexError(cfg store.SourceConfig, message string, start time.Time) store.CollectorResult {
+	snapshot := baseSnapshot(store.ProviderCodex, cfg, "api")
+	snapshot.Status, snapshot.Error = store.StatusPartial, message
+	return store.CollectorResult{Snapshot: snapshot, Duration: time.Since(start)}
 }

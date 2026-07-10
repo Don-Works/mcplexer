@@ -75,6 +75,9 @@ func TestAggregateOpenRouterByHarness(t *testing.T) {
 	if cc.Requests != 2 {
 		t.Errorf("cc requests = %d, want 2", cc.Requests)
 	}
+	if cc.CostKind != store.ObservedCostMetered {
+		t.Errorf("cc cost kind = %q", cc.CostKind)
+	}
 	if cc.InputTokens != 3000 {
 		t.Errorf("cc input = %d, want 3000", cc.InputTokens)
 	}
