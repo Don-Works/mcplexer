@@ -12,7 +12,7 @@ import (
 
 const zaiCurrentResponse = `{
   "code": 200,
-  "data": {"limits": [
+  "data": {"level":"max","limits": [
     {"type":"TOKENS_LIMIT","unit":3,"number":5,"usage":800000000,
      "currentValue":127694464,"remaining":672305536,"percentage":15,
      "nextResetTime":1770648402389},
@@ -63,6 +63,22 @@ func TestParseZAIWrapperVariants(t *testing.T) {
 	}
 }
 
+func TestParseZAISparseZeroTokenLimitIsNotMeaningful(t *testing.T) {
+	windows, err := parseZAIResponse([]byte(`{"data":{"limits":[
+      {"type":"TIME_LIMIT","usage":4000,"currentValue":0,"percentage":0},
+      {"type":"TOKENS_LIMIT","percentage":0}
+    ]}}`))
+	if err != nil || len(windows) != 1 || windows[0].ID != "zai_timelimit" {
+		t.Fatalf("windows=%+v err=%v", windows, err)
+	}
+}
+
+func TestParseZAIPlanLevel(t *testing.T) {
+	if got := parseZAIPlan([]byte(`{"data":{"level":"max"}}`)); got != "GLM Coding Max" {
+		t.Fatalf("plan = %q", got)
+	}
+}
+
 func TestZAIFetchUsesRawScopedAuthorization(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/monitor/usage/quota/limit" {
@@ -81,6 +97,9 @@ func TestZAIFetchUsesRawScopedAuthorization(t *testing.T) {
 	})
 	if err != nil || result.Snapshot.Status != store.StatusOK {
 		t.Fatalf("result=%+v err=%v", result, err)
+	}
+	if result.Snapshot.Plan != "GLM Coding Max" {
+		t.Fatalf("plan = %q", result.Snapshot.Plan)
 	}
 	if secret.scope != "scope-z" || secret.key != "zai-key" {
 		t.Fatalf("secret lookup scope=%q key=%q", secret.scope, secret.key)

@@ -47,7 +47,7 @@ func (c *CodexCollector) Fetch(
 
 func (c *CodexCollector) binary() string {
 	if c.CodexBinary == "" {
-		return "codex"
+		return ResolveBinary("codex")
 	}
 	return c.CodexBinary
 }
@@ -141,11 +141,17 @@ func (b *cappedBuffer) Bytes() []byte {
 func codexResult(cfg store.SourceConfig, parsed codexParsed, start time.Time) store.CollectorResult {
 	snapshot := baseSnapshot(store.ProviderCodex, cfg, "api")
 	snapshot.Windows = parsed.windows
+	if parsed.observed.TotalTokens > 0 {
+		snapshot.Observed = parsed.observed
+		snapshot.ObservedSource = "api"
+		snapshot.ObservedSourceLabel = "Codex app-server usage"
+		snapshot.ObservedUpdatedAt = timePtr(start)
+	}
 	if parsed.plan != "" {
 		snapshot.Plan = parsed.plan
 	}
 	if len(parsed.windows) == 0 {
-		parsed.errors = append(parsed.errors, "codex returned no usage data")
+		parsed.errors = append(parsed.errors, "codex returned no allowance data")
 	}
 	if len(parsed.errors) > 0 {
 		snapshot.Status, snapshot.Error = store.StatusPartial, strings.Join(parsed.errors, "; ")

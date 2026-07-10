@@ -69,7 +69,7 @@ func (c *ClaudeCollector) subscriptionPlan(ctx context.Context) string {
 
 func (c *ClaudeCollector) binary() string {
 	if c.ClaudeBinary == "" {
-		return "claude"
+		return ResolveBinary("claude")
 	}
 	return c.ClaudeBinary
 }

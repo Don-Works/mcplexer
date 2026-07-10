@@ -150,6 +150,7 @@ type ProviderSnapshot struct {
 // ObservedUsage holds aggregated usage metrics.
 type ObservedUsage struct {
 	Requests              int     `json:"requests"`
+	TotalTokens           int     `json:"total_tokens,omitempty"`
 	InputTokens           int     `json:"input_tokens"`
 	OutputTokens          int     `json:"output_tokens"`
 	CacheReadTokens       int     `json:"cache_read_tokens"`

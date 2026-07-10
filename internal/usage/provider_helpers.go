@@ -12,6 +12,9 @@ func observedForUnit(observed store.ObservedUsage, unit string) (float64, bool) 
 	case store.UnitRequests:
 		return float64(observed.Requests), true
 	case store.UnitTokens:
+		if observed.TotalTokens > 0 {
+			return float64(observed.TotalTokens), true
+		}
 		return float64(observed.InputTokens + observed.OutputTokens), true
 	case store.UnitUSD:
 		return observed.CostUSD, true
@@ -21,7 +24,7 @@ func observedForUnit(observed store.ObservedUsage, unit string) (float64, bool) 
 }
 
 func hasObserved(observed store.ObservedUsage) bool {
-	return observed.Requests > 0 || observed.InputTokens > 0 ||
+	return observed.Requests > 0 || observed.TotalTokens > 0 || observed.InputTokens > 0 ||
 		observed.OutputTokens > 0 || observed.CacheReadTokens > 0 ||
 		observed.CacheWriteTokens > 0 || observed.CostUSD != 0 ||
 		observed.AccountingMissingRuns > 0

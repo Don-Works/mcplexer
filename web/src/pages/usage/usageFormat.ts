@@ -1,4 +1,8 @@
-import type { UsageWindow } from '@/api/usage'
+import type { ObservedTotals, UsageWindow } from '@/api/usage'
+
+export function observedTokens(observed: ObservedTotals): number {
+  return observed.total_tokens ?? (observed.input_tokens + observed.output_tokens)
+}
 
 export function lineageStatusLabel(status: string): string {
   switch (status) {

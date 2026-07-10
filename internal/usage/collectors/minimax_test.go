@@ -29,7 +29,7 @@ func TestParseMiniMaxLegacyBalance(t *testing.T) {
 func TestParseMiniMaxNestedWindows(t *testing.T) {
 	body := `{"model_remains":[
 		  {"model_name":"MiniMax-M2.5","percentage":0,
-		   "current_interval_total_count":1500,"current_interval_usage_count":0,
+		   "current_interval_total_count":1500,"current_interval_usage_count":1500,
 		   "remaining":1500,"start_time":1770634002389,"end_time":1770648402389},
 		  {"name":"Weekly","used_percent":25}
 		]}`
@@ -41,8 +41,8 @@ func TestParseMiniMaxNestedWindows(t *testing.T) {
 	for _, window := range windows {
 		byLabel[window.Label] = window
 	}
-	model := byLabel["MiniMax-M2.5"]
-	if model.Unit != store.UnitRequests || model.DurationMinutes != 240 {
+	model := byLabel["MiniMax-M2.5 (5-hour)"]
+	if model.Unit != store.UnitRequests || model.DurationMinutes != 300 {
 		t.Fatalf("model window = %+v", model)
 	}
 	requireNumber(t, model.Used, 0)
@@ -52,6 +52,33 @@ func TestParseMiniMaxNestedWindows(t *testing.T) {
 		t.Fatalf("weekly window = %+v", weekly)
 	}
 	requireNumber(t, weekly.UsedPercent, 25)
+}
+
+func TestParseMiniMaxLiveCodingPlanWindows(t *testing.T) {
+	body := `{"model_remains":[
+      {"model_name":"general",
+       "current_interval_total_count":0,"current_interval_usage_count":0,
+       "current_interval_remaining_percent":91,"end_time":1770648402389,
+       "current_weekly_total_count":0,"current_weekly_usage_count":0,
+       "current_weekly_remaining_percent":74,"weekly_end_time":1771253202389},
+      {"model_name":"video",
+       "current_interval_total_count":100,"current_interval_usage_count":80,
+       "end_time":1770648402389,
+       "current_weekly_total_count":1000,"current_weekly_usage_count":700,
+       "weekly_end_time":1771253202389}
+    ]}`
+	windows, err := parseMiniMaxResponse([]byte(body))
+	if err != nil || len(windows) != 4 {
+		t.Fatalf("windows=%+v err=%v", windows, err)
+	}
+	byLabel := make(map[string]store.UsageWindow)
+	for _, window := range windows {
+		byLabel[window.Label] = window
+	}
+	requireNumber(t, byLabel["general (5-hour)"].UsedPercent, 9)
+	requireNumber(t, byLabel["general (weekly)"].UsedPercent, 26)
+	requireNumber(t, byLabel["video (5-hour)"].Used, 20)
+	requireNumber(t, byLabel["video (weekly)"].UsedPercent, 30)
 }
 
 func TestParseMiniMaxRemainingPercentAndCounts(t *testing.T) {

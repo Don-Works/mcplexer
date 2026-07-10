@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"sort"
 	"strings"
@@ -43,6 +44,9 @@ func (c *MiniMaxCollector) Fetch(
 			fmt.Sprintf("parse: %v", err), start), nil
 	}
 	snapshot := baseSnapshot(store.ProviderMiniMax, cfg, "api")
+	if snapshot.Plan == "" {
+		snapshot.Plan = "Coding Plan"
+	}
 	snapshot.Status, snapshot.UpdatedAt, snapshot.Windows = store.StatusOK, timePtr(start), windows
 	return store.CollectorResult{Snapshot: snapshot, Duration: time.Since(start)}, nil
 }
@@ -74,12 +78,87 @@ func parseMiniMaxResponse(body []byte) ([]store.UsageWindow, error) {
 		return nil, fmt.Errorf("unmarshal minimax: %w", err)
 	}
 	var windows []store.UsageWindow
-	collectMiniMaxWindows(root, &windows, 0)
+	if object, ok := root.(map[string]any); ok {
+		if rawRemains, found := lookupValue(object, "model_remains"); found {
+			remains, _ := rawRemains.([]any)
+			for _, raw := range remains {
+				entry, objectErr := mustObject(raw)
+				if objectErr != nil {
+					continue
+				}
+				mapped := mapMiniMaxCodingPlanWindows(entry)
+				if len(mapped) == 0 {
+					if window, valid := mapMiniMaxWindow(entry, len(windows)); valid {
+						mapped = append(mapped, window)
+					}
+				}
+				windows = append(windows, mapped...)
+			}
+			for key, child := range object {
+				if normalizedKey(key) != "modelremains" {
+					collectMiniMaxWindows(child, &windows, 0)
+				}
+			}
+		} else {
+			collectMiniMaxWindows(root, &windows, 0)
+		}
+	} else {
+		collectMiniMaxWindows(root, &windows, 0)
+	}
 	windows = dedupeMiniMaxWindows(windows)
 	if len(windows) == 0 {
 		return nil, fmt.Errorf("response contains no measurable quota window")
 	}
 	return windows, nil
+}
+
+func mapMiniMaxCodingPlanWindows(values map[string]any) []store.UsageWindow {
+	label := miniMaxLabel(values)
+	return compactMiniMaxWindows(
+		miniMaxCodingPlanWindow(values, label+" (5-hour)", "currentInterval", 300),
+		miniMaxCodingPlanWindow(values, label+" (weekly)", "currentWeekly", 7*24*60),
+	)
+}
+
+func miniMaxCodingPlanWindow(
+	values map[string]any,
+	label string,
+	prefix string,
+	duration int,
+) store.UsageWindow {
+	total := miniMaxNumber(values, prefix+"TotalCount")
+	remaining := miniMaxNumber(values, prefix+"UsageCount")
+	remainingPercent := miniMaxNumber(values, prefix+"RemainingPercent")
+	window := store.UsageWindow{
+		ID: identifier("minimax", label), Label: label, Limit: total,
+		Remaining: remaining, Unit: store.UnitRequests, DurationMinutes: duration,
+	}
+	if strings.Contains(strings.ToLower(prefix), "weekly") {
+		window.ResetsAt = lookupTimestamp(values, "weeklyEndTime")
+	} else {
+		window.ResetsAt = lookupTimestamp(values, "endTime")
+	}
+	if total != nil && *total > 0 && remaining != nil {
+		clamped := math.Min(*total, math.Max(0, *remaining))
+		window.Remaining = numberPtr(clamped)
+		window.Used = numberPtr(*total - clamped)
+		window.UsedPercent = numberPtr((*window.Used / *total) * 100)
+	} else if remainingPercent != nil {
+		window.Unit = store.UnitPercent
+		window.UsedPercent = numberPtr(nonNegative(100 - *remainingPercent))
+		window.Remaining = nil
+	}
+	return window
+}
+
+func compactMiniMaxWindows(values ...store.UsageWindow) []store.UsageWindow {
+	result := make([]store.UsageWindow, 0, len(values))
+	for _, value := range values {
+		if hasWindowMeasurement(value) {
+			result = append(result, value)
+		}
+	}
+	return result
 }
 
 func collectMiniMaxWindows(value any, windows *[]store.UsageWindow, depth int) {
@@ -145,7 +224,7 @@ func miniMaxPercentage(values map[string]any) *float64 {
 }
 
 func miniMaxLabel(values map[string]any) string {
-	if label, ok := lookupString(values, "label", "name", "windowName", "modelName", "type"); ok {
+	if label, ok := lookupString(values, "label", "name", "windowName", "modelName", "model", "type"); ok {
 		return label
 	}
 	return "Token Plan"

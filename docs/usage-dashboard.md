@@ -38,16 +38,18 @@ their credential files are not opened by the dashboard.
 | Provider | Live allowance source | Observed-use source and fallback |
 | --- | --- | --- |
 | Claude Pro/Max | A bounded, screen-reader-mode PTY opens the logged-in Claude CLI and reads `/usage`. It captures the current session, weekly all-model, and model-specific windows. `claude auth status --json` contributes only `subscriptionType`; identity fields are discarded. | MCPlexer worker-run accounting is shown when available. The probe runs in an empty, owner-only cache directory, declines project MCP activation, and never reads Claude credentials. |
-| Codex | The installed, logged-in Codex CLI is probed through its local app-server account usage/rate-limit methods. No provider API token is copied into MCPlexer. | Local worker-run accounting is merged in. A missing binary, logged-out CLI, timeout, or protocol change is reported instead of becoming zero. |
-| MiniMax | `GET /v1/token_plan/remains` using either an explicit encrypted auth-scope reference or the installed OpenCode credential. | OpenCode statistics provide local request/token observations and estimated list-price cost. A manual plan/window remains available as an explicit fallback. |
-| Z.AI | The first-party monitor quota endpoint (`/api/monitor/usage/quota/limit`) using either an explicit encrypted auth-scope reference or the installed OpenCode credential. | MCPlexer run records and local OpenCode statistics supply observed totals. Custom API roots are limited to approved first-party HTTPS hosts. |
+| Codex | The installed, logged-in Codex CLI is probed through its local app-server rate-limit method. The plan and reset windows remain allowance data. | The app-server usage method supplies a separate observed total when available; it is never mixed into allowance windows. MCPlexer ledger accounting remains the fallback. |
+| MiniMax | `GET /v1/token_plan/remains` using either an explicit encrypted auth-scope reference or the installed OpenCode credential. Interval and weekly Coding Plan windows are separated, and the API's misleading `usage_count` fields are treated as remaining counts. | OpenCode statistics provide local request/token observations and estimated list-price cost. A manual plan/window remains available as an explicit fallback. |
+| Z.AI | The first-party monitor quota endpoint (`/api/monitor/usage/quota/limit`) using either an explicit encrypted auth-scope reference or the installed OpenCode credential. Its reported account level supplies the Coding Plan tier; empty zero-only meters are omitted. | MCPlexer run records and local OpenCode statistics supply observed totals. Custom API roots are limited to approved first-party HTTPS hosts. |
 | Grok | A bounded PTY starts the logged-in Grok CLI and reads its billing extension event from a temporary `0600` debug file. This yields the subscription tier and current weekly shared period; percentage is omitted when Grok does not report it. | MCPlexer worker-run accounting is shown where available. No Grok auth file or shared log is read. |
 | MiMo | `mimo providers whoami` verifies the local connection without retaining user identity. There is no supported live personal-plan allowance endpoint. | `mimo stats --days N --models` and MCPlexer run records provide observed usage. The UI says **Authenticated** while separately saying that live allowance data is unavailable. |
-| OpenRouter | `GET /api/v1/key` reports key usage, limits, remaining credit, and daily/weekly/monthly spend where the key permits it. | OpenRouter model runs are grouped by harness and model from local CLI and MCPlexer accounting. Provider credit totals are not used to infer per-harness attribution. |
+| OpenRouter | `GET /api/v1/key` reports total spend, limits, remaining credit, and daily/weekly/monthly spend where the key permits it. | OpenRouter model runs are grouped by harness and model from local CLI and MCPlexer accounting. Provider credit totals are not used to infer per-harness attribution. |
 
-The daemon must see the relevant executable in its `PATH` and the CLI must
-already be logged in for a local probe to succeed. CLI output and provider APIs
-can change; parse or compatibility failures are surfaced in the affected row.
+The CLI must already be logged in for a local probe to succeed. The daemon
+resolves supported CLIs from `PATH` plus their standard user, Homebrew, and
+macOS application install locations, so a minimal launchd `PATH` does not hide
+an installed harness. CLI output and provider APIs can change; parse or
+compatibility failures are surfaced in the affected row.
 Optional live integration coverage is available with
 `MCPLEXER_LIVE_USAGE_TEST=1 go test ./internal/usage/collectors -run TestLive`.
 

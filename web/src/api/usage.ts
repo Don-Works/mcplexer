@@ -19,6 +19,7 @@ export interface UsageWindow {
 
 export interface ObservedTotals {
   requests: number
+  total_tokens?: number
   input_tokens: number
   output_tokens: number
   cache_read_tokens: number

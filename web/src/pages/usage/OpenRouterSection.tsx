@@ -40,9 +40,9 @@ function OpenRouterCreditsSummary({ openrouter }: { openrouter: OpenRouterUsage 
             No account credit data. Configure an OpenRouter auth-scope reference to add live limits; local harness activity still appears below.
           </p>
         )}
-        {hasCredits && <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+        {hasCredits && <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
           {credits.usage != null && (
-            <CreditStat label="Usage" value={`$${credits.usage.toFixed(2)}`} />
+            <CreditStat label="Total spent" value={`$${credits.usage.toFixed(2)}`} />
           )}
           {credits.limit != null && (
             <CreditStat label="Limit" value={`$${credits.limit.toFixed(2)}`} />
@@ -52,6 +52,12 @@ function OpenRouterCreditsSummary({ openrouter }: { openrouter: OpenRouterUsage 
           )}
           {credits.usage_monthly != null && (
             <CreditStat label="Monthly" value={`$${credits.usage_monthly.toFixed(2)}`} />
+          )}
+          {credits.usage_weekly != null && (
+            <CreditStat label="Weekly" value={`$${credits.usage_weekly.toFixed(2)}`} />
+          )}
+          {credits.usage_daily != null && (
+            <CreditStat label="Daily" value={`$${credits.usage_daily.toFixed(2)}`} />
           )}
         </div>}
       </CardContent>

@@ -7,6 +7,7 @@ import {
   formatTokens,
   formatWindowUsed,
   lineageStatusLabel,
+  observedTokens,
   progressColor,
   statusVariant,
 } from '@/pages/usage/usageFormat'
@@ -52,14 +53,21 @@ function MobileProvider({ provider }: { provider: ProviderUsage }) {
       </div>
 
       <div className="grid grid-cols-3 gap-3 border-y py-3">
-        <MobileMetric label="Requests" value={observed ? formatNumber(provider.observed.requests) : '—'} />
+        <MobileMetric
+          label="Requests"
+          value={provider.observed.requests > 0 ? formatNumber(provider.observed.requests) : '—'}
+        />
         <MobileMetric
           label="Tokens"
-          value={observed ? formatTokens(provider.observed.input_tokens + provider.observed.output_tokens) : '—'}
+          value={observedTokens(provider.observed) > 0
+            ? formatTokens(observedTokens(provider.observed))
+            : '—'}
         />
         <MobileMetric
           label="Cost"
-          value={observed ? `${provider.observed_cost_kind === 'estimate' ? 'Est. ' : ''}$${provider.observed.cost_usd.toFixed(2)}` : '—'}
+          value={observed && provider.observed.cost_usd !== 0
+            ? `${provider.observed_cost_kind === 'estimate' ? 'Est. ' : ''}$${provider.observed.cost_usd.toFixed(2)}`
+            : '—'}
         />
       </div>
 
@@ -132,7 +140,8 @@ function MobileWindow({ window }: { window: UsageWindow }) {
 
 function hasObserved(provider: ProviderUsage): boolean {
   const observed = provider.observed
-  return observed.requests > 0 || observed.input_tokens > 0 || observed.output_tokens > 0 ||
+  return observed.requests > 0 || (observed.total_tokens ?? 0) > 0 ||
+    observed.input_tokens > 0 || observed.output_tokens > 0 ||
     observed.cache_read_tokens > 0 || observed.cache_write_tokens > 0 ||
     observed.cost_usd !== 0 || observed.accounting_missing_runs > 0
 }

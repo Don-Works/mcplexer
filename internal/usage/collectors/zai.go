@@ -42,6 +42,11 @@ func (c *ZAICollector) Fetch(
 			fmt.Sprintf("parse: %v", err), start), nil
 	}
 	snapshot := baseSnapshot(store.ProviderZAI, cfg, "api")
+	if plan := parseZAIPlan(body); plan != "" {
+		snapshot.Plan = plan
+	} else if snapshot.Plan == "" {
+		snapshot.Plan = "Coding Plan"
+	}
 	snapshot.Status, snapshot.UpdatedAt, snapshot.Windows = store.StatusOK, timePtr(start), windows
 	return store.CollectorResult{Snapshot: snapshot, Duration: time.Since(start)}, nil
 }
@@ -152,7 +157,61 @@ func mapZAIWindow(entry map[string]any) (store.UsageWindow, bool) {
 		return store.UsageWindow{}, false
 	}
 	completeWindowValues(&window)
-	return window, hasWindowMeasurement(window)
+	return window, hasZAIWindowMeasurement(window, limitType)
+}
+
+func hasZAIWindowMeasurement(window store.UsageWindow, limitType string) bool {
+	if strings.EqualFold(limitType, "TOKENS_LIMIT") && window.Used == nil &&
+		window.Limit == nil && window.Remaining == nil {
+		return window.UsedPercent != nil && *window.UsedPercent > 0
+	}
+	return hasWindowMeasurement(window)
+}
+
+func parseZAIPlan(body []byte) string {
+	root, err := decodeJSON(body)
+	if err != nil {
+		return ""
+	}
+	level := findZAIPlanLevel(root, 0)
+	switch strings.ToLower(level) {
+	case "max":
+		return "GLM Coding Max"
+	case "pro":
+		return "GLM Coding Pro"
+	case "lite":
+		return "GLM Coding Lite"
+	case "free":
+		return "GLM Coding Free"
+	case "":
+		return ""
+	default:
+		return "GLM Coding " + level
+	}
+}
+
+func findZAIPlanLevel(value any, depth int) string {
+	if depth > 8 {
+		return ""
+	}
+	switch typed := value.(type) {
+	case map[string]any:
+		if level, ok := lookupString(typed, "level"); ok {
+			return level
+		}
+		for _, child := range typed {
+			if level := findZAIPlanLevel(child, depth+1); level != "" {
+				return level
+			}
+		}
+	case []any:
+		for _, child := range typed {
+			if level := findZAIPlanLevel(child, depth+1); level != "" {
+				return level
+			}
+		}
+	}
+	return ""
 }
 
 func sumZAIUsageDetails(entry map[string]any) *float64 {

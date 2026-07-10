@@ -92,7 +92,7 @@ func TestExchangeCodexProtocolWaitsForInitialize(t *testing.T) {
 		t.Fatal(err)
 	}
 	parsed := parseCodexOutput(output.Bytes())
-	if parsed.plan != "pro" || len(parsed.windows) == 0 {
+	if parsed.plan != "Pro" || len(parsed.windows) == 0 {
 		t.Fatalf("parsed = %+v", parsed)
 	}
 }
@@ -127,12 +127,16 @@ func TestCodexFetchParsesRateLimitsPlanAndUsage(t *testing.T) {
 	if capturedBinary != "/opt/bin/codex" || !strings.Contains(string(capturedInput), "account/rateLimits/read") {
 		t.Fatalf("binary=%q input=%q", capturedBinary, capturedInput)
 	}
-	if result.Snapshot.Plan != "pro" || len(result.Snapshot.Windows) != 7 {
+	if result.Snapshot.Plan != "Pro" || len(result.Snapshot.Windows) != 3 {
 		t.Fatalf("plan=%q windows=%+v", result.Snapshot.Plan, result.Snapshot.Windows)
 	}
 	assertCodexWindow(t, result.Snapshot.Windows, "codex_codex_primary", 25)
 	assertCodexWindow(t, result.Snapshot.Windows, "codex_spark_primary", 1)
-	assertCodexWindow(t, result.Snapshot.Windows, "codex_lifetime_tokens", 0)
+	if result.Snapshot.Observed.TotalTokens != 1000 ||
+		result.Snapshot.ObservedSourceLabel != "Codex app-server usage" {
+		t.Fatalf("observed=%+v source=%q", result.Snapshot.Observed,
+			result.Snapshot.ObservedSourceLabel)
+	}
 }
 
 func assertCodexWindow(t *testing.T, windows []store.UsageWindow, id string, expected float64) {
@@ -198,7 +202,7 @@ func TestCodexBoundedFailuresRemainPartial(t *testing.T) {
 	if err != nil || result.Snapshot.Status != store.StatusPartial {
 		t.Fatalf("result=%+v err=%v", result, err)
 	}
-	if len(result.Snapshot.Error) > 280 || !strings.Contains(result.Snapshot.Error, "no usage data") {
+	if len(result.Snapshot.Error) > 280 || !strings.Contains(result.Snapshot.Error, "no allowance data") {
 		t.Fatalf("error = %q", result.Snapshot.Error)
 	}
 }

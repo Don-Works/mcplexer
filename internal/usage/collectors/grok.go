@@ -46,7 +46,7 @@ func (c *GrokCollector) Fetch(
 
 func (c *GrokCollector) binary() string {
 	if c.GrokBinary == "" {
-		return "grok"
+		return ResolveBinary("grok")
 	}
 	return c.GrokBinary
 }

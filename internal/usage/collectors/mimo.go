@@ -44,7 +44,7 @@ func (c *MiMoCollector) Fetch(
 
 func (c *MiMoCollector) binary() string {
 	if c.MiMoBinary == "" {
-		return "mimo"
+		return ResolveBinary("mimo")
 	}
 	return c.MiMoBinary
 }

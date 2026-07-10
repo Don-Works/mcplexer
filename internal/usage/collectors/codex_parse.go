@@ -14,9 +14,10 @@ import (
 )
 
 type codexParsed struct {
-	windows []store.UsageWindow
-	plan    string
-	errors  []string
+	windows  []store.UsageWindow
+	observed store.ObservedUsage
+	plan     string
+	errors   []string
 }
 
 type codexEnvelope struct {
@@ -63,7 +64,9 @@ func parseCodexEnvelope(envelope codexEnvelope, parsed *codexParsed) {
 			parsed.plan = plan
 		}
 	case "3":
-		parsed.windows = append(parsed.windows, parseCodexUsageResult(envelope.Result)...)
+		if observed, ok := parseCodexUsageResult(envelope.Result); ok {
+			parsed.observed = observed
+		}
 	default:
 		parseCodexNotification(envelope, parsed)
 	}
@@ -132,7 +135,22 @@ func parseCodexRateResult(raw json.RawMessage) ([]store.UsageWindow, string) {
 			windows = append(windows, top)
 		}
 	}
-	return windows, plan
+	return windows, displayCodexPlan(plan)
+}
+
+func displayCodexPlan(plan string) string {
+	switch strings.ToLower(strings.TrimSpace(plan)) {
+	case "pro":
+		return "Pro"
+	case "plus":
+		return "Plus"
+	case "team":
+		return "Team"
+	case "enterprise":
+		return "Enterprise"
+	default:
+		return strings.TrimSpace(plan)
+	}
 }
 
 func containsEquivalentRateWindow(windows []store.UsageWindow, candidate store.UsageWindow) bool {
@@ -218,35 +236,26 @@ type codexUsageResult struct {
 	} `json:"dailyUsageBuckets"`
 }
 
-func parseCodexUsageResult(raw json.RawMessage) []store.UsageWindow {
+func parseCodexUsageResult(raw json.RawMessage) (store.ObservedUsage, bool) {
 	var result codexUsageResult
 	if len(raw) == 0 || json.Unmarshal(raw, &result) != nil {
-		return nil
-	}
-	var windows []store.UsageWindow
-	if result.Summary.LifetimeTokens != nil {
-		windows = append(windows, tokenWindow("codex_lifetime_tokens", "Lifetime tokens",
-			*result.Summary.LifetimeTokens))
-	}
-	if result.Summary.PeakDailyTokens != nil {
-		windows = append(windows, tokenWindow("codex_peak_daily_tokens", "Peak daily tokens",
-			*result.Summary.PeakDailyTokens))
+		return store.ObservedUsage{}, false
 	}
 	buckets := result.DailyUsageBuckets
 	if len(buckets) > 31 {
 		buckets = buckets[len(buckets)-31:]
 	}
+	var total int64
 	for _, bucket := range buckets {
-		windows = append(windows, tokenWindow(identifier("codex", "daily", bucket.StartDate),
-			"Tokens "+bucket.StartDate, bucket.Tokens))
+		total += bucket.Tokens
 	}
-	return windows
-}
-
-func tokenWindow(id, label string, tokens int64) store.UsageWindow {
-	return store.UsageWindow{
-		ID: id, Label: label, Used: numberPtr(float64(tokens)), Unit: store.UnitTokens,
+	if len(buckets) == 0 && result.Summary.LifetimeTokens != nil {
+		total = *result.Summary.LifetimeTokens
 	}
+	if total <= 0 {
+		return store.ObservedUsage{}, false
+	}
+	return store.ObservedUsage{TotalTokens: int(total)}, true
 }
 
 func dedupeCodexWindows(windows []store.UsageWindow) []store.UsageWindow {

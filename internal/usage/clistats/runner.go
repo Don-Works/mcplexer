@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -125,6 +126,9 @@ func (execRunner) CombinedOutput(
 	ctx context.Context, name string, args []string, maxBytes int,
 ) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		cmd.Dir = home
+	}
 	output := &boundedBuffer{limit: maxBytes}
 	cmd.Stdout, cmd.Stderr = output, output
 	err := cmd.Run()

@@ -196,6 +196,13 @@ func mergeProviderAllowance(
 	if allowance.Plan != "" {
 		dst.Plan = allowance.Plan
 	}
+	if hasObserved(allowance.Observed) {
+		dst.Observed = allowance.Observed
+		dst.ObservedSource = allowance.ObservedSource
+		dst.ObservedSourceLabel = allowance.ObservedSourceLabel
+		dst.ObservedUpdatedAt = allowance.ObservedUpdatedAt
+		dst.ObservedCostKind = allowance.ObservedCostKind
+	}
 }
 
 func applyManualAllowance(

@@ -10,6 +10,7 @@ import {
   formatTokens,
   formatWindowUsed,
   lineageStatusLabel,
+  observedTokens,
   progressColor,
   statusVariant,
 } from '@/pages/usage/usageFormat'
@@ -64,7 +65,7 @@ export function ProviderTable({
 }
 
 function ProviderRow({ provider }: { provider: ProviderUsage }) {
-  const totalTokens = provider.observed.input_tokens + provider.observed.output_tokens
+  const totalTokens = observedTokens(provider.observed)
   const allowanceWindows = provider.windows.filter(isAllowanceWindow)
   const hasObserved = hasObservedTotals(provider.observed)
 
@@ -83,10 +84,10 @@ function ProviderRow({ provider }: { provider: ProviderUsage }) {
         <LineageCell provider={provider} />
       </TableCell>
       <TableCell className="text-right font-mono text-sm">
-        {hasObserved ? formatNumber(provider.observed.requests) : '—'}
+        {provider.observed.requests > 0 ? formatNumber(provider.observed.requests) : '—'}
       </TableCell>
       <TableCell className="text-right font-mono text-sm">
-        {hasObserved ? formatTokens(totalTokens) : '—'}
+        {totalTokens > 0 ? formatTokens(totalTokens) : '—'}
       </TableCell>
       <TableCell className="text-right font-mono text-sm">
         <CostCell
@@ -188,7 +189,7 @@ function CostCell({
   kind?: string
   hasObserved: boolean
 }) {
-  if (!hasObserved) return <span>—</span>
+  if (!hasObserved || cost === 0) return <span>—</span>
   const prefix = kind === 'estimate' ? 'Est. ' : ''
   return <span>{prefix}${cost.toFixed(2)}</span>
 }
@@ -228,7 +229,7 @@ function isAllowanceWindow(window: UsageWindow): boolean {
 }
 
 function hasObservedTotals(observed: ProviderUsage['observed']): boolean {
-  return observed.requests > 0 || observed.input_tokens > 0 ||
+  return observed.requests > 0 || (observed.total_tokens ?? 0) > 0 || observed.input_tokens > 0 ||
     observed.output_tokens > 0 || observed.cache_read_tokens > 0 ||
     observed.cache_write_tokens > 0 || observed.cost_usd !== 0 ||
     observed.accounting_missing_runs > 0
