@@ -33,7 +33,7 @@ func buildUsageService(
 			store.ProviderGrok:    &collectors.GrokCollector{GrokBinary: grokBinary},
 			store.ProviderMiniMax: &collectors.MiniMaxCollector{Client: client, Secret: authReader},
 			store.ProviderZAI:     &collectors.ZAICollector{Client: client, Secret: authReader},
-			store.ProviderMiMo:    &collectors.MiMoCollector{MiMoBinary: mimoBinary},
+			store.ProviderMiMo:    &collectors.MiMoCollector{MiMoBinary: mimoBinary, Secret: authReader},
 		},
 		ORCollector: &collectors.OpenRouterCollector{
 			Client: client,

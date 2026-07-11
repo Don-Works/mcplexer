@@ -3,6 +3,7 @@ package usage
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -283,6 +284,112 @@ func TestLedgerFailureIsolatedPerProvider(t *testing.T) {
 	}
 	if snapshot.Providers[0].Status != store.StatusOK {
 		t.Fatalf("claude status = %s", snapshot.Providers[0].Status)
+	}
+}
+
+func TestMiMoEstimatedCreditsWindowInjectedFromLocalStats(t *testing.T) {
+	mimo := &fakeLocalStats{stats: []clistats.ModelStats{
+		{Model: "xiaomi/mimo-v2.5-pro", Requests: 5, InputTokens: 1000, OutputTokens: 500, CacheReadTokens: 2000},
+		{Model: "mimo/mimo-v2.5", Requests: 3, InputTokens: 200, OutputTokens: 100},
+	}}
+	service := &Service{
+		Store:      &fakeUsageStore{},
+		LocalStats: map[string]LocalStatsCollector{"mimo": mimo},
+	}
+	snapshot, err := service.Snapshot(context.Background(), nil, 30, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mimoSnap := providerByName(t, snapshot, store.ProviderMiMo)
+	var creditsWindow *store.UsageWindow
+	for i := range mimoSnap.Windows {
+		if mimoSnap.Windows[i].ID == "mimo_token_plan_credits" {
+			creditsWindow = &mimoSnap.Windows[i]
+			break
+		}
+	}
+	if creditsWindow == nil {
+		t.Fatal("expected mimo_token_plan_credits window")
+	}
+	if creditsWindow.Unit != store.UnitCredits {
+		t.Fatalf("unit = %q", creditsWindow.Unit)
+	}
+	if creditsWindow.Label != "Token Plan credits (estimate)" {
+		t.Fatalf("label = %q", creditsWindow.Label)
+	}
+	// v2.5-pro: 1000*300 + 500*600 + 2000*2.5 = 605000
+	// v2.5: 200*100 + 100*200 = 40000
+	// total: 645000
+	if creditsWindow.Used == nil || *creditsWindow.Used != 645000 {
+		t.Fatalf("used = %v", creditsWindow.Used)
+	}
+	if creditsWindow.Limit != nil {
+		t.Fatalf("limit should be nil without configured limit")
+	}
+	if !strings.Contains(mimoSnap.Detail, "off-peak 0.8x discount not reconstructible") {
+		t.Fatalf("detail missing estimate caveat: %q", mimoSnap.Detail)
+	}
+}
+
+func TestMiMoCreditsWindowRespectsConfiguredLimit(t *testing.T) {
+	mimo := &fakeLocalStats{stats: []clistats.ModelStats{
+		{Model: "xiaomi/mimo-v2.5-pro", InputTokens: 100},
+	}}
+	config := []store.SourceConfig{{
+		Provider: store.ProviderMiMo, Kind: store.SourceKindCLI,
+		Limit: 1000000, Unit: store.UnitCredits, Enabled: true,
+	}}
+	service := &Service{
+		Store:      &fakeUsageStore{},
+		LocalStats: map[string]LocalStatsCollector{"mimo": mimo},
+	}
+	snapshot, err := service.Snapshot(context.Background(), config, 30, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mimoSnap := providerByName(t, snapshot, store.ProviderMiMo)
+	var creditsWindow *store.UsageWindow
+	for i := range mimoSnap.Windows {
+		if mimoSnap.Windows[i].ID == "mimo_token_plan_credits" {
+			creditsWindow = &mimoSnap.Windows[i]
+			break
+		}
+	}
+	if creditsWindow == nil {
+		t.Fatal("expected credits window")
+	}
+	if creditsWindow.Limit == nil || *creditsWindow.Limit != 1000000 {
+		t.Fatalf("limit = %v", creditsWindow.Limit)
+	}
+	// 100*300 = 30000
+	if creditsWindow.Used == nil || *creditsWindow.Used != 30000 {
+		t.Fatalf("used = %v", creditsWindow.Used)
+	}
+	if creditsWindow.Remaining == nil || *creditsWindow.Remaining != 970000 {
+		t.Fatalf("remaining = %v", creditsWindow.Remaining)
+	}
+	if creditsWindow.UsedPercent == nil || *creditsWindow.UsedPercent != 3.0 {
+		t.Fatalf("used_percent = %v", creditsWindow.UsedPercent)
+	}
+}
+
+func TestMiMoNoCreditsWindowForUnknownModels(t *testing.T) {
+	mimo := &fakeLocalStats{stats: []clistats.ModelStats{
+		{Model: "xiaomi/unknown-model", InputTokens: 1000},
+	}}
+	service := &Service{
+		Store:      &fakeUsageStore{},
+		LocalStats: map[string]LocalStatsCollector{"mimo": mimo},
+	}
+	snapshot, err := service.Snapshot(context.Background(), nil, 30, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mimoSnap := providerByName(t, snapshot, store.ProviderMiMo)
+	for _, w := range mimoSnap.Windows {
+		if w.ID == "mimo_token_plan_credits" {
+			t.Fatal("should not have credits window for unknown model")
+		}
 	}
 }
 

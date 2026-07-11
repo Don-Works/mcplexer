@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/don-works/mcplexer/internal/store"
+	"github.com/don-works/mcplexer/internal/usage/collectors"
 )
 
 func (s *Service) providerSnapshot(
@@ -26,6 +27,7 @@ func (s *Service) providerSnapshot(
 		allowance := s.providerAllowance(ctx, cfg, force, now)
 		mergeProviderAllowance(&snapshot, allowance)
 	}
+	injectMiMoCreditsWindow(&snapshot, cfg, local)
 	finishProviderStatus(&snapshot, provider, cfg, ledgerErr)
 	setBackwardCompatFields(&snapshot)
 	return snapshot
@@ -233,4 +235,29 @@ func applyManualAllowance(
 	snapshot.AllowanceSource = "manual"
 	snapshot.AllowanceSourceLabel = "operator configuration"
 	snapshot.AllowanceUpdatedAt = &now
+}
+
+// injectMiMoCreditsWindow adds an estimated Token Plan credits window to a
+// MiMo provider snapshot when local per-model stats are available. The window
+// is appended to any existing windows (e.g. a configured manual allowance).
+func injectMiMoCreditsWindow(
+	snapshot *store.ProviderSnapshot,
+	cfg store.SourceConfig,
+	local map[string]localStatsResult,
+) {
+	if snapshot.Provider != store.ProviderMiMo {
+		return
+	}
+	perModel := mimoPerModelObserved(local)
+	if len(perModel) == 0 {
+		return
+	}
+	totalCredits := collectors.MiMoAggregateEstimatedCredits(perModel)
+	window, ok := collectors.MiMoTokenPlanWindow(cfg, snapshot.Observed, totalCredits)
+	if !ok {
+		return
+	}
+	snapshot.Windows = append(snapshot.Windows, window)
+	snapshot.Detail = appendDetail(snapshot.Detail,
+		"Token Plan credits estimated from local CLI stats; off-peak 0.8x discount not reconstructible")
 }
