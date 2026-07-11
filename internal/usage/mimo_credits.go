@@ -71,6 +71,9 @@ func aggregateMiMoCredits(stats []clistats.ModelStats) (float64, bool) {
 	for _, stat := range stats {
 		credits, ok := estimateMiMoCredits(stat)
 		if !ok {
+			if isClearlyForeignMiMoStats(stat) {
+				continue
+			}
 			if mimoStatsHaveTokens(stat) {
 				return 0, false
 			}
@@ -104,4 +107,14 @@ func estimateMiMoCredits(stat clistats.ModelStats) (float64, bool) {
 func mimoStatsHaveTokens(stat clistats.ModelStats) bool {
 	return stat.InputTokens > 0 || stat.OutputTokens > 0 ||
 		stat.CacheReadTokens > 0 || stat.CacheWriteTokens > 0
+}
+
+func isClearlyForeignMiMoStats(stat clistats.ModelStats) bool {
+	model := strings.ToLower(strings.TrimSpace(stat.Model))
+	slash := strings.LastIndex(model, "/")
+	if slash < 0 {
+		return false
+	}
+	namespace := model[:slash]
+	return namespace != "xiaomi" && namespace != "mimo"
 }

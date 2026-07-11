@@ -92,6 +92,18 @@ func TestEstimateMiMoCreditsRejectsForeignNamespace(t *testing.T) {
 	}
 }
 
+func TestEstimatedMiMoCreditsWindowSkipsClearlyForeignUsage(t *testing.T) {
+	window, ok := estimatedMiMoCreditsWindow(store.SourceConfig{}, map[string]localStatsResult{
+		"mimo": {Stats: []clistats.ModelStats{
+			{Model: "xiaomi/mimo-v2.5-pro", InputTokens: 100},
+			{Model: "anthropic/claude-opus-4-8", InputTokens: 2_000, OutputTokens: 500},
+		}},
+	}, 30*24*60)
+	if !ok || window.Used == nil || *window.Used != 30_000 {
+		t.Fatalf("window = %+v, ok=%v", window, ok)
+	}
+}
+
 func TestEstimatedMiMoCreditsWindowOmitsLimitWhenPeriodsDiffer(t *testing.T) {
 	cfg := store.SourceConfig{
 		Limit: 82_000_000_000, Unit: store.UnitCredits, WindowMinutes: 30 * 24 * 60,
