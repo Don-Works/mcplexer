@@ -3,12 +3,60 @@ package usage
 import (
 	"context"
 	"errors"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/don-works/mcplexer/internal/store"
 	"github.com/don-works/mcplexer/internal/usage/clistats"
 )
+
+type fakeUsageCacheStore struct {
+	fakeUsageStore
+	mu        sync.Mutex
+	snapshots map[string]store.UsageSnapshot
+}
+
+func (f *fakeUsageCacheStore) GetUsageSnapshot(
+	_ context.Context, key string,
+) (store.UsageSnapshot, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	snapshot, ok := f.snapshots[key]
+	return snapshot, ok, nil
+}
+
+func (f *fakeUsageCacheStore) PutUsageSnapshot(
+	_ context.Context, key string, snapshot store.UsageSnapshot,
+) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.snapshots == nil {
+		f.snapshots = make(map[string]store.UsageSnapshot)
+	}
+	f.snapshots[key] = snapshot
+	return nil
+}
+
+type countingProviderCollector struct {
+	calls     atomic.Int32
+	refreshed chan struct{}
+}
+
+func (c *countingProviderCollector) Fetch(
+	_ context.Context, _ store.SourceConfig,
+) (store.CollectorResult, error) {
+	if c.calls.Add(1) == 2 {
+		close(c.refreshed)
+	}
+	return store.CollectorResult{Snapshot: store.ProviderSnapshot{
+		Status: store.StatusOK,
+		Windows: []store.UsageWindow{{
+			ID: "live", Label: "Live", Unit: store.UnitPercent,
+		}},
+	}}, nil
+}
 
 type fakeUsageStore struct {
 	runs  []store.UsageLedgerRun
@@ -75,6 +123,77 @@ func TestSnapshotIncludesAllProvidersAndHonorsDays(t *testing.T) {
 	}
 	if snapshot.Providers[0].Label != "Claude" || snapshot.Providers[0].Observed.InputTokens != 10 {
 		t.Fatalf("claude = %+v", snapshot.Providers[0])
+	}
+}
+
+func TestPersistedSnapshotReturnsImmediatelyAndRefreshesStaleInBackground(t *testing.T) {
+	first := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
+	var clock atomic.Value
+	clock.Store(first)
+	collector := &countingProviderCollector{refreshed: make(chan struct{})}
+	cache := &fakeUsageCacheStore{}
+	service := &Service{
+		Store: cache,
+		Collectors: map[string]ProviderCollector{
+			store.ProviderMiniMax: collector,
+		},
+		now: func() time.Time { return clock.Load().(time.Time) },
+	}
+	config := []store.SourceConfig{apiConfig(store.ProviderMiniMax, "scope")}
+
+	initial, err := service.Snapshot(context.Background(), config, 30, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clock.Store(first.Add(slowProbeCacheDuration + time.Minute))
+	cached, err := service.Snapshot(context.Background(), config, 30, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cached.GeneratedAt.Equal(initial.GeneratedAt) {
+		t.Fatalf("cached generated_at = %s, want %s", cached.GeneratedAt, initial.GeneratedAt)
+	}
+
+	select {
+	case <-collector.refreshed:
+	case <-time.After(time.Second):
+		t.Fatal("stale snapshot did not trigger a background refresh")
+	}
+	if calls := collector.calls.Load(); calls != 2 {
+		t.Fatalf("collector calls = %d, want 2", calls)
+	}
+}
+
+func TestPreserveLastGoodSnapshotAcrossFailedRefresh(t *testing.T) {
+	updated := time.Date(2026, 7, 11, 9, 0, 0, 0, time.UTC)
+	previous := store.UsageSnapshot{
+		Providers: []store.ProviderSnapshot{{
+			Provider: store.ProviderGrok, Plan: "SuperGrok",
+			Status: store.StatusOK, AllowanceStatus: store.StatusOK,
+			AllowanceUpdatedAt: &updated,
+			Windows:            []store.UsageWindow{{ID: "weekly", UsedPercent: numberPtr(12)}},
+			Observed:           store.ObservedUsage{Requests: 4, InputTokens: 80},
+			ObservedSource:     "cli", ObservedSourceLabel: "Grok CLI logs",
+		}},
+		OpenRouter: store.OpenRouterSnapshot{Status: store.StatusOK},
+	}
+	current := store.UsageSnapshot{
+		Providers: []store.ProviderSnapshot{{
+			Provider: store.ProviderGrok, Status: store.StatusError,
+			AllowanceStatus: store.StatusError, AllowanceError: "probe failed",
+			Windows: []store.UsageWindow{},
+		}},
+		OpenRouter: store.OpenRouterSnapshot{Status: store.StatusError, Error: "offline"},
+	}
+	preserveLastGoodSnapshot(&current, previous)
+	grok := current.Providers[0]
+	if grok.Status != store.StatusPartial || !grok.AllowanceStale || len(grok.Windows) != 1 ||
+		grok.Observed.Requests != 4 || grok.ObservedSourceLabel != "Grok CLI logs" {
+		t.Fatalf("grok = %+v", grok)
+	}
+	if current.OpenRouter.Status != store.StatusPartial || !current.OpenRouter.Stale ||
+		current.OpenRouter.Error != "offline" {
+		t.Fatalf("openrouter = %+v", current.OpenRouter)
 	}
 }
 

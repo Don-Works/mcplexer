@@ -4,11 +4,15 @@ package sqlite
 
 import (
 	"context"
+	"database/sql"
+	"encoding/json"
 	"fmt"
 	"time"
 
 	"github.com/don-works/mcplexer/internal/store"
 )
+
+var _ store.UsageSnapshotCache = (*DB)(nil)
 
 // ListUsageLedgerRuns returns the bounded time-window projection used by the
 // subscription dashboard. The query deliberately includes failed runs: they
@@ -43,4 +47,51 @@ func (d *DB) ListUsageLedgerRuns(
 		out = append(out, row)
 	}
 	return out, rows.Err()
+}
+
+// GetUsageSnapshot returns a durable last-known dashboard snapshot.
+func (d *DB) GetUsageSnapshot(
+	ctx context.Context, key string,
+) (store.UsageSnapshot, bool, error) {
+	var payload []byte
+	err := d.q.QueryRowContext(ctx, `
+		SELECT snapshot_json
+		FROM usage_snapshot_cache
+		WHERE cache_key = ?`, key).Scan(&payload)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return store.UsageSnapshot{}, false, nil
+		}
+		return store.UsageSnapshot{}, false, fmt.Errorf("get usage snapshot: %w", err)
+	}
+	var snapshot store.UsageSnapshot
+	if err := json.Unmarshal(payload, &snapshot); err != nil {
+		return store.UsageSnapshot{}, false, fmt.Errorf("decode usage snapshot: %w", err)
+	}
+	return snapshot, true, nil
+}
+
+// PutUsageSnapshot upserts the durable last-known dashboard snapshot.
+func (d *DB) PutUsageSnapshot(
+	ctx context.Context, key string, snapshot store.UsageSnapshot,
+) error {
+	payload, err := json.Marshal(snapshot)
+	if err != nil {
+		return fmt.Errorf("encode usage snapshot: %w", err)
+	}
+	_, err = d.q.ExecContext(ctx, `
+		INSERT INTO usage_snapshot_cache (
+			cache_key, window_days, snapshot_json, generated_at, updated_at
+		) VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT(cache_key) DO UPDATE SET
+			window_days = excluded.window_days,
+			snapshot_json = excluded.snapshot_json,
+			generated_at = excluded.generated_at,
+			updated_at = excluded.updated_at`,
+		key, snapshot.WindowDays, payload,
+		formatTime(snapshot.GeneratedAt.UTC()), formatTime(time.Now().UTC()))
+	if err != nil {
+		return fmt.Errorf("put usage snapshot: %w", err)
+	}
+	return nil
 }

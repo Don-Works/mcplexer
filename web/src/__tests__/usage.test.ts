@@ -15,7 +15,7 @@ describe('usage api client', () => {
 
     await getUsage(14)
 
-    expect(request).toHaveBeenCalledWith('/usage?days=14')
+    expect(request).toHaveBeenCalledWith('/usage?days=14', undefined, { timeoutMs: 60_000 })
   })
 
   it('forces a refresh with an extended timeout', async () => {

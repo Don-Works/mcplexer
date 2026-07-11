@@ -97,12 +97,13 @@ export interface UsageResponse {
   window_days: number
   providers: ProviderUsage[]
   openrouter: OpenRouterUsage
+  cache_error?: string
 }
 
 // --- API functions ---
 
 export function getUsage(days = 30): Promise<UsageResponse> {
-  return request(`/usage?days=${days}`)
+  return request(`/usage?days=${days}`, undefined, { timeoutMs: 60_000 })
 }
 
 export function refreshUsage(days = 30): Promise<UsageResponse> {

@@ -21,7 +21,7 @@ const grokTextDebugBilling = `2026-07-10 DEBUG gateway received ext_method respo
 
 func TestParseGrokBillingMapsTierWeeklyWindowAndPercent(t *testing.T) {
 	parsed := parseGrokDebugOutput([]byte(grokBillingFixture))
-	if parsed.plan != "SuperGrok Heavy" || len(parsed.windows) != 1 {
+	if parsed.plan != "SuperGrok Heavy" || len(parsed.windows) != 2 {
 		t.Fatalf("parsed = %+v", parsed)
 	}
 	window := parsed.windows[0]
@@ -33,13 +33,17 @@ func TestParseGrokBillingMapsTierWeeklyWindowAndPercent(t *testing.T) {
 	if window.ResetsAt == nil || !window.ResetsAt.Equal(wantReset) {
 		t.Fatalf("reset = %v", window.ResetsAt)
 	}
+	onDemand := parsed.windows[1]
+	requireNumber(t, onDemand.Limit, 100)
+	requireNumber(t, onDemand.UsedPercent, 0)
 }
 
-func TestParseGrokBillingOmitsZeroPercent(t *testing.T) {
+func TestParseGrokBillingTreatsStructurallyOmittedPercentAsZero(t *testing.T) {
 	parsed := parseGrokDebugOutput([]byte(grokBillingOmittedPercent))
-	if len(parsed.windows) != 1 || parsed.windows[0].UsedPercent != nil {
+	if len(parsed.windows) != 1 {
 		t.Fatalf("parsed = %+v", parsed)
 	}
+	requireNumber(t, parsed.windows[0].UsedPercent, 0)
 }
 
 func TestParseGrokBillingPreservesExplicitZeroPercent(t *testing.T) {

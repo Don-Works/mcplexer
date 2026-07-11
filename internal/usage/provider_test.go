@@ -38,7 +38,7 @@ func TestProviderSnapshotMixedAllowanceAndCLIObserved(t *testing.T) {
 	if mini.AllowanceStatus != store.StatusOK || mini.AllowanceSource != "api" {
 		t.Fatalf("allowance = status:%s source:%s", mini.AllowanceStatus, mini.AllowanceSource)
 	}
-	if mini.ObservedSource != "cli" || mini.ObservedSourceLabel != "opencode CLI stats" {
+	if mini.ObservedSource != "cli" || mini.ObservedSourceLabel != "OpenCode CLI stats" {
 		t.Fatalf("observed lineage = %s / %s", mini.ObservedSource, mini.ObservedSourceLabel)
 	}
 	if mini.Observed.Requests != 4 || mini.Observed.InputTokens != 40 {
@@ -47,8 +47,29 @@ func TestProviderSnapshotMixedAllowanceAndCLIObserved(t *testing.T) {
 	if mini.ObservedCostKind != store.ObservedCostEstimate {
 		t.Fatalf("observed_cost_kind = %q", mini.ObservedCostKind)
 	}
-	if mini.Source != "cli" || mini.SourceLabel != "opencode CLI stats" {
+	if mini.Source != "cli" || mini.SourceLabel != "OpenCode CLI stats" {
 		t.Fatalf("backward compat source = %s / %s", mini.Source, mini.SourceLabel)
+	}
+}
+
+func TestGrokLocalLogsSupersedeUnmeasuredLedgerRuns(t *testing.T) {
+	service := &Service{
+		Store: &fakeUsageStore{runs: []store.UsageLedgerRun{{
+			ModelProvider: "grok_cli", SubscriptionBucket: "grok", Status: "success",
+		}}},
+		LocalStats: map[string]LocalStatsCollector{"grok": &fakeLocalStats{stats: []clistats.ModelStats{{
+			Model: "grok/grok-code-fast-1", Requests: 3, InputTokens: 40,
+			OutputTokens: 12, CacheReadTokens: 80,
+		}}}},
+	}
+	snapshot, err := service.Snapshot(context.Background(), nil, 30, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	grok := providerByName(t, snapshot, store.ProviderGrok)
+	if grok.ObservedSource != "cli" || grok.ObservedSourceLabel != "Grok CLI logs" ||
+		grok.Observed.Requests != 3 || grok.Observed.AccountingMissingRuns != 0 {
+		t.Fatalf("grok observed = %+v source=%s/%s", grok.Observed, grok.ObservedSource, grok.ObservedSourceLabel)
 	}
 }
 

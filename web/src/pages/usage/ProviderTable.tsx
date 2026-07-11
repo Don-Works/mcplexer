@@ -1,3 +1,21 @@
+import { GripVertical } from 'lucide-react'
+import {
+  closestCenter,
+  DndContext,
+  KeyboardSensor,
+  PointerSensor,
+  TouchSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core'
+import {
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -20,11 +38,24 @@ export { lineageStatusLabel } from '@/pages/usage/usageFormat'
 export function ProviderTable({
   providers,
   windowDays,
+  onReorder,
 }: {
   providers: ProviderUsage[]
   windowDays?: number
+  onReorder?: (from: string, to: string) => void
 }) {
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 150, tolerance: 5 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  )
   if (providers.length === 0) return null
+
+  function handleDragEnd(event: DragEndEvent) {
+    if (event.over && event.active.id !== event.over.id) {
+      onReorder?.(String(event.active.id), String(event.over.id))
+    }
+  }
 
   return (
     <Card>
@@ -39,25 +70,37 @@ export function ProviderTable({
         </CardTitle>
       </CardHeader>
       <CardContent className="p-0">
-        <ProviderMobileList providers={providers} />
+        <ProviderMobileList providers={providers} onReorder={onReorder} />
         <div className="hidden md:block">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Provider</TableHead>
-                <TableHead>Lineage</TableHead>
-                <TableHead className="text-right">Requests</TableHead>
-                <TableHead className="text-right">Tokens</TableHead>
-                <TableHead className="text-right">Cost</TableHead>
-                <TableHead className="min-w-[200px]">Live allowance</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {providers.map((p) => (
-                <ProviderRow key={p.provider} provider={p} />
-              ))}
-            </TableBody>
-          </Table>
+          <DndContext
+            sensors={sensors}
+            collisionDetection={closestCenter}
+            onDragEnd={handleDragEnd}
+          >
+            <SortableContext
+              items={providers.map((provider) => provider.provider)}
+              strategy={verticalListSortingStrategy}
+            >
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="w-10"><span className="sr-only">Order</span></TableHead>
+                    <TableHead>Provider</TableHead>
+                    <TableHead>Lineage</TableHead>
+                    <TableHead className="text-right">Requests</TableHead>
+                    <TableHead className="text-right">Tokens</TableHead>
+                    <TableHead className="text-right">Cost</TableHead>
+                    <TableHead className="min-w-[200px]">Live allowance</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {providers.map((provider) => (
+                    <ProviderRow key={provider.provider} provider={provider} />
+                  ))}
+                </TableBody>
+              </Table>
+            </SortableContext>
+          </DndContext>
         </div>
       </CardContent>
     </Card>
@@ -68,9 +111,35 @@ function ProviderRow({ provider }: { provider: ProviderUsage }) {
   const totalTokens = observedTokens(provider.observed)
   const allowanceWindows = provider.windows.filter(isAllowanceWindow)
   const hasObserved = hasObservedTotals(provider.observed)
+  const {
+    attributes,
+    listeners,
+    setActivatorNodeRef,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: provider.provider })
 
   return (
-    <TableRow>
+    <TableRow
+      ref={setNodeRef}
+      className={isDragging ? 'relative z-10 bg-accent/40 shadow-lg' : undefined}
+      style={{ transform: CSS.Transform.toString(transform), transition }}
+    >
+      <TableCell className="w-10 px-2">
+        <button
+          ref={setActivatorNodeRef}
+          type="button"
+          className="inline-flex h-8 w-8 touch-none items-center justify-center text-muted-foreground hover:bg-muted hover:text-foreground active:cursor-grabbing"
+          aria-label={`Reorder ${provider.label}`}
+          title="Drag to reorder. Space and arrow keys also work."
+          {...attributes}
+          {...listeners}
+        >
+          <GripVertical className="h-4 w-4" aria-hidden="true" />
+        </button>
+      </TableCell>
       <TableCell>
         <div className="font-medium">{provider.label}</div>
         {provider.plan && (

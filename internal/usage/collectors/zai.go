@@ -163,7 +163,7 @@ func mapZAIWindow(entry map[string]any) (store.UsageWindow, bool) {
 func hasZAIWindowMeasurement(window store.UsageWindow, limitType string) bool {
 	if strings.EqualFold(limitType, "TOKENS_LIMIT") && window.Used == nil &&
 		window.Limit == nil && window.Remaining == nil {
-		return window.UsedPercent != nil && *window.UsedPercent > 0
+		return window.UsedPercent != nil
 	}
 	return hasWindowMeasurement(window)
 }

@@ -9,6 +9,7 @@ import (
 	"github.com/don-works/mcplexer/internal/usage"
 	"github.com/don-works/mcplexer/internal/usage/clistats"
 	"github.com/don-works/mcplexer/internal/usage/collectors"
+	"github.com/don-works/mcplexer/internal/usage/grokstats"
 )
 
 func buildUsageService(
@@ -41,6 +42,7 @@ func buildUsageService(
 		LocalStats: map[string]usage.LocalStatsCollector{
 			"opencode": usage.HarnessStatsCollector{Runner: statsRunner, Binary: opencodeBinary},
 			"mimo":     usage.HarnessStatsCollector{Runner: statsRunner, Binary: mimoBinary},
+			"grok":     grokstats.Collector{},
 		},
 	}
 }

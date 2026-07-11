@@ -38,6 +38,40 @@ func TestListUsageLedgerRunsHonorsWindowAndProjectsAccounting(t *testing.T) {
 	}
 }
 
+func TestUsageSnapshotCacheRoundTrip(t *testing.T) {
+	t.Parallel()
+	db := newTestDB(t)
+	ctx := context.Background()
+	generated := time.Date(2026, 7, 11, 9, 30, 0, 0, time.UTC)
+	want := store.UsageSnapshot{
+		GeneratedAt: generated,
+		WindowDays:  30,
+		Providers: []store.ProviderSnapshot{{
+			Provider: store.ProviderMiMo,
+			Label:    "MiMo",
+			Status:   store.StatusOK,
+			Observed: store.ObservedUsage{Requests: 7, TotalTokens: 1234},
+			Windows:  []store.UsageWindow{},
+		}},
+		OpenRouter: store.OpenRouterSnapshot{Status: store.StatusUnavailable},
+	}
+
+	if err := db.PutUsageSnapshot(ctx, "test-key", want); err != nil {
+		t.Fatal(err)
+	}
+	got, found, err := db.GetUsageSnapshot(ctx, "test-key")
+	if err != nil || !found {
+		t.Fatalf("found=%v err=%v", found, err)
+	}
+	if !got.GeneratedAt.Equal(generated) || got.WindowDays != 30 ||
+		len(got.Providers) != 1 || got.Providers[0].Observed.TotalTokens != 1234 {
+		t.Fatalf("snapshot = %+v", got)
+	}
+	if _, found, err := db.GetUsageSnapshot(ctx, "missing"); err != nil || found {
+		t.Fatalf("missing found=%v err=%v", found, err)
+	}
+}
+
 func insertUsageRun(
 	t *testing.T,
 	db interface {

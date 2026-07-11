@@ -91,7 +91,7 @@ var AllProviders = []string{
 var ProviderLabels = map[string]string{
 	ProviderClaude: "Claude", ProviderCodex: "Codex",
 	ProviderMiniMax: "MiniMax", ProviderZAI: "Z.AI",
-	ProviderGrok: "Grok", ProviderMiMo: "MiMo",
+	ProviderGrok: "Grok", ProviderMiMo: "MiMoCode",
 }
 
 // SourceConfig configures one provider's usage data source.
@@ -221,6 +221,7 @@ type UsageSnapshot struct {
 	WindowDays  int                `json:"window_days"`
 	Providers   []ProviderSnapshot `json:"providers"`
 	OpenRouter  OpenRouterSnapshot `json:"openrouter"`
+	CacheError  string             `json:"cache_error,omitempty"`
 }
 
 // UsageLedgerRun is the minimal worker_runs projection needed by the usage
@@ -256,4 +257,12 @@ type UsageStore interface {
 	// ListUsageLedgerRuns returns every worker run at or after since, ordered
 	// newest first. It is the authoritative observed-usage window.
 	ListUsageLedgerRuns(ctx context.Context, since time.Time) ([]UsageLedgerRun, error)
+}
+
+// UsageSnapshotCache persists the assembled dashboard separately from the
+// accounting ledger. Implementations let reads paint the last-known snapshot
+// immediately while slow provider probes refresh it in the background.
+type UsageSnapshotCache interface {
+	GetUsageSnapshot(ctx context.Context, key string) (UsageSnapshot, bool, error)
+	PutUsageSnapshot(ctx context.Context, key string, snapshot UsageSnapshot) error
 }

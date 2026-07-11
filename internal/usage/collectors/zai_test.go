@@ -63,14 +63,15 @@ func TestParseZAIWrapperVariants(t *testing.T) {
 	}
 }
 
-func TestParseZAISparseZeroTokenLimitIsNotMeaningful(t *testing.T) {
+func TestParseZAIPresentZeroTokenPercentageIsMeasured(t *testing.T) {
 	windows, err := parseZAIResponse([]byte(`{"data":{"limits":[
       {"type":"TIME_LIMIT","usage":4000,"currentValue":0,"percentage":0},
       {"type":"TOKENS_LIMIT","percentage":0}
     ]}}`))
-	if err != nil || len(windows) != 1 || windows[0].ID != "zai_timelimit" {
+	if err != nil || len(windows) != 2 || windows[1].ID != "zai_tokenslimit" {
 		t.Fatalf("windows=%+v err=%v", windows, err)
 	}
+	requireNumber(t, windows[1].UsedPercent, 0)
 }
 
 func TestParseZAIPlanLevel(t *testing.T) {

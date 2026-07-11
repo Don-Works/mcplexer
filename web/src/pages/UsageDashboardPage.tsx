@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { Gauge, Loader2, RefreshCw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useApi } from '@/hooks/use-api'
@@ -7,11 +7,30 @@ import { getUsage, refreshUsage, type UsageResponse } from '@/api/usage'
 import { ProviderTable } from '@/pages/usage/ProviderTable'
 import { OpenRouterSection } from '@/pages/usage/OpenRouterSection'
 import { SkeletonPage } from '@/pages/usage/SkeletonPage'
+import {
+  moveProvider,
+  readProviderOrder,
+  sortProviders,
+  writeProviderOrder,
+} from '@/pages/usage/providerOrder'
 
 export function UsageDashboardPage() {
   const fetcher = useCallback(() => getUsage(30), [])
   const { data, loading, error, refetch } = useApi(fetcher, 60_000)
   const [refreshing, setRefreshing] = useState(false)
+  const [providerOrder, setProviderOrder] = useState(readProviderOrder)
+  const orderedProviders = useMemo(
+    () => sortProviders(data?.providers ?? [], providerOrder),
+    [data?.providers, providerOrder],
+  )
+
+  function handleProviderReorder(from: string, to: string) {
+    const completeOrder = sortProviders(data?.providers ?? [], providerOrder)
+      .map((provider) => provider.provider)
+    const next = moveProvider(completeOrder, from, to)
+    setProviderOrder(next)
+    writeProviderOrder(next)
+  }
 
   async function handleRefresh() {
     setRefreshing(true)
@@ -41,11 +60,21 @@ export function UsageDashboardPage() {
         </div>
       )}
 
+      {data?.cache_error && (
+        <div className="border border-amber-500/40 bg-amber-500/5 p-3 text-sm text-amber-400">
+          Usage is live, but its local cache could not be updated: {data.cache_error}
+        </div>
+      )}
+
       {loading && !data ? <SkeletonPage /> : null}
 
       {data && (
         <>
-          <ProviderTable providers={data.providers} windowDays={data.window_days} />
+          <ProviderTable
+            providers={orderedProviders}
+            windowDays={data.window_days}
+            onReorder={handleProviderReorder}
+          />
           <OpenRouterSection openrouter={data.openrouter} />
         </>
       )}

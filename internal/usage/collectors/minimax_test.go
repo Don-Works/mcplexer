@@ -68,7 +68,7 @@ func TestParseMiniMaxLiveCodingPlanWindows(t *testing.T) {
        "weekly_end_time":1771253202389}
     ]}`
 	windows, err := parseMiniMaxResponse([]byte(body))
-	if err != nil || len(windows) != 4 {
+	if err != nil || len(windows) != 2 {
 		t.Fatalf("windows=%+v err=%v", windows, err)
 	}
 	byLabel := make(map[string]store.UsageWindow)
@@ -77,8 +77,21 @@ func TestParseMiniMaxLiveCodingPlanWindows(t *testing.T) {
 	}
 	requireNumber(t, byLabel["general (5-hour)"].UsedPercent, 9)
 	requireNumber(t, byLabel["general (weekly)"].UsedPercent, 26)
-	requireNumber(t, byLabel["video (5-hour)"].Used, 20)
-	requireNumber(t, byLabel["video (weekly)"].UsedPercent, 30)
+	if _, ok := byLabel["video (5-hour)"]; ok {
+		t.Fatal("unavailable video bucket should not be shown on the coding dashboard")
+	}
+}
+
+func TestMiniMaxExplicitRemainingPercentWinsOverCounts(t *testing.T) {
+	windows, err := parseMiniMaxResponse([]byte(`{"model_remains":[{
+		"model_name":"general","current_interval_total_count":100,
+		"current_interval_usage_count":80,"current_interval_remaining_percent":55
+	}]}`))
+	if err != nil || len(windows) != 1 {
+		t.Fatalf("windows=%+v err=%v", windows, err)
+	}
+	requireNumber(t, windows[0].Remaining, 80)
+	requireNumber(t, windows[0].UsedPercent, 45)
 }
 
 func TestParseMiniMaxRemainingPercentAndCounts(t *testing.T) {

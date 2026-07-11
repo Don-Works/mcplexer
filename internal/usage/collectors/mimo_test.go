@@ -25,7 +25,7 @@ func TestMiMoCollectorAuthenticatedWithoutFakeAllowance(t *testing.T) {
 	if snapshot.Status != store.StatusOK || snapshot.AllowanceSource != "auth" || len(snapshot.Windows) != 0 {
 		t.Fatalf("snapshot = status:%s windows:%d", snapshot.Status, len(snapshot.Windows))
 	}
-	if snapshot.Detail != "authenticated provider xiaomi; no live allowance endpoint is available" {
+	if snapshot.Detail != "Local MiMoCode session usage collected; subscription balance is not exposed by the CLI/API" {
 		t.Fatalf("detail = %q", snapshot.Detail)
 	}
 	if strings.Contains(snapshot.Detail, "user@example.com") || strings.Contains(snapshot.Detail, "u-123") {

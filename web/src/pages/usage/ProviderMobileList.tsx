@@ -1,4 +1,22 @@
 import { Badge } from '@/components/ui/badge'
+import { GripVertical } from 'lucide-react'
+import {
+  closestCenter,
+  DndContext,
+  KeyboardSensor,
+  PointerSensor,
+  TouchSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core'
+import {
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
 import type { ProviderUsage, UsageWindow } from '@/api/usage'
 import {
   formatFreshness,
@@ -12,13 +30,35 @@ import {
   statusVariant,
 } from '@/pages/usage/usageFormat'
 
-export function ProviderMobileList({ providers }: { providers: ProviderUsage[] }) {
+export function ProviderMobileList({ providers, onReorder }: {
+  providers: ProviderUsage[]
+  onReorder?: (from: string, to: string) => void
+}) {
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 150, tolerance: 5 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  )
+
+  function handleDragEnd(event: DragEndEvent) {
+    if (event.over && event.active.id !== event.over.id) {
+      onReorder?.(String(event.active.id), String(event.over.id))
+    }
+  }
+
   return (
-    <div className="divide-y md:hidden">
-      {providers.map((provider) => (
-        <MobileProvider key={provider.provider} provider={provider} />
-      ))}
-    </div>
+    <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+      <SortableContext
+        items={providers.map((provider) => provider.provider)}
+        strategy={verticalListSortingStrategy}
+      >
+        <div className="divide-y md:hidden">
+          {providers.map((provider) => (
+            <MobileProvider key={provider.provider} provider={provider} />
+          ))}
+        </div>
+      </SortableContext>
+    </DndContext>
   )
 }
 
@@ -27,13 +67,39 @@ function MobileProvider({ provider }: { provider: ProviderUsage }) {
   const windows = provider.windows.filter(hasAllowanceData)
   const isAuth = provider.allowance_source === 'auth'
   const allowanceStatus = provider.allowance_status ?? (windows.length > 0 ? provider.status : 'unavailable')
+  const {
+    attributes,
+    listeners,
+    setActivatorNodeRef,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: provider.provider })
 
   return (
-    <article className="space-y-4 p-4">
-      <div>
-        <div className="font-medium">{provider.label}</div>
-        {provider.plan && <div className="text-xs text-muted-foreground">{provider.plan}</div>}
-        {provider.detail && <div className="mt-1 text-xs text-muted-foreground">{provider.detail}</div>}
+    <article
+      ref={setNodeRef}
+      className={`space-y-4 p-4 ${isDragging ? 'relative z-10 bg-accent/40 shadow-lg' : ''}`}
+      style={{ transform: CSS.Transform.toString(transform), transition }}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="font-medium">{provider.label}</div>
+          {provider.plan && <div className="text-xs text-muted-foreground">{provider.plan}</div>}
+          {provider.detail && <div className="mt-1 text-xs text-muted-foreground">{provider.detail}</div>}
+        </div>
+        <button
+          ref={setActivatorNodeRef}
+          type="button"
+          className="inline-flex h-11 w-11 touch-none shrink-0 items-center justify-center text-muted-foreground hover:bg-muted hover:text-foreground active:cursor-grabbing"
+          aria-label={`Reorder ${provider.label}`}
+          title="Drag to reorder. Space and arrow keys also work."
+          {...attributes}
+          {...listeners}
+        >
+          <GripVertical className="h-4 w-4" aria-hidden="true" />
+        </button>
       </div>
 
       <div className="grid grid-cols-2 gap-3">

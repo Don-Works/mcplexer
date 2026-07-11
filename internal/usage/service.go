@@ -2,6 +2,13 @@ package usage
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
+	"log"
+	"sort"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -32,7 +39,7 @@ type Service struct {
 	Store       store.UsageStore
 	Collectors  map[string]ProviderCollector
 	ORCollector ORCollector
-	LocalStats  map[string]LocalStatsCollector // opencode, mimo
+	LocalStats  map[string]LocalStatsCollector // opencode, mimo, grok
 
 	mu              sync.Mutex
 	providerCache   map[string]providerCacheEntry
@@ -41,6 +48,7 @@ type Service struct {
 	providerFlights map[string]*providerFlight
 	orFlights       map[string]*openRouterFlight
 	localFlights    map[string]*localStatsFlight
+	snapshotRefresh map[string]bool
 	now             func() time.Time
 }
 
@@ -52,6 +60,34 @@ func (s *Service) Snapshot(
 ) (store.UsageSnapshot, error) {
 	days = normalizeDays(days)
 	now := s.clock()().UTC()
+	cacheKey := snapshotCacheKey(configs, days)
+	persisted, found, cacheReadErr := s.loadPersistedSnapshot(ctx, cacheKey)
+	if !force && found {
+		if now.Sub(persisted.GeneratedAt) >= slowProbeCacheDuration {
+			s.refreshPersistedSnapshot(cacheKey, configs, days, persisted)
+		}
+		return persisted, nil
+	}
+	var fallback *store.UsageSnapshot
+	if found {
+		fallback = &persisted
+	}
+	snapshot, err := s.snapshotFresh(ctx, configs, days, force, now, cacheKey, fallback)
+	if cacheReadErr != nil && snapshot.CacheError == "" {
+		snapshot.CacheError = fmt.Sprintf("usage cache read failed: %v", cacheReadErr)
+	}
+	return snapshot, err
+}
+
+func (s *Service) snapshotFresh(
+	ctx context.Context,
+	configs []store.SourceConfig,
+	days int,
+	force bool,
+	now time.Time,
+	cacheKey string,
+	fallback *store.UsageSnapshot,
+) (store.UsageSnapshot, error) {
 	runs, ledgerErr := s.loadLedger(ctx, days, now)
 	local := s.loadLocalStats(ctx, days, force)
 	byProvider := normalizeConfigs(configs)
@@ -76,12 +112,126 @@ func (s *Service) Snapshot(
 		)
 	}()
 	wg.Wait()
-	return store.UsageSnapshot{
+	snapshot := store.UsageSnapshot{
 		GeneratedAt: now,
 		WindowDays:  days,
 		Providers:   providers,
 		OpenRouter:  openrouter,
-	}, nil
+	}
+	if fallback != nil {
+		preserveLastGoodSnapshot(&snapshot, *fallback)
+	}
+	if err := s.persistSnapshot(ctx, cacheKey, snapshot); err != nil {
+		snapshot.CacheError = fmt.Sprintf("usage cache write failed: %v", err)
+	}
+	return snapshot, nil
+}
+
+func (s *Service) loadPersistedSnapshot(
+	ctx context.Context, key string,
+) (store.UsageSnapshot, bool, error) {
+	cache, ok := s.Store.(store.UsageSnapshotCache)
+	if !ok {
+		return store.UsageSnapshot{}, false, nil
+	}
+	snapshot, found, err := cache.GetUsageSnapshot(ctx, key)
+	return snapshot, found && err == nil, err
+}
+
+func (s *Service) persistSnapshot(
+	ctx context.Context, key string, snapshot store.UsageSnapshot,
+) error {
+	if cache, ok := s.Store.(store.UsageSnapshotCache); ok {
+		return cache.PutUsageSnapshot(ctx, key, snapshot)
+	}
+	return nil
+}
+
+func (s *Service) refreshPersistedSnapshot(
+	key string, configs []store.SourceConfig, days int, fallback store.UsageSnapshot,
+) {
+	s.mu.Lock()
+	if s.snapshotRefresh == nil {
+		s.snapshotRefresh = make(map[string]bool)
+	}
+	if s.snapshotRefresh[key] {
+		s.mu.Unlock()
+		return
+	}
+	s.snapshotRefresh[key] = true
+	s.mu.Unlock()
+
+	configCopy := append([]store.SourceConfig(nil), configs...)
+	go func() {
+		defer func() {
+			s.mu.Lock()
+			delete(s.snapshotRefresh, key)
+			s.mu.Unlock()
+		}()
+		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+		defer cancel()
+		snapshot, _ := s.snapshotFresh(ctx, configCopy, days, true, s.clock()().UTC(), key, &fallback)
+		if snapshot.CacheError != "" {
+			log.Printf("usage snapshot background refresh: %s", snapshot.CacheError)
+		}
+	}()
+}
+
+func preserveLastGoodSnapshot(current *store.UsageSnapshot, previous store.UsageSnapshot) {
+	previousProviders := make(map[string]store.ProviderSnapshot, len(previous.Providers))
+	for _, provider := range previous.Providers {
+		previousProviders[provider.Provider] = provider
+	}
+	for index := range current.Providers {
+		provider := &current.Providers[index]
+		old, ok := previousProviders[provider.Provider]
+		if !ok {
+			continue
+		}
+		if len(provider.Windows) == 0 && len(old.Windows) > 0 &&
+			provider.AllowanceStatus != store.StatusOK {
+			provider.Windows = old.Windows
+			provider.AllowanceUpdatedAt = old.AllowanceUpdatedAt
+			provider.AllowanceStale = true
+			provider.Stale = true
+			provider.AllowanceStatus = store.StatusPartial
+			provider.Status = store.StatusPartial
+			if provider.Plan == "" {
+				provider.Plan = old.Plan
+			}
+		}
+		if provider.ObservedUpdatedAt == nil && !hasObserved(provider.Observed) && hasObserved(old.Observed) {
+			provider.Observed = old.Observed
+			provider.ObservedSource = old.ObservedSource
+			provider.ObservedSourceLabel = old.ObservedSourceLabel
+			provider.ObservedUpdatedAt = old.ObservedUpdatedAt
+			provider.ObservedCostKind = old.ObservedCostKind
+			provider.Detail = appendDetail(provider.Detail, "showing last-known local observation")
+			if provider.Status == store.StatusUnavailable || provider.Status == store.StatusError {
+				provider.Status = store.StatusPartial
+			}
+		}
+	}
+	if current.OpenRouter.Status != store.StatusOK && previous.OpenRouter.Status == store.StatusOK {
+		current.OpenRouter.Credits = previous.OpenRouter.Credits
+		current.OpenRouter.Status = store.StatusPartial
+		current.OpenRouter.Stale = true
+	}
+}
+
+func snapshotCacheKey(configs []store.SourceConfig, days int) string {
+	byProvider := normalizeConfigs(configs)
+	providers := make([]string, 0, len(byProvider))
+	for provider := range byProvider {
+		providers = append(providers, provider)
+	}
+	sort.Strings(providers)
+	parts := []string{"usage-snapshot-v1", strconv.Itoa(days)}
+	for _, provider := range providers {
+		parts = append(parts, sourceCacheKey(byProvider[provider]))
+	}
+	sum := sha256.Sum256([]byte(strings.Join(parts, "\x01")))
+	return hex.EncodeToString(sum[:])
 }
 
 func (s *Service) loadLedger(

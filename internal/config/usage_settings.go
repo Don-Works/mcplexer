@@ -69,8 +69,8 @@ func usageSourceKind(source UsageSourceSettings) string {
 var usageSecretKeyRE = regexp.MustCompile(`^[A-Za-z0-9._-]{1,128}$`)
 
 var usageProviderHosts = map[string]map[string]bool{
-	"minimax":    {"www.minimax.io": true, "api.minimax.io": true},
-	"zai":        {"api.z.ai": true, "open.bigmodel.cn": true},
+	"minimax":    {"www.minimax.io": true, "api.minimax.io": true, "api.minimaxi.com": true},
+	"zai":        {"api.z.ai": true, "open.bigmodel.cn": true, "dev.bigmodel.cn": true},
 	"openrouter": {"openrouter.ai": true},
 }
 

@@ -3,7 +3,6 @@ package collectors
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"os/exec"
 	"regexp"
 	"strings"
@@ -132,8 +131,8 @@ func mimoAuthResult(
 	snapshot.AllowanceSource = "auth"
 	snapshot.AllowanceSourceLabel = "MiMo CLI auth"
 	snapshot.Windows = []store.UsageWindow{}
-	if parsed.provider != "" {
-		snapshot.Detail = fmt.Sprintf("authenticated provider %s", parsed.provider)
+	if snapshot.Plan == "" {
+		snapshot.Plan = "MiMoCode"
 	}
 	if len(parsed.errors) > 0 {
 		snapshot.Status = store.StatusPartial
@@ -146,15 +145,8 @@ func mimoAuthResult(
 	snapshot.AllowanceStatus = store.StatusOK
 	snapshot.UpdatedAt = timePtr(start)
 	snapshot.AllowanceUpdatedAt = timePtr(start)
-	snapshot.Detail = appendMiMoDetail(snapshot.Detail, "no live allowance endpoint is available")
+	snapshot.Detail = "Local MiMoCode session usage collected; subscription balance is not exposed by the CLI/API"
 	return store.CollectorResult{Snapshot: snapshot, Duration: time.Since(start)}
-}
-
-func appendMiMoDetail(existing, addition string) string {
-	if existing == "" {
-		return addition
-	}
-	return existing + "; " + addition
 }
 
 func redactMiMoError(err error) string {

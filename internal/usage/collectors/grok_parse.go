@@ -100,11 +100,18 @@ func grokEmbeddedBillingResponse(line []byte) (grokBillingResponse, bool) {
 }
 
 func grokWindowsFromConfig(config grokBillingConf) []store.UsageWindow {
+	windows := make([]store.UsageWindow, 0, 3)
 	window := grokWeeklyWindow(config)
-	if window == nil {
-		return nil
+	if window != nil {
+		windows = append(windows, *window)
 	}
-	return []store.UsageWindow{*window}
+	if onDemand := grokOnDemandWindow(config); onDemand != nil {
+		windows = append(windows, *onDemand)
+	}
+	if prepaid := grokPrepaidWindow(config); prepaid != nil {
+		windows = append(windows, *prepaid)
+	}
+	return windows
 }
 
 func grokWeeklyWindow(config grokBillingConf) *store.UsageWindow {
@@ -116,16 +123,71 @@ func grokWeeklyWindow(config grokBillingConf) *store.UsageWindow {
 	reset := grokPeriodReset(period.End)
 	usedPercent, hasPercent := grokOptionalPercent(config.CreditUsagePercent)
 	window := store.UsageWindow{
-		ID: "grok_weekly_pool", Label: "Weekly shared pool",
+		ID: "grok_shared_pool", Label: grokPeriodLabel(period.Type),
 		Unit: store.UnitPercent, DurationMinutes: duration, ResetsAt: reset,
 	}
 	if hasPercent {
 		window.UsedPercent = usedPercent
+	} else if len(period.Start) > 0 && len(period.End) > 0 {
+		// The Grok proto-to-JSON response omits scalar zero values. A complete
+		// billing period therefore makes an omitted percentage a measured zero.
+		window.UsedPercent = numberPtr(0)
 	}
 	return &window
 }
 
+func grokOnDemandWindow(config grokBillingConf) *store.UsageWindow {
+	capValue, hasCap := grokOptionalNumber(config.OnDemandCap)
+	used, hasUsed := grokOptionalNumber(config.OnDemandUsed)
+	if (!hasCap || *capValue <= 0) && (!hasUsed || *used <= 0) {
+		return nil
+	}
+	window := store.UsageWindow{
+		ID: "grok_on_demand", Label: "On-demand credits", Unit: store.UnitCredits,
+	}
+	if hasCap {
+		window.Limit = capValue
+	}
+	if hasUsed {
+		window.Used = used
+	}
+	completeWindowValues(&window)
+	if window.Used != nil && window.Limit != nil && *window.Limit > 0 {
+		window.UsedPercent = numberPtr((*window.Used / *window.Limit) * 100)
+	}
+	return &window
+}
+
+func grokPrepaidWindow(config grokBillingConf) *store.UsageWindow {
+	balance, ok := grokOptionalNumber(config.PrepaidBalance)
+	if !ok || *balance <= 0 {
+		return nil
+	}
+	return &store.UsageWindow{
+		ID: "grok_prepaid", Label: "Prepaid balance", Unit: store.UnitCredits,
+		Remaining: balance,
+	}
+}
+
+func grokPeriodLabel(periodType string) string {
+	normalized := strings.ToLower(strings.TrimSpace(periodType))
+	switch {
+	case strings.Contains(normalized, "week"):
+		return "Weekly shared pool"
+	case strings.Contains(normalized, "month"):
+		return "Monthly shared pool"
+	case strings.Contains(normalized, "day"):
+		return "Daily shared pool"
+	default:
+		return "Shared subscription pool"
+	}
+}
+
 func grokOptionalPercent(raw json.RawMessage) (*float64, bool) {
+	return grokOptionalNumber(raw)
+}
+
+func grokOptionalNumber(raw json.RawMessage) (*float64, bool) {
 	if len(raw) == 0 {
 		return nil, false
 	}
@@ -133,7 +195,15 @@ func grokOptionalPercent(raw json.RawMessage) (*float64, bool) {
 	if json.Unmarshal(raw, &value) != nil {
 		return nil, false
 	}
-	return numericValue(value)
+	if number, ok := numericValue(value); ok {
+		return number, true
+	}
+	if object, ok := value.(map[string]any); ok {
+		if nested, found := lookupValue(object, "val", "value"); found {
+			return numericValue(nested)
+		}
+	}
+	return nil, false
 }
 
 func grokPeriodMinutes(period grokPeriod) int {

@@ -30,7 +30,7 @@ type localCacheEntry struct {
 
 func sourceCacheKey(cfg store.SourceConfig) string {
 	return strings.Join([]string{
-		cfg.Provider, cfg.Kind, cfg.AuthScopeID, cfg.SecretKey,
+		cfg.Provider, cfg.Kind, cfg.Label, cfg.AuthScopeID, cfg.SecretKey,
 		cfg.BaseURL, cfg.Plan, cfg.Harness,
 		fmt.Sprintf("%g:%s:%s:%d", cfg.Limit, cfg.Unit, cfg.WindowLabel, cfg.WindowMinutes),
 	}, "\x00")

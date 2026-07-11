@@ -109,7 +109,23 @@ func observedFromLocal(
 		observed.CacheWriteTokens += stat.CacheWriteTokens
 		observed.CostUSD += stat.CostUSD
 	}
-	return observed, harness + " CLI stats", observed.Requests > 0
+	// A successful local query with no rows is a measured zero, not a failure.
+	// The updated-at lineage lets durable fallback distinguish it from a probe
+	// that could not run.
+	return observed, localStatsSourceLabel(harness), true
+}
+
+func localStatsSourceLabel(harness string) string {
+	switch harness {
+	case "mimo":
+		return "MiMoCode CLI stats"
+	case "opencode":
+		return "OpenCode CLI stats"
+	case "grok":
+		return "Grok CLI logs"
+	default:
+		return harness + " CLI stats"
+	}
 }
 
 func matchesLocalProvider(provider, model string) bool {
@@ -121,6 +137,8 @@ func matchesLocalProvider(provider, model string) bool {
 		return strings.HasPrefix(model, "zai-coding-plan/")
 	case store.ProviderMiMo:
 		return strings.HasPrefix(model, "xiaomi/") || strings.HasPrefix(model, "mimo/")
+	case store.ProviderGrok:
+		return strings.HasPrefix(model, "grok/")
 	default:
 		return false
 	}
@@ -134,6 +152,8 @@ func localSelector(provider string) (string, string) {
 		return "opencode", "zai-coding-plan/"
 	case store.ProviderMiMo:
 		return "mimo", "xiaomi/"
+	case store.ProviderGrok:
+		return "grok", "grok/"
 	default:
 		return "", "\x00"
 	}

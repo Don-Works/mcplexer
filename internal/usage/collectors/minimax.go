@@ -45,7 +45,7 @@ func (c *MiniMaxCollector) Fetch(
 	}
 	snapshot := baseSnapshot(store.ProviderMiniMax, cfg, "api")
 	if snapshot.Plan == "" {
-		snapshot.Plan = "Coding Plan"
+		snapshot.Plan = "Token Plan"
 	}
 	snapshot.Status, snapshot.UpdatedAt, snapshot.Windows = store.StatusOK, timePtr(start), windows
 	return store.CollectorResult{Snapshot: snapshot, Duration: time.Since(start)}, nil
@@ -84,6 +84,12 @@ func parseMiniMaxResponse(body []byte) ([]store.UsageWindow, error) {
 			for _, raw := range remains {
 				entry, objectErr := mustObject(raw)
 				if objectErr != nil {
+					continue
+				}
+				// MiniMax projects one unified Token Plan across modality rows. Showing
+				// video beside general makes it look like a separate coding allowance,
+				// so use general as the canonical dashboard view and never sum them.
+				if normalizedKey(miniMaxLabel(entry)) == "video" {
 					continue
 				}
 				mapped := mapMiniMaxCodingPlanWindows(entry)
@@ -143,10 +149,18 @@ func miniMaxCodingPlanWindow(
 		window.Remaining = numberPtr(clamped)
 		window.Used = numberPtr(*total - clamped)
 		window.UsedPercent = numberPtr((*window.Used / *total) * 100)
-	} else if remainingPercent != nil {
-		window.Unit = store.UnitPercent
+	}
+	// Explicit remaining percentage is authoritative in the official CLI.
+	// Keep request-equivalent counts for display, but do not let them overwrite
+	// a provider-supplied percentage (including an explicit zero usage).
+	if remainingPercent != nil {
 		window.UsedPercent = numberPtr(nonNegative(100 - *remainingPercent))
-		window.Remaining = nil
+		if total == nil || *total == 0 {
+			window.Unit = store.UnitPercent
+			window.Remaining = nil
+			window.Used = nil
+			window.Limit = nil
+		}
 	}
 	return window
 }
