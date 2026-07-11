@@ -8,6 +8,7 @@ interface UseApiState<T> {
 
 interface UseApiReturn<T> extends UseApiState<T> {
   refetch: () => void
+  setData: (data: T) => void
 }
 
 type ApiFetcher<T> = (signal: AbortSignal) => Promise<T>
@@ -30,6 +31,10 @@ export function useApi<T>(
 
   const refetch = useCallback(() => {
     setTrigger((t) => t + 1)
+  }, [])
+
+  const setData = useCallback((data: T) => {
+    setState({ data, loading: false, error: null })
   }, [])
 
   useEffect(() => {
@@ -80,5 +85,5 @@ export function useApi<T>(
     }
   }, [fetcher, timeoutMs, trigger])
 
-  return { ...state, refetch }
+  return { ...state, refetch, setData }
 }

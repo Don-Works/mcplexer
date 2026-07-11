@@ -3,7 +3,6 @@ import { BrowserRouter, Link, Navigate, Route, Routes, useLocation } from 'react
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { Toaster } from '@/components/ui/sonner'
 import { useDocumentTitle } from '@/hooks/use-pending-title'
-import { CommandPalette } from '@/components/command-palette/CommandPalette'
 import { useCommandPalette } from '@/components/command-palette/use-command-palette'
 import { useSignalStream, useSignalTray } from '@/components/notifications/use-signal'
 import { useOsNotifications } from '@/components/notifications/use-os-notifications'
@@ -11,12 +10,13 @@ import { useApprovalStream } from '@/hooks/use-approval-stream'
 import { SecretPromptModal } from '@/components/SecretPromptModal'
 import { AppLayout } from '@/components/layout/AppLayout'
 import { BrainGate } from '@/components/BrainGate'
-import { QuickSetupPage } from '@/pages/QuickSetupPage'
-import { HarnessSetupPage } from '@/pages/HarnessSetupPage'
 import { serverHomePath } from '@/lib/server-profile'
 import { HealthProvider, useHealth } from '@/hooks/use-health'
 
 const DashboardPage = lazy(() => import('@/pages/DashboardPage').then(m => ({ default: m.DashboardPage })))
+const CommandPalette = lazy(() => import('@/components/command-palette/CommandPalette').then(m => ({ default: m.CommandPalette })))
+const QuickSetupPage = lazy(() => import('@/pages/QuickSetupPage').then(m => ({ default: m.QuickSetupPage })))
+const HarnessSetupPage = lazy(() => import('@/pages/HarnessSetupPage').then(m => ({ default: m.HarnessSetupPage })))
 const AuditPage = lazy(() => import('@/pages/AuditPage').then(m => ({ default: m.AuditPage })))
 const ConfigPage = lazy(() => import('@/pages/config/ConfigPage').then(m => ({ default: m.ConfigPage })))
 const WorkspacesPage = lazy(() => import('@/pages/config/WorkspacesPage').then(m => ({ default: m.WorkspacesPage })))
@@ -107,7 +107,12 @@ function NotifyBridge() {
 
 function CommandBridge() {
   const { open, setOpen } = useCommandPalette()
-  return <CommandPalette open={open} onOpenChange={setOpen} />
+  if (!open) return null
+  return (
+    <Suspense fallback={null}>
+      <CommandPalette open={open} onOpenChange={setOpen} />
+    </Suspense>
+  )
 }
 
 function ProfileHome() {

@@ -41,7 +41,7 @@ import {
   DangerousModeViewportFrame,
 } from './dangerous-mode'
 import { cn } from '@/lib/utils'
-import { useState } from 'react'
+import { createContext, useContext, useState } from 'react'
 import { SignalTray } from '@/components/notifications/SignalTray'
 import { SignalFlash } from '@/components/notifications/SignalFlash'
 import { SignalSidebarTrigger } from '@/components/notifications/SignalSidebarTrigger'
@@ -475,35 +475,103 @@ function TopBarSearch() {
   )
 }
 
-function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
-  const { data: health } = useHealth()
-
-  if (isServerProfile(health?.system)) {
-    return <ServerSidebarNav health={health} onNavigate={onNavigate} />
-  }
-
-  return <FullSidebarNav onNavigate={onNavigate} />
+type FullSidebarRuntime = {
+  kind: 'full'
+  workerLive: number
+  delegationLive: number
+  workerApprovals: number
+  pendingToolApprovals: ReturnType<typeof useApprovalStream>['pending']
+  memoryCounts: ReturnType<typeof useMemoryCounts>
+  taskOffersPending: number
+  brainEnabled: boolean | null
 }
 
-function FullSidebarNav({ onNavigate }: { onNavigate?: () => void }) {
+type ServerSidebarRuntime = {
+  kind: 'server'
+  health: HealthResponse | null
+  taskOffersPending: number
+}
+
+type SidebarRuntime = FullSidebarRuntime | ServerSidebarRuntime
+
+const SidebarRuntimeContext = createContext<SidebarRuntime | null>(null)
+
+function SidebarRuntimeProvider({ children }: { children: React.ReactNode }) {
+  const { data: health } = useHealth()
+  if (isServerProfile(health?.system)) {
+    return <ServerSidebarRuntimeProvider health={health}>{children}</ServerSidebarRuntimeProvider>
+  }
+  return <FullSidebarRuntimeProvider>{children}</FullSidebarRuntimeProvider>
+}
+
+function FullSidebarRuntimeProvider({ children }: { children: React.ReactNode }) {
+  const workerLive = useWorkerLiveCount()
+  const delegationLive = useLiveDelegationCount()
+  const workerApprovals = useWorkerApprovalCount()
+  const { pending: pendingToolApprovals } = useApprovalStream()
+  const memoryCounts = useMemoryCounts()
+  const taskOffersPending = useTaskOffersCount()
+  const { enabled: brainEnabled } = useBrainStatus()
+  const value: FullSidebarRuntime = {
+    kind: 'full',
+    workerLive,
+    delegationLive,
+    workerApprovals,
+    pendingToolApprovals,
+    memoryCounts,
+    taskOffersPending,
+    brainEnabled,
+  }
+  return <SidebarRuntimeContext.Provider value={value}>{children}</SidebarRuntimeContext.Provider>
+}
+
+function ServerSidebarRuntimeProvider({
+  health,
+  children,
+}: {
+  health: HealthResponse | null
+  children: React.ReactNode
+}) {
+  const taskOffersPending = useTaskOffersCount()
+  const value: ServerSidebarRuntime = { kind: 'server', health, taskOffersPending }
+  return <SidebarRuntimeContext.Provider value={value}>{children}</SidebarRuntimeContext.Provider>
+}
+
+function useSidebarRuntime(): SidebarRuntime {
+  const runtime = useContext(SidebarRuntimeContext)
+  if (!runtime) throw new Error('Sidebar runtime is unavailable')
+  return runtime
+}
+
+function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
+  const runtime = useSidebarRuntime()
+
+  if (runtime.kind === 'server') {
+    return <ServerSidebarNav runtime={runtime} onNavigate={onNavigate} />
+  }
+
+  return <FullSidebarNav runtime={runtime} onNavigate={onNavigate} />
+}
+
+function FullSidebarNav({
+  runtime,
+  onNavigate,
+}: {
+  runtime: FullSidebarRuntime
+  onNavigate?: () => void
+}) {
   // Workers live count drives the pulsing badge next to the Workers
   // entry — humans want to see "is anything running right now?" at a
   // glance without opening the page.
-  const workerLive = useWorkerLiveCount()
-  const delegationLive = useLiveDelegationCount()
-  // Pending propose-mode approvals → red dot. Same 5s poll as live count.
-  const workerApprovals = useWorkerApprovalCount()
-  // Pending tool-call approvals — feeds the Runtime > Approvals warn badge.
-  // Single shared EventSource via use-approval-stream (no new SSE slot).
-  const { pending: pendingToolApprovals } = useApprovalStream()
-  // Memory pending offers — sky info-badge on the Memory entry. Polled
-  // alongside total count to avoid double round-trips.
-  const memoryCounts = useMemoryCounts()
-  // Cross-peer task offers awaiting accept/decline — same info-badge
-  // treatment on the Tasks entry.
-  const taskOffersPending = useTaskOffersCount()
-  // Brain status — hide brain nav entries when disabled.
-  const { enabled: brainEnabled } = useBrainStatus()
+  const {
+    workerLive,
+    delegationLive,
+    workerApprovals,
+    pendingToolApprovals,
+    memoryCounts,
+    taskOffersPending,
+    brainEnabled,
+  } = runtime
   const inboxNavWithBadges: NavItem[] = inboxNav.map((item) => {
     if (item.href === '/app') {
       return { ...item, warnBadge: pendingToolApprovals.length }
@@ -603,13 +671,13 @@ function FullSidebarNav({ onNavigate }: { onNavigate?: () => void }) {
 }
 
 function ServerSidebarNav({
-  health,
+  runtime,
   onNavigate,
 }: {
-  health: HealthResponse | null
+  runtime: ServerSidebarRuntime
   onNavigate?: () => void
 }) {
-  const taskOffersPending = useTaskOffersCount()
+  const { health, taskOffersPending } = runtime
   const system = health?.system
   const p2pEnabled = Boolean(system?.p2p_enabled)
   const serverNav: NavItem[] = []
@@ -690,6 +758,14 @@ function ServerSidebarNav({
 }
 
 export function AppLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <SidebarRuntimeProvider>
+      <AppLayoutFrame>{children}</AppLayoutFrame>
+    </SidebarRuntimeProvider>
+  )
+}
+
+function AppLayoutFrame({ children }: { children: React.ReactNode }) {
   const [mobileOpen, setMobileOpen] = useState(false)
   const activeWorkers = useActiveWorkers()
 

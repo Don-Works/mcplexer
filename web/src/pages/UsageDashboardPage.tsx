@@ -15,8 +15,8 @@ import {
 } from '@/pages/usage/providerOrder'
 
 export function UsageDashboardPage() {
-  const fetcher = useCallback(() => getUsage(30), [])
-  const { data, loading, error, refetch } = useApi(fetcher, 60_000)
+  const fetcher = useCallback((signal: AbortSignal) => getUsage(30, { signal }), [])
+  const { data, loading, error, refetch, setData } = useApi(fetcher, 60_000)
   const [refreshing, setRefreshing] = useState(false)
   const [providerOrder, setProviderOrder] = useState(readProviderOrder)
   const orderedProviders = useMemo(
@@ -35,8 +35,7 @@ export function UsageDashboardPage() {
   async function handleRefresh() {
     setRefreshing(true)
     try {
-      await refreshUsage(30)
-      refetch()
+      setData(await refreshUsage(30))
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Usage refresh failed')
     } finally {

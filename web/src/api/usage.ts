@@ -102,8 +102,8 @@ export interface UsageResponse {
 
 // --- API functions ---
 
-export function getUsage(days = 30): Promise<UsageResponse> {
-  return request(`/usage?days=${days}`, undefined, { timeoutMs: 60_000 })
+export function getUsage(days = 30, init?: RequestInit): Promise<UsageResponse> {
+  return request(`/usage?days=${days}`, init, { timeoutMs: 60_000 })
 }
 
 export function refreshUsage(days = 30): Promise<UsageResponse> {

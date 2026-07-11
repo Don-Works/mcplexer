@@ -20,10 +20,10 @@ createRoot(rootEl).render(
 // "skipWaiting + claim clients" dance create reload races during edits).
 if ('serviceWorker' in navigator && import.meta.env.PROD) {
   window.addEventListener('load', () => {
-    let reloadOnControllerChange = Boolean(navigator.serviceWorker.controller)
+    const hadController = Boolean(navigator.serviceWorker.controller)
     let refreshing = false
     navigator.serviceWorker.addEventListener('controllerchange', () => {
-      if (!reloadOnControllerChange || refreshing) return
+      if (!hadController || refreshing) return
       refreshing = true
       window.location.reload()
     })
@@ -33,7 +33,6 @@ if ('serviceWorker' in navigator && import.meta.env.PROD) {
         window.setInterval(() => {
           void registration.update()
         }, 15 * 60_000)
-        reloadOnControllerChange = true
       })
       .catch((err) => {
         console.warn('[mcplexer] service worker registration failed:', err)
