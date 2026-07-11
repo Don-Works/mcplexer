@@ -38,7 +38,7 @@ func estimatedMiMoCreditsWindow(
 	if !ok || result.Err != nil {
 		return store.UsageWindow{}, false
 	}
-	total, supported := aggregateMiMoCredits(result.Stats)
+	total, supported, partial := aggregateMiMoCredits(result.Stats)
 	if !supported {
 		return store.UsageWindow{}, false
 	}
@@ -46,7 +46,12 @@ func estimatedMiMoCreditsWindow(
 	if label == "" {
 		label = "Token Plan credits"
 	}
-	if !strings.Contains(strings.ToLower(label), "estimate") {
+	if partial {
+		label = strings.TrimSuffix(label, " (estimate)")
+		if !strings.Contains(strings.ToLower(label), "partial estimate") {
+			label += " (partial estimate)"
+		}
+	} else if !strings.Contains(strings.ToLower(label), "estimate") {
 		label += " (estimate)"
 	}
 	window := store.UsageWindow{
@@ -65,9 +70,10 @@ func estimatedMiMoCreditsWindow(
 	return window, true
 }
 
-func aggregateMiMoCredits(stats []clistats.ModelStats) (float64, bool) {
+func aggregateMiMoCredits(stats []clistats.ModelStats) (float64, bool, bool) {
 	var total float64
 	var supported bool
+	var partial bool
 	for _, stat := range stats {
 		credits, ok := estimateMiMoCredits(stat)
 		if !ok {
@@ -75,14 +81,14 @@ func aggregateMiMoCredits(stats []clistats.ModelStats) (float64, bool) {
 				continue
 			}
 			if mimoStatsHaveTokens(stat) {
-				return 0, false
+				partial = true
 			}
 			continue
 		}
 		supported = true
 		total += credits
 	}
-	return total, supported
+	return total, supported, partial
 }
 
 func estimateMiMoCredits(stat clistats.ModelStats) (float64, bool) {

@@ -257,16 +257,19 @@ func injectMiMoCreditsWindow(
 	if !ok {
 		return
 	}
+	detail := "Token Plan credits estimated from local CLI stats; off-peak 0.8x discount not reconstructible"
+	if strings.Contains(strings.ToLower(window.Label), "partial estimate") {
+		detail = appendDetail(detail,
+			"unsupported MiMo model usage omitted; shown credits are a lower-bound estimate")
+	}
 	for index := range snapshot.Windows {
 		if snapshot.Windows[index].ID == cfg.Provider+"_manual" &&
 			strings.EqualFold(snapshot.Windows[index].Unit, store.UnitCredits) {
 			snapshot.Windows[index] = window
-			snapshot.Detail = appendDetail(snapshot.Detail,
-				"Token Plan credits estimated from local CLI stats; off-peak 0.8x discount not reconstructible")
+			snapshot.Detail = appendDetail(snapshot.Detail, detail)
 			return
 		}
 	}
 	snapshot.Windows = append(snapshot.Windows, window)
-	snapshot.Detail = appendDetail(snapshot.Detail,
-		"Token Plan credits estimated from local CLI stats; off-peak 0.8x discount not reconstructible")
+	snapshot.Detail = appendDetail(snapshot.Detail, detail)
 }

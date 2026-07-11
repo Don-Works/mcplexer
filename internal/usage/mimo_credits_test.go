@@ -72,15 +72,18 @@ func TestEstimatedMiMoCreditsWindowRejectsUnknownOnly(t *testing.T) {
 	}
 }
 
-func TestEstimatedMiMoCreditsWindowRejectsMixedUnknownUsage(t *testing.T) {
-	_, ok := estimatedMiMoCreditsWindow(store.SourceConfig{}, map[string]localStatsResult{
+func TestEstimatedMiMoCreditsWindowMarksMixedUnknownUsagePartial(t *testing.T) {
+	window, ok := estimatedMiMoCreditsWindow(store.SourceConfig{}, map[string]localStatsResult{
 		"mimo": {Stats: []clistats.ModelStats{
 			{Model: "xiaomi/mimo-v2.5-pro", InputTokens: 100},
 			{Model: "xiaomi/mimo-v-next", OutputTokens: 1},
 		}},
 	}, 30*24*60)
-	if ok {
-		t.Fatal("mixed unknown usage must fail closed instead of undercounting")
+	if !ok || window.Used == nil || *window.Used != 30_000 {
+		t.Fatalf("window = %+v, ok=%v", window, ok)
+	}
+	if window.Label != "Token Plan credits (partial estimate)" {
+		t.Fatalf("label = %q", window.Label)
 	}
 }
 
