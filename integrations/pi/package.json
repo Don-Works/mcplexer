@@ -35,6 +35,9 @@
   "engines": {
     "node": ">=20"
   },
+  "scripts": {
+    "test": "node --test extensions/router/router.test.mjs"
+  },
   "files": [
     "extensions",
     "skills",

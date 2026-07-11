@@ -123,6 +123,114 @@ matches the bare `pi` token, a `pi-coding-agent` name (e.g.
 `earendil` org marker. Substring lookalikes are intentionally excluded — names
 like `picoclaw`, `copilot`, `raspberry-pi`, and `pip` do NOT match.
 
+## Router mode (opt-in)
+
+The optional MCPlexer router intercepts user input, classifies the task, ranks
+available model candidates, and delegates to the best model via MCPlexer's
+worker system. It is **disabled by default** — normal Pi behavior is preserved.
+
+### Enable
+
+```bash
+# CLI flag (on startup)
+pi --mcpx-router
+
+# Toggle at runtime
+/router on
+/router off
+/router status
+```
+
+### How it works
+
+```
+User input → Classifier (LLM) → RouteDecision → Ranker → Best model → MCPlexer delegation → Result
+```
+
+1. **Classifier** — a local LLM call returns a strict `RouteDecision` with
+   action, task kind, quality, worker mode, tool intents, risk, and requirements.
+   It NEVER selects raw model IDs, providers, or tool globs.
+
+2. **Ranker** — eligibility gates filter candidates by required capabilities,
+   then scores each on: task-specific prior (40%), review boost (15%),
+   reliability (20%), latency (15%), cost (10%). Missing evidence is neutral
+   (50 for priors, 80 for reliability), never zero. Ties are broken
+   deterministically by candidate id.
+
+3. **Capabilities** — tool intents are compiled through trusted bundles to an
+   explicit `capability_preset` + `capability_profile` + `tool_allowlist`.
+   Classifier strings are NEVER passed through as permissions. Dangerous intents
+   (secrets, admin, force-push) downgrade to read-only.
+
+4. **Dispatch** — the chosen candidate is dispatched via `mcpx__delegate_worker`.
+   The router polls for completion and displays the result with auditable route
+   metadata (chosen model, score breakdown, delegation id).
+
+### Bypasses
+
+The router does NOT intercept:
+- Extension-origin input (prevents recursion)
+- Slash commands (handled by Pi natively)
+- Input with images (not supported initially)
+- Empty/whitespace input
+- Input while a previous route is still processing (serialized)
+
+On any classifier or dispatch failure, the router **fails open** to normal Pi
+with a concise warning.
+
+### Model candidate catalog
+
+The default catalog includes Claude Sonnet 4, Claude Haiku 3.5, GPT-4o,
+GPT-4o Mini, and o3-mini. Each candidate has:
+
+- Task-specific quality priors (coding, research, review, chat) — operator-configurable
+- Speed and cost tiers for eligibility gating
+- Reliability score from observed delegation success
+- Capability list for eligibility filtering
+
+Override via environment variable:
+
+```bash
+MCPLEXER_ROUTER_CANDIDATES='[{"id":"custom/model","provider":"custom",...}]'
+```
+
+### Ranking formula
+
+```
+score = task_prior × 0.40 × quality_multiplier
+      + review_boost × 0.15
+      + reliability × 0.20
+      + latency_score × 0.15
+      + cost_score × 0.10
+```
+
+Quality multiplier: high=1.2, medium=1.0, low=0.8.
+
+### Safety
+
+- Dangerous tool intents (secrets, admin, force-push, delete-production) always
+  downgrade to read-only capabilities.
+- External writes/secrets/admin are NEVER auto-granted.
+- Admin operations remain impossible through the router.
+- The router is opt-in and off by default.
+
+### Limitations
+
+- Workers run in isolated git worktrees — follow-up context does not carry over.
+- Image input is not supported initially.
+- The classifier uses a local LLM call, adding ~1-2s latency to the first response.
+- The candidate catalog uses neutral priors until real review evidence accumulates.
+- MCP tool gates do not constrain CLI-native tools or direct network access.
+
+## Testing
+
+```bash
+npm test
+```
+
+Runs the router test suite (classifier parsing, ranker scoring, capability
+compilation, interception logic) with `node:test`. No network required.
+
 ## Assumptions / known unknowns
 
 See the parent task's follow-ups. In short: the exact Pi package sub-directory

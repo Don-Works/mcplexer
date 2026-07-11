@@ -83,6 +83,9 @@ export interface RouterState {
   last_route: string | null;
 }
 
+/** Shim runner function signature (matches the extension's runShim). */
+export type ShimRunner = (tool: string, args: unknown, signal?: AbortSignal) => Promise<{ ok: boolean; text: string }>;
+
 /** Configuration for the router. */
 export interface RouterConfig {
   enabled: boolean;

@@ -161,19 +161,18 @@ export function compileCapabilities(decision: RouteDecision): CapabilityBundle {
     if (DANGEROUS_INTENTS.has(intent)) continue; // handled by downgrade
     const supporting = INTENT_TO_PRESETS[intent];
     if (!supporting) continue; // unknown intent — use baseline
-    // Pick the lowest-ranked preset that supports this intent
-    // (we want minimal sufficient capabilities)
-    const bestForIntent = supporting.reduce((best, p) => {
+    // Pick the lowest-ranked preset that satisfies this intent (minimal sufficient).
+    const minForIntent = supporting.reduce((best, p) => {
       const bestRank = PRESET_RANK[best] ?? 0;
       const pRank = PRESET_RANK[p] ?? 0;
-      return pRank > bestRank ? p : best;
+      return pRank < bestRank ? p : best;
     }, supporting[0]);
 
-    // The overall best preset must be at least as capable as the best for each intent
+    // The overall preset must be at least as capable as each intent's minimum.
     const currentRank = PRESET_RANK[bestPreset] ?? 0;
-    const requiredRank = PRESET_RANK[bestForIntent] ?? 0;
+    const requiredRank = PRESET_RANK[minForIntent] ?? 0;
     if (requiredRank > currentRank) {
-      bestPreset = bestForIntent;
+      bestPreset = minForIntent;
     }
   }
 

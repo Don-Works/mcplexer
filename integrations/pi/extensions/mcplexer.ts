@@ -19,6 +19,13 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Type } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import {
+  route,
+  getRouterState,
+  setRouterEnabled,
+  formatRouteResult,
+} from "./router/index.ts";
+import type { InputMeta } from "./router/index.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 // extensions/ and bin/ are siblings inside the package.
@@ -154,5 +161,77 @@ export default function (pi: ExtensionAPI) {
         "info"
       );
     },
+  });
+
+  // --- Router mode (opt-in via --mcpx-router or /router on) ---
+
+  // Check --mcpx-router flag on startup
+  if (process.argv.includes("--mcpx-router")) {
+    setRouterEnabled(true);
+  }
+
+  // /router on|off|status — toggle or inspect the MCPlexer router.
+  pi.registerCommand("router", {
+    description: "Toggle or inspect the MCPlexer model router (on|off|status).",
+    handler: async (args, ctx) => {
+      const sub = (args?.[0] ?? "status").toLowerCase();
+      if (sub === "on") {
+        setRouterEnabled(true);
+        ctx.ui.notify("Router enabled. Input will be classified and routed to the best model via MCPlexer delegation.", "info");
+      } else if (sub === "off") {
+        setRouterEnabled(false);
+        ctx.ui.notify("Router disabled. Normal Pi behavior restored.", "info");
+      } else {
+        const state = getRouterState();
+        ctx.ui.notify(
+          `Router: ${state.enabled ? "ON" : "OFF"} | Busy: ${state.busy} | Last route: ${state.last_route ?? "none"}`,
+          "info",
+        );
+      }
+    },
+  });
+
+  // Input hook: intercept user input when the router is enabled.
+  // Bypasses: extension-origin, slash commands, images, empty input.
+  // On classifier/dispatch failure: fail open to normal Pi with a warning.
+  pi.registerInputHook(async (input, ctx) => {
+    // Only intercept user text input
+    if (input.type !== "user_text") return undefined;
+
+    const meta: InputMeta = {
+      has_images: false,
+      is_slash_command: input.text.startsWith("/"),
+      origin: "user",
+      text: input.text,
+    };
+
+    if (!meta.is_slash_command && getRouterState().enabled && !getRouterState().busy) {
+      try {
+        // Get the classifier's LLM function from the context
+        const completeFn = async (prompt: string): Promise<string> => {
+          const result = await ctx.complete(prompt, { maxTokens: 512 });
+          return typeof result === "string" ? result : result.text;
+        };
+
+        const result = await route(input.text, meta, completeFn, runShim);
+
+        if (result) {
+          // Route succeeded — show the result as a custom message
+          const formatted = formatRouteResult(result);
+          ctx.ui.notify(formatted, "info");
+          return { action: "handled" };
+        }
+        // result === null means passthrough or failure — let normal Pi handle it
+      } catch (err) {
+        // Fail open with a warning
+        ctx.ui.notify(
+          `[mcplexer-router] routing failed (${err instanceof Error ? err.message : "unknown"}), falling through to normal Pi`,
+          "warning",
+        );
+      }
+    }
+
+    // Not intercepted — normal Pi processing
+    return undefined;
   });
 }
