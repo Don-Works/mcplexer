@@ -90,7 +90,7 @@ export function ProviderTable({
                     <TableHead className="text-right">Requests</TableHead>
                     <TableHead className="text-right">Tokens</TableHead>
                     <TableHead className="text-right">Cost</TableHead>
-                    <TableHead className="min-w-[200px]">Live allowance</TableHead>
+                    <TableHead className="min-w-[200px]">Allowance / estimate</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -173,7 +173,7 @@ function ProviderRow({ provider }: { provider: ProviderUsage }) {
             ))}
           </div>
         ) : (
-          <span className="text-xs text-muted-foreground">No live allowance data</span>
+          <span className="text-xs text-muted-foreground">No allowance or estimate data</span>
         )}
       </TableCell>
     </TableRow>
@@ -188,7 +188,7 @@ function LineageCell({ provider }: { provider: ProviderUsage }) {
   return (
     <div className="space-y-2">
       <LineageRow
-        label={isAuthProbe ? 'Provider connection' : 'Live allowance'}
+        label={isAuthProbe ? 'Provider connection' : 'Allowance lineage'}
         status={allowanceStatus}
         statusLabel={isAuthProbe && allowanceStatus === 'ok' ? 'Authenticated' : undefined}
         source={provider.allowance_source_label ?? provider.source_label}
@@ -293,7 +293,7 @@ function WindowBar({ window: w }: { window: UsageWindow }) {
 }
 
 function isAllowanceWindow(window: UsageWindow): boolean {
-  return window.used_percent != null || window.limit != null ||
+  return window.used != null || window.used_percent != null || window.limit != null ||
     window.remaining != null || window.resets_at != null
 }
 

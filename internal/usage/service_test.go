@@ -340,7 +340,7 @@ func TestMiMoCreditsWindowRespectsConfiguredLimit(t *testing.T) {
 	}}
 	config := []store.SourceConfig{{
 		Provider: store.ProviderMiMo, Kind: store.SourceKindCLI,
-		Limit: 1000000, Unit: store.UnitCredits, Enabled: true,
+		Limit: 1000000, Unit: store.UnitCredits, WindowMinutes: 30 * 24 * 60, Enabled: true,
 	}}
 	service := &Service{
 		Store:      &fakeUsageStore{},
@@ -373,6 +373,27 @@ func TestMiMoCreditsWindowRespectsConfiguredLimit(t *testing.T) {
 	}
 	if creditsWindow.UsedPercent == nil || *creditsWindow.UsedPercent != 3.0 {
 		t.Fatalf("used_percent = %v", creditsWindow.UsedPercent)
+	}
+}
+
+func TestMiMoCreditsWindowReplacesManualCreditsWindow(t *testing.T) {
+	mimo := &fakeLocalStats{stats: []clistats.ModelStats{
+		{Model: "xiaomi/mimo-v2.5-pro", InputTokens: 100},
+	}}
+	service := &Service{
+		Store:      &fakeUsageStore{},
+		LocalStats: map[string]LocalStatsCollector{"mimo": mimo},
+	}
+	snapshot, err := service.Snapshot(context.Background(), []store.SourceConfig{{
+		Provider: store.ProviderMiMo, Kind: store.SourceKindManual,
+		Limit: 1_000_000, Unit: store.UnitCredits, WindowMinutes: 30 * 24 * 60, Enabled: true,
+	}}, 30, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mimoSnap := providerByName(t, snapshot, store.ProviderMiMo)
+	if len(mimoSnap.Windows) != 1 || mimoSnap.Windows[0].ID != "mimo_token_plan_credits" {
+		t.Fatalf("windows = %+v", mimoSnap.Windows)
 	}
 }
 

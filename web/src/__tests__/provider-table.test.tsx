@@ -40,4 +40,19 @@ describe('ProviderTable ordering', () => {
       expect(handle).toHaveAttribute('title', 'Drag to reorder. Space and arrow keys also work.')
     }
   })
+
+  it.each([0, 30_000])('shows a used-only estimate of %s credits', (used) => {
+    const mimo = provider('mimo', 'MiMoCode')
+    mimo.windows = [{
+      id: 'mimo_token_plan_credits',
+      label: 'Token Plan credits (estimate)',
+      used,
+      unit: 'credits',
+    }]
+
+    render(<ProviderTable providers={[mimo]} />)
+
+    expect(screen.getAllByText('Token Plan credits (estimate)')).toHaveLength(2)
+    expect(screen.getAllByText(used === 0 ? '0 credits' : '30.0K credits')).toHaveLength(2)
+  })
 })

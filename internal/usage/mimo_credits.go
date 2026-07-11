@@ -20,13 +20,19 @@ var mimoCreditRates = map[string]mimoCreditCoefficients{
 }
 
 func isMiMoTokenPlan(snapshot *store.ProviderSnapshot, cfg store.SourceConfig) bool {
-	return strings.Contains(strings.ToLower(snapshot.Plan), "token plan") ||
-		(cfg.Limit > 0 && strings.EqualFold(cfg.Unit, store.UnitCredits))
+	plan := strings.ToLower(strings.Join(strings.Fields(snapshot.Plan), " "))
+	switch plan {
+	case "token plan", "basic token plan", "pro token plan", "max token plan":
+		return true
+	default:
+		return cfg.Limit > 0 && strings.EqualFold(cfg.Unit, store.UnitCredits)
+	}
 }
 
 func estimatedMiMoCreditsWindow(
 	cfg store.SourceConfig,
 	local map[string]localStatsResult,
+	observationMinutes int,
 ) (store.UsageWindow, bool) {
 	result, ok := local["mimo"]
 	if !ok || result.Err != nil {
@@ -48,9 +54,10 @@ func estimatedMiMoCreditsWindow(
 		Label:           label,
 		Unit:            store.UnitCredits,
 		Used:            numberPtr(total),
-		DurationMinutes: cfg.WindowMinutes,
+		DurationMinutes: observationMinutes,
 	}
-	if cfg.Limit > 0 && strings.EqualFold(cfg.Unit, store.UnitCredits) {
+	periodsAlign := cfg.WindowMinutes > 0 && observationMinutes == cfg.WindowMinutes
+	if cfg.Limit > 0 && strings.EqualFold(cfg.Unit, store.UnitCredits) && periodsAlign {
 		window.Limit = numberPtr(cfg.Limit)
 		window.Remaining = numberPtr(math.Max(0, cfg.Limit-total))
 		window.UsedPercent = numberPtr(math.Min(100, total/cfg.Limit*100))
@@ -64,6 +71,9 @@ func aggregateMiMoCredits(stats []clistats.ModelStats) (float64, bool) {
 	for _, stat := range stats {
 		credits, ok := estimateMiMoCredits(stat)
 		if !ok {
+			if mimoStatsHaveTokens(stat) {
+				return 0, false
+			}
 			continue
 		}
 		supported = true
@@ -75,6 +85,10 @@ func aggregateMiMoCredits(stats []clistats.ModelStats) (float64, bool) {
 func estimateMiMoCredits(stat clistats.ModelStats) (float64, bool) {
 	model := strings.ToLower(strings.TrimSpace(stat.Model))
 	if slash := strings.LastIndex(model, "/"); slash >= 0 {
+		namespace := model[:slash]
+		if namespace != "xiaomi" && namespace != "mimo" {
+			return 0, false
+		}
 		model = model[slash+1:]
 	}
 	rate, ok := mimoCreditRates[model]
@@ -85,4 +99,9 @@ func estimateMiMoCredits(stat clistats.ModelStats) (float64, bool) {
 		float64(stat.OutputTokens)*rate.output +
 		float64(stat.CacheReadTokens)*rate.cacheRead
 	return credits, true
+}
+
+func mimoStatsHaveTokens(stat clistats.ModelStats) bool {
+	return stat.InputTokens > 0 || stat.OutputTokens > 0 ||
+		stat.CacheReadTokens > 0 || stat.CacheWriteTokens > 0
 }

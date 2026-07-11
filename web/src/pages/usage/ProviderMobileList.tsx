@@ -104,7 +104,7 @@ function MobileProvider({ provider }: { provider: ProviderUsage }) {
 
       <div className="grid grid-cols-2 gap-3">
         <MobileSource
-          label={isAuth ? 'Provider connection' : 'Live allowance'}
+          label={isAuth ? 'Provider connection' : 'Allowance lineage'}
           status={allowanceStatus}
           statusLabel={isAuth && allowanceStatus === 'ok' ? 'Authenticated' : undefined}
           source={provider.allowance_source_label ?? provider.source_label}
@@ -138,10 +138,10 @@ function MobileProvider({ provider }: { provider: ProviderUsage }) {
       </div>
 
       <div className="space-y-3">
-        <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Allowance windows</div>
+        <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Allowance and estimates</div>
         {windows.length > 0
           ? windows.map((window) => <MobileWindow key={window.id} window={window} />)
-          : <div className="text-xs text-muted-foreground">No live allowance data</div>}
+          : <div className="text-xs text-muted-foreground">No allowance or estimate data</div>}
       </div>
     </article>
   )
@@ -213,6 +213,6 @@ function hasObserved(provider: ProviderUsage): boolean {
 }
 
 function hasAllowanceData(window: UsageWindow): boolean {
-  return window.used_percent != null || window.limit != null ||
+  return window.used != null || window.used_percent != null || window.limit != null ||
     window.remaining != null || window.resets_at != null
 }

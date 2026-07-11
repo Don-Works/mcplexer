@@ -101,6 +101,7 @@ func (s *Service) snapshotFresh(
 			defer wg.Done()
 			providers[i] = s.providerSnapshot(
 				ctx, name, byProvider[name], runs, local, ledgerErr, force, now,
+				days*24*60,
 			)
 		}(index, provider)
 	}

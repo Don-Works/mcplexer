@@ -3,6 +3,7 @@ package usage
 import (
 	"context"
 	"math"
+	"strings"
 	"time"
 
 	"github.com/don-works/mcplexer/internal/store"
@@ -17,6 +18,7 @@ func (s *Service) providerSnapshot(
 	ledgerErr error,
 	force bool,
 	now time.Time,
+	observationMinutes int,
 ) store.ProviderSnapshot {
 	snapshot := baseProviderSnapshot(provider, cfg)
 	applyObservedLineage(&snapshot, provider, runs, local, ledgerErr, now)
@@ -26,7 +28,7 @@ func (s *Service) providerSnapshot(
 		allowance := s.providerAllowance(ctx, cfg, force, now)
 		mergeProviderAllowance(&snapshot, allowance)
 	}
-	injectMiMoCreditsWindow(&snapshot, cfg, local)
+	injectMiMoCreditsWindow(&snapshot, cfg, local, observationMinutes)
 	finishProviderStatus(&snapshot, provider, cfg, ledgerErr)
 	setBackwardCompatFields(&snapshot)
 	return snapshot
@@ -237,12 +239,13 @@ func applyManualAllowance(
 }
 
 // injectMiMoCreditsWindow adds an estimated Token Plan credits window to a
-// MiMo provider snapshot when local per-model stats are available. The window
-// is appended to any existing windows (e.g. a configured manual allowance).
+// MiMo provider snapshot when local per-model stats are available. A generated
+// estimate replaces a duplicate configured credits window.
 func injectMiMoCreditsWindow(
 	snapshot *store.ProviderSnapshot,
 	cfg store.SourceConfig,
 	local map[string]localStatsResult,
+	observationMinutes int,
 ) {
 	if snapshot.Provider != store.ProviderMiMo {
 		return
@@ -250,9 +253,18 @@ func injectMiMoCreditsWindow(
 	if !isMiMoTokenPlan(snapshot, cfg) {
 		return
 	}
-	window, ok := estimatedMiMoCreditsWindow(cfg, local)
+	window, ok := estimatedMiMoCreditsWindow(cfg, local, observationMinutes)
 	if !ok {
 		return
+	}
+	for index := range snapshot.Windows {
+		if snapshot.Windows[index].ID == cfg.Provider+"_manual" &&
+			strings.EqualFold(snapshot.Windows[index].Unit, store.UnitCredits) {
+			snapshot.Windows[index] = window
+			snapshot.Detail = appendDetail(snapshot.Detail,
+				"Token Plan credits estimated from local CLI stats; off-peak 0.8x discount not reconstructible")
+			return
+		}
 	}
 	snapshot.Windows = append(snapshot.Windows, window)
 	snapshot.Detail = appendDetail(snapshot.Detail,
