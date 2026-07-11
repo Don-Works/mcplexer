@@ -510,7 +510,10 @@ func (s *Service) Rollback(ctx context.Context, workspaceID, id string, opts Rol
 	if after.DeletedAt != nil {
 		kind = EventTaskDeleted
 	}
-	s.publish(Event{Kind: kind, WorkspaceID: after.WorkspaceID, Task: after, At: now})
+	s.publish(Event{
+		Kind: kind, WorkspaceID: after.WorkspaceID, Task: after,
+		AssigneeChanged: taskAssigneeChanged(before, after), At: now,
+	})
 	ec := EmitContext{ActorKind: opts.ActorKind, SessionID: opts.SessionID, WorkspacePath: opts.WorkspacePath}
 	if after.DeletedAt != nil {
 		s.emitter.EmitDeleted(ctx, after, ec)
@@ -845,7 +848,10 @@ func (s *Service) updateWithSignals(ctx context.Context, workspaceID, id string,
 	}); err != nil {
 		return nil, nil, err
 	}
-	s.publish(Event{Kind: EventTaskUpdated, WorkspaceID: updated.WorkspaceID, Task: updated, At: now})
+	s.publish(Event{
+		Kind: EventTaskUpdated, WorkspaceID: updated.WorkspaceID, Task: updated,
+		AssigneeChanged: taskAssigneeChanged(before, updated), At: now,
+	})
 	s.emitUpdate(ctx, updated, p, preStatus, preAssignee, preClosed)
 	// Epic rollup: when a child task ENTERS terminal state on this patch,
 	// flip any opted-in parent to its meta.rollup_to status — but only

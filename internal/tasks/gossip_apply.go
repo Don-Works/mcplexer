@@ -62,6 +62,7 @@ type RemoteTaskPatch struct {
 	TagsJSON           json.RawMessage `json:"tags,omitempty"`
 	AssigneeSessionID  string          `json:"assignee_session_id,omitempty"`
 	AssigneePeerID     string          `json:"assignee_peer_id,omitempty"`
+	AssigneeUserID     string          `json:"assignee_user_id,omitempty"`
 	AssigneeOriginKind string          `json:"assignee_origin_kind,omitempty"`
 	OriginPeerID       string          `json:"origin_peer_id,omitempty"`
 
@@ -168,7 +169,7 @@ func (s *Service) applyToExisting(
 	}
 	s.publish(Event{
 		Kind: EventTaskUpdated, WorkspaceID: existing.WorkspaceID,
-		Task: existing, At: now,
+		Task: existing, AssigneeChanged: taskAssigneeChanged(before, after), At: now,
 	})
 	return nil
 }
@@ -194,6 +195,7 @@ func (s *Service) applyMaterialize(
 		TagsJSON:           patch.TagsJSON,
 		AssigneeSessionID:  patch.AssigneeSessionID,
 		AssigneePeerID:     patch.AssigneePeerID,
+		AssigneeUserID:     patch.AssigneeUserID,
 		AssigneeOriginKind: patch.AssigneeOriginKind,
 		OriginPeerID:       firstNonEmptyStr(patch.OriginPeerID, byPeer),
 		DueAt:              patch.DueAt,
@@ -262,14 +264,26 @@ func mergeFields(existing *store.Task, patch *RemoteTaskPatch) {
 	if len(patch.TagsJSON) > 0 {
 		existing.TagsJSON = patch.TagsJSON
 	}
-	if patch.AssigneeSessionID != "" {
-		existing.AssigneeSessionID = patch.AssigneeSessionID
-	}
-	if patch.AssigneePeerID != "" {
-		existing.AssigneePeerID = patch.AssigneePeerID
-	}
 	if patch.AssigneeOriginKind != "" {
+		// Assignment is one logical value. A full-state gossip patch that
+		// changes peer/local -> human must clear the now-empty peer/session
+		// fields rather than retaining a mixed assignee from the local row.
+		existing.AssigneeSessionID = patch.AssigneeSessionID
+		existing.AssigneePeerID = patch.AssigneePeerID
+		existing.AssigneeUserID = patch.AssigneeUserID
 		existing.AssigneeOriginKind = patch.AssigneeOriginKind
+	} else {
+		// Backward compatibility for older peers that sent individual
+		// assignee fields without the origin discriminator.
+		if patch.AssigneeSessionID != "" {
+			existing.AssigneeSessionID = patch.AssigneeSessionID
+		}
+		if patch.AssigneePeerID != "" {
+			existing.AssigneePeerID = patch.AssigneePeerID
+		}
+		if patch.AssigneeUserID != "" {
+			existing.AssigneeUserID = patch.AssigneeUserID
+		}
 	}
 	if patch.DueAt != nil {
 		existing.DueAt = patch.DueAt
@@ -364,13 +378,14 @@ func BuildLocalEventForGossip(t *store.Task, selfPeerID string) p2p.TaskSyncEven
 		TagsJSON:           t.TagsJSON,
 		AssigneeSessionID:  t.AssigneeSessionID,
 		AssigneePeerID:     t.AssigneePeerID,
+		AssigneeUserID:     t.AssigneeUserID,
 		AssigneeOriginKind: t.AssigneeOriginKind,
 		OriginPeerID:       t.OriginPeerID,
 		DueAt:              t.DueAt,
 		ClosedAt:           t.ClosedAt,
 	}
 	var clears []string
-	if t.AssigneeSessionID == "" && t.AssigneePeerID == "" {
+	if t.AssigneeSessionID == "" && t.AssigneePeerID == "" && t.AssigneeUserID == "" {
 		clears = append(clears, "assignee")
 	}
 	if t.DueAt == nil {

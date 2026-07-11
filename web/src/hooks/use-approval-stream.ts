@@ -1,7 +1,6 @@
 import { useSyncExternalStore } from 'react'
 import type { ApprovalEvent, ToolApproval } from '@/api/types'
 import { subscribeEvent, useEventStreamStatus } from '@/hooks/use-event-stream'
-import { fireApprovalPending } from '@/components/notifications/use-os-notifications'
 
 // Approval pending-queue store. Every useApprovalStream() consumer shares ONE
 // subscription to the multiplexed event hub's 'approvals' channel (see
@@ -40,12 +39,6 @@ function handleApproval(data: unknown) {
     setState({
       pending: [...state.pending.filter((a) => a.id !== evt.approval.id), evt.approval],
       resolvedIds: state.resolvedIds.filter((id) => id !== evt.approval.id),
-    })
-    // OS-notification fan-out lives here so it stays on regardless of which
-    // page is mounted.
-    fireApprovalPending({
-      id: evt.approval.id,
-      tool_name: evt.approval.tool_name,
     })
   } else if (evt.type === 'resolved') {
     const id = evt.approval.id

@@ -1486,10 +1486,14 @@ func TestCreateWithHumanAssignee(t *testing.T) {
 func TestUpdateWithHumanAssignee(t *testing.T) {
 	ctx := context.Background()
 	svc, _, wsID := newSvc(t)
+	bus := tasks.NewBus()
+	svc.SetBus(bus)
 	t1, _ := svc.Create(ctx, tasks.CreateOptions{
 		WorkspaceID: wsID,
 		Title:       "Update test",
 	})
+	ch, unsubscribe := bus.Subscribe()
+	defer unsubscribe()
 	got, err := svc.Update(ctx, wsID, t1.ID, tasks.UpdatePatch{
 		Assignee: &tasks.Assignee{UserID: "user-456"},
 	})
@@ -1501,6 +1505,14 @@ func TestUpdateWithHumanAssignee(t *testing.T) {
 	}
 	if got.AssigneeOriginKind != store.TaskAssigneeHuman {
 		t.Fatalf("expected origin_kind=human, got %q", got.AssigneeOriginKind)
+	}
+	select {
+	case evt := <-ch:
+		if evt.Kind != tasks.EventTaskUpdated || !evt.AssigneeChanged {
+			t.Fatalf("assignment event = %+v", evt)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for assignment event")
 	}
 }
 

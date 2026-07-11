@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net/url"
 	"strings"
 	"time"
@@ -12,7 +13,12 @@ import (
 	"github.com/don-works/mcplexer/internal/tasks"
 )
 
-func bridgeHumanTaskNotifications(ctx context.Context, bus *tasks.Bus, notifyBus *notify.Bus) {
+func bridgeHumanTaskNotifications(
+	ctx context.Context,
+	bus *tasks.Bus,
+	notifyBus *notify.Bus,
+	dueReceipts taskDueReceiptStore,
+) {
 	if bus == nil || notifyBus == nil {
 		return
 	}
@@ -29,6 +35,7 @@ func bridgeHumanTaskNotifications(ctx context.Context, bus *tasks.Bus, notifyBus
 				}
 				if n, ok := humanTaskNotification(evt); ok {
 					notifyBus.Publish(n)
+					recordAssignmentDueReceipt(ctx, evt.Task, n, dueReceipts)
 				}
 			}
 		}
@@ -40,33 +47,66 @@ func humanTaskNotification(evt tasks.Event) (notify.Event, bool) {
 		return notify.Event{}, false
 	}
 	t := evt.Task
-	if t.AssigneeOriginKind != store.TaskAssigneeHuman {
+	if t.AssigneeOriginKind != store.TaskAssigneeHuman || strings.TrimSpace(t.AssigneeUserID) == "" {
 		return notify.Event{}, false
 	}
-	if evt.Kind != tasks.EventTaskCreated {
+	if evt.Kind != tasks.EventTaskCreated && (evt.Kind != tasks.EventTaskUpdated || !evt.AssigneeChanged) {
 		return notify.Event{}, false
 	}
 	at := evt.At
 	if at.IsZero() {
 		at = time.Now().UTC()
 	}
-	priority := strings.ToLower(strings.TrimSpace(t.Priority))
-	if priority == "" {
-		priority = "normal"
+	assignmentAt := at
+	if t.AssignedAt != nil && !t.AssignedAt.IsZero() {
+		assignmentAt = t.AssignedAt.UTC()
+	}
+	title := "Task assigned"
+	if t.DueAt != nil && !t.DueAt.After(at) {
+		title = "Overdue task assigned"
 	}
 	return notify.Event{
-		MessageID: fmt.Sprintf("%s:%s:%d", evt.Kind, t.ID, at.UnixNano()),
+		MessageID: fmt.Sprintf("task_assigned:%s:%d", t.ID, assignmentAt.UnixNano()),
 		Source:    "task",
 		AgentName: "mcplexer",
 		Role:      "task",
-		Kind:      evt.Kind,
-		Priority:  priority,
-		Title:     "Human task created",
+		Kind:      "task_assigned",
+		Priority:  taskNotificationPriority(t.Priority),
+		Title:     title,
 		Body:      t.Title,
-		Tags:      "task,human," + t.WorkspaceID,
+		Tags:      "task,human,assigned," + t.WorkspaceID,
 		Link:      taskDetailLink(t),
 		CreatedAt: at,
 	}, true
+}
+
+func recordAssignmentDueReceipt(
+	ctx context.Context,
+	task *store.Task,
+	evt notify.Event,
+	receipts taskDueReceiptStore,
+) {
+	if task == nil || task.DueAt == nil || receipts == nil || task.DueAt.After(evt.CreatedAt) {
+		return
+	}
+	c, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	if err := receipts.RecordTaskDueNotification(
+		c, task.ID, *task.DueAt, evt.MessageID, evt.CreatedAt,
+	); err != nil {
+		slog.Warn("record overdue assignment receipt failed", "task_id", task.ID, "error", err)
+	}
+}
+
+func taskNotificationPriority(priority string) string {
+	switch strings.ToLower(strings.TrimSpace(priority)) {
+	case "critical":
+		return "critical"
+	case "urgent", "high":
+		return "high"
+	default:
+		return "normal"
+	}
 }
 
 func taskDetailLink(t *store.Task) string {

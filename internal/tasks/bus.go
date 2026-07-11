@@ -29,12 +29,23 @@ const (
 // not been bound to a local workspace yet, so unfiltered subscribers
 // still receive them while filtered subscribers ignore them.
 type Event struct {
-	Kind        string           `json:"kind"`
-	WorkspaceID string           `json:"workspace_id"`
-	Task        *store.Task      `json:"task,omitempty"`
-	Note        *store.TaskNote  `json:"note,omitempty"`
-	Offer       *store.TaskOffer `json:"offer,omitempty"`
-	At          time.Time        `json:"at"`
+	Kind            string           `json:"kind"`
+	WorkspaceID     string           `json:"workspace_id"`
+	Task            *store.Task      `json:"task,omitempty"`
+	AssigneeChanged bool             `json:"assignee_changed,omitempty"`
+	Note            *store.TaskNote  `json:"note,omitempty"`
+	Offer           *store.TaskOffer `json:"offer,omitempty"`
+	At              time.Time        `json:"at"`
+}
+
+func taskAssigneeChanged(before, after *store.Task) bool {
+	if before == nil || after == nil {
+		return false
+	}
+	return before.AssigneeSessionID != after.AssigneeSessionID ||
+		before.AssigneePeerID != after.AssigneePeerID ||
+		before.AssigneeUserID != after.AssigneeUserID ||
+		before.AssigneeOriginKind != after.AssigneeOriginKind
 }
 
 // Bus fans out task events to SSE subscribers. Zero-value Bus is not

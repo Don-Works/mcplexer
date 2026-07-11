@@ -424,6 +424,57 @@ func TestBuildLocalEventForGossip_Clears(t *testing.T) {
 	}
 }
 
+func TestBuildLocalEventForGossip_PreservesHumanAssignee(t *testing.T) {
+	row := &store.Task{
+		ID: "task-human", WorkspaceID: "ws-1", Title: "review",
+		AssigneeOriginKind: store.TaskAssigneeHuman,
+		AssigneeUserID:     "user-123",
+		HlcAt:              "0001",
+	}
+	evt := tasks.BuildLocalEventForGossip(row, "self-peer")
+	var patch tasks.RemoteTaskPatch
+	if err := json.Unmarshal(evt.FieldPatchesJSON, &patch); err != nil {
+		t.Fatalf("decode patch: %v", err)
+	}
+	if patch.AssigneeOriginKind != store.TaskAssigneeHuman || patch.AssigneeUserID != "user-123" {
+		t.Fatalf("human assignee did not round-trip: %+v", patch)
+	}
+	for _, clear := range patch.Clears {
+		if clear == "assignee" {
+			t.Fatalf("human assignee was incorrectly cleared: %+v", patch)
+		}
+	}
+}
+
+func TestApplyRemoteEvent_ReplacesPeerAssigneeWithHuman(t *testing.T) {
+	ctx := context.Background()
+	svc, d, wsID := newGossipTestSvc(t)
+	row := seedTask(t, svc, wsID, "assigned task")
+	row.AssigneeSessionID = "sess-old"
+	row.AssigneePeerID = "peer-old"
+	row.AssigneeOriginKind = store.TaskAssigneePeer
+	if err := d.UpdateTask(ctx, row); err != nil {
+		t.Fatalf("seed peer assignee: %v", err)
+	}
+	evt := buildEvent(t, row.ID, wsID, clock.Now(), "peer-A", tasks.RemoteTaskPatch{
+		AssigneeOriginKind: store.TaskAssigneeHuman,
+		AssigneeUserID:     "user-123",
+	})
+	if err := svc.ApplyRemoteEvent(ctx, "peer-A", evt); err != nil {
+		t.Fatalf("apply human assignee: %v", err)
+	}
+	after, err := svc.Get(ctx, wsID, row.ID)
+	if err != nil {
+		t.Fatalf("get updated task: %v", err)
+	}
+	if after.AssigneeOriginKind != store.TaskAssigneeHuman || after.AssigneeUserID != "user-123" {
+		t.Fatalf("human assignee not applied: %+v", after)
+	}
+	if after.AssigneeSessionID != "" || after.AssigneePeerID != "" {
+		t.Fatalf("stale peer assignee survived human replacement: %+v", after)
+	}
+}
+
 // TestApplyRemoteEvent_ClearAssignee verifies that a remote event with
 // cleared assignee clears the local assignee fields.
 func TestApplyRemoteEvent_ClearAssignee(t *testing.T) {

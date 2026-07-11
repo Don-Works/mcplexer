@@ -23,7 +23,8 @@
 //   v11 — canonical HTTPS PWA origin + notification permission gesture fix.
 //   v12 — task notification deep links + Mesh task-event noise filter.
 //   v13 — cache sweep after landing-page task-count fix.
-const CACHE_NAME = 'mcplexer-shell-v13';
+//   v14 — high-signal push policy, safe click routing, and task-due renotify.
+const CACHE_NAME = 'mcplexer-shell-v14';
 const SHELL_URLS = ['/', '/app?source=pwa', '/icon.svg', '/icon-192.png', '/manifest.webmanifest'];
 
 self.addEventListener('install', (event) => {
@@ -117,13 +118,18 @@ self.addEventListener('push', (event) => {
 
     const title = payload.title || 'MCPlexer';
     const options = {
-      body: payload.body || payload.summary || 'New approval or task update',
+      body: payload.body || payload.summary || 'Open MCPlexer to review.',
       tag: payload.tag || payload.id || 'mcplexer',
       icon: payload.icon || '/icon-192.png',
       badge: payload.badge || '/icon-192.png',
       requireInteraction: payload.priority === 'critical',
+      renotify: payload.kind === 'task_due' || payload.priority === 'critical' || payload.priority === 'high',
+      actions: [{ action: 'open', title: 'Open' }],
       data: {
         url: payload.url || payload.path || '/app',
+        id: payload.id || '',
+        kind: payload.kind || '',
+        source: payload.source || '',
       },
     };
 
@@ -139,7 +145,11 @@ self.addEventListener('notificationclick', (event) => {
 
   event.waitUntil((async () => {
     const all = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
-    const target = new URL(url, self.location.origin).href;
+    let target = new URL('/app', self.location.origin).href;
+    try {
+      const candidate = new URL(url, self.location.origin);
+      if (candidate.origin === self.location.origin) target = candidate.href;
+    } catch { /* malformed target falls back to /app */ }
 
     for (const client of all) {
       if (client.url.startsWith(self.location.origin) && 'focus' in client) {

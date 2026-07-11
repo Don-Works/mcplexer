@@ -1,6 +1,10 @@
 package main
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/don-works/mcplexer/internal/notify"
+)
 
 func TestWebPushSubscriberSelection(t *testing.T) {
 	tests := []struct {
@@ -59,5 +63,57 @@ func TestLoadConfigReadsWebPushSubject(t *testing.T) {
 	}
 	if cfg.WebPushSubject != "mailto:ops@example.com" {
 		t.Fatalf("WebPushSubject = %q, want %q", cfg.WebPushSubject, "mailto:ops@example.com")
+	}
+}
+
+func TestWebPushEligibleOnlyForHighSignalEvents(t *testing.T) {
+	tests := []struct {
+		name string
+		evt  notify.Event
+		want bool
+	}{
+		{name: "test push", evt: notify.Event{Kind: "push_test"}, want: true},
+		{name: "pending approval", evt: notify.Event{Source: "approval", Kind: "approval_pending"}, want: true},
+		{name: "resolved approval", evt: notify.Event{Source: "approval", Kind: "approval_approved"}, want: false},
+		{name: "secret prompt", evt: notify.Event{Source: "secret", Kind: "secret_prompt"}, want: true},
+		{name: "task assignment", evt: notify.Event{Source: "task", Kind: "task_assigned"}, want: true},
+		{name: "task due", evt: notify.Event{Source: "task", Kind: "task_due"}, want: true},
+		{name: "generic task update", evt: notify.Event{Source: "task", Kind: "task_updated"}, want: false},
+		{name: "legacy task create", evt: notify.Event{Source: "task", Kind: "task_created"}, want: false},
+		{name: "memory offer", evt: notify.Event{Source: "memory", Kind: "memory_offer_received"}, want: true},
+		{name: "memory write", evt: notify.Event{Source: "memory", Kind: "memory_write"}, want: false},
+		{name: "generic delegation completion", evt: notify.Event{Kind: "delegation_completed"}, want: false},
+		{name: "normal mesh", evt: notify.Event{Source: "mesh", Kind: "finding", Priority: "normal"}, want: false},
+		{name: "high alert", evt: notify.Event{Source: "system", Kind: "alert", Priority: "high"}, want: true},
+		{name: "critical mesh", evt: notify.Event{Source: "mesh", Kind: "finding", Priority: "critical"}, want: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := webPushEligible(tt.evt); got != tt.want {
+				t.Fatalf("webPushEligible(%+v) = %v, want %v", tt.evt, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestWebPushTaskTopicCollapsesAssignmentIntoDue(t *testing.T) {
+	assigned := webPushTopic(notify.Event{
+		Source: "task", MessageID: "task_assigned:01TASKABC:100",
+	})
+	due := webPushTopic(notify.Event{
+		Source: "task", MessageID: "task_due:01TASKABC:200",
+	})
+	if assigned != due {
+		t.Fatalf("assignment topic %q != due topic %q", assigned, due)
+	}
+}
+
+func TestWebPushUrgentUsesHighDeliverySemantics(t *testing.T) {
+	evt := notify.Event{Priority: "urgent"}
+	if got := webPushTTL(evt); got != 30*60 {
+		t.Fatalf("urgent TTL = %d", got)
+	}
+	if got := webPushUrgency(evt); got != "high" {
+		t.Fatalf("urgent urgency = %q", got)
 	}
 }

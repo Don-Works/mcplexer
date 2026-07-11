@@ -1,50 +1,20 @@
-// useOsNotifications wires browser-native OS notifications for approval +
-// mesh events. PWA replacement for the OS notifications the old Electron
-// shell fired via electron's Notification module.
+// Browser-native fallback for useful signals when this browser has permission
+// but no Web Push subscription. Subscribed PWAs receive the server push instead,
+// so an open tab never stacks a duplicate notification for the same event.
 //
 // Architecture: this module no longer opens its own EventSource streams
 // (it used to subscribe to /approvals/stream + /notifications/stream a
 // SECOND time, on top of the always-on subscriptions from
 // `useApprovalStream` and `useSignalStream`). Doubled SSE subscriptions
 // blew past Chrome's 6-per-origin HTTP/1.1 cap and stalled every later
-// fetch — the "click-Dashboard-and-it-hangs" bug. Instead, this module
-// exposes two `fire*` functions that the canonical SSE hooks call.
+// fetch — the "click-Dashboard-and-it-hangs" bug. Instead, the canonical
+// Signal SSE hook calls the foreground fallback below.
 //
 // Mounted once at App root. Kept as a no-op compatibility hook so App owns the
 // notification bridge lifecycle, but permission prompts now happen only from an
 // explicit user gesture in the PWA page.
 
 export function useOsNotifications() {}
-
-interface ApprovalLike {
-  id: string
-  tool_name: string
-}
-
-// fireApprovalPending posts an OS notification for a freshly-pending tool
-// approval. Called by useApprovalStream when an event of type "pending"
-// arrives. Silently no-ops if permission isn't granted.
-export function fireApprovalPending(approval: ApprovalLike): void {
-  if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return
-  try {
-    const n = new Notification('MCPlexer: Approval Required', {
-      body: approval.tool_name,
-      // tag dedupes — a second event for the same approval id replaces
-      // the previous banner instead of stacking.
-      tag: `approval:${approval.id}`,
-      icon: '/icon-192.png',
-    })
-    n.onclick = () => {
-      window.focus()
-      if (window.location.pathname !== '/approvals') {
-        window.location.assign('/approvals')
-      }
-      n.close()
-    }
-  } catch {
-    // OS rejected the notification — fine, the in-app tray still shows it.
-  }
-}
 
 interface SignalLike {
   message_id: string
@@ -71,20 +41,57 @@ function destinationForSignal(evt: SignalLike): string {
   if (kind.includes('approval')) return '/approvals'
   if (kind.includes('secret')) return '/approvals'
   if (kind.startsWith('memory')) return '/memory'
+  if (kind.startsWith('task')) return '/app'
   if (kind === 'mesh' || kind.includes('mesh')) {
     return evt.message_id ? `/mesh?msg=${encodeURIComponent(evt.message_id)}` : '/mesh'
   }
   return '/signals'
 }
 
-// fireSignalHighOrCritical posts an OS notification for high/critical
-// signal events. Called by useSignalStream when a matching SSE message
-// arrives. Priority gate mirrors electron/src/notifications.ts: OS
-// banner earns its place only for high/critical; normal/low live in the
-// in-app Signal tray.
-export function fireSignalHighOrCritical(evt: SignalLike): void {
+export function isForegroundNotificationEligible(evt: SignalLike): boolean {
+  const priority = (evt.priority || '').trim().toLowerCase()
+  const source = (evt.source || '').trim().toLowerCase()
+  const kind = (evt.kind || '').trim().toLowerCase()
+  if (priority === 'critical' || priority === 'high') return true
+  if (kind === 'push_test') return true
+  if (source === 'approval' && kind === 'approval_pending') return true
+  if (source === 'secret' && kind === 'secret_prompt') return true
+  if (source === 'task' && (kind === 'task_assigned' || kind === 'task_due')) return true
+  return source === 'memory' && kind === 'memory_offer_received'
+}
+
+async function hasWebPushSubscription(): Promise<boolean> {
+  if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return false
+  if (typeof window === 'undefined' || !('PushManager' in window)) return false
+  try {
+    const registration = await navigator.serviceWorker.ready
+    return Boolean(await registration.pushManager.getSubscription())
+  } catch {
+    return false
+  }
+}
+
+const recentForegroundNotifications = new Map<string, number>()
+const foregroundDedupeMs = 5 * 60 * 1000
+
+function alreadyNotified(messageID: string): boolean {
+  const now = Date.now()
+  for (const [id, at] of recentForegroundNotifications) {
+    if (now - at > foregroundDedupeMs) recentForegroundNotifications.delete(id)
+  }
+  if (recentForegroundNotifications.has(messageID)) return true
+  recentForegroundNotifications.set(messageID, now)
+  return false
+}
+
+// fireUsefulSignalNotification is the foreground fallback for browsers whose
+// notification permission survived but whose Web Push subscription did not.
+// The server-side allowlist remains the primary PWA delivery policy.
+export async function fireUsefulSignalNotification(evt: SignalLike): Promise<void> {
   if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return
-  if (evt.priority !== 'critical' && evt.priority !== 'high') return
+  if (!isForegroundNotificationEligible(evt)) return
+  if (await hasWebPushSubscription()) return
+  if (alreadyNotified(evt.message_id)) return
   try {
     const url = destinationForSignal(evt)
     const n = new Notification(evt.title || 'MCPlexer', {

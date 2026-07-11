@@ -165,25 +165,19 @@ func validWebPushSubscriber(raw string) bool {
 }
 
 func webPushEligible(evt notify.Event) bool {
-	priority := strings.ToLower(evt.Priority)
-	source := strings.ToLower(evt.Source)
-	kind := strings.ToLower(evt.Kind)
-	if kind == "push_test" {
+	priority := strings.ToLower(strings.TrimSpace(evt.Priority))
+	source := strings.ToLower(strings.TrimSpace(evt.Source))
+	kind := strings.ToLower(strings.TrimSpace(evt.Kind))
+	switch {
+	case kind == "push_test":
 		return true
-	}
-	if kind == "approval_pending" {
+	case source == "approval" && kind == "approval_pending":
 		return true
-	}
-	if kind == "worker_run_failed" {
+	case source == "secret" && kind == "secret_prompt":
 		return true
-	}
-	if kind == "delegation_completed" {
+	case source == "task" && (kind == "task_assigned" || kind == "task_due"):
 		return true
-	}
-	if kind == "offer_received" {
-		return true
-	}
-	if source == "task" && (kind == "task_created" || kind == "task_updated") {
+	case source == "memory" && kind == "memory_offer_received":
 		return true
 	}
 	return priority == "critical" || priority == "high"
@@ -235,7 +229,7 @@ func webPushTTL(evt notify.Event) int {
 	switch strings.ToLower(evt.Priority) {
 	case "critical":
 		return 60 * 60
-	case "high":
+	case "urgent", "high":
 		return 30 * 60
 	default:
 		return 10 * 60
@@ -246,7 +240,7 @@ func webPushUrgency(evt notify.Event) webpush.Urgency {
 	switch strings.ToLower(evt.Priority) {
 	case "critical":
 		return webpush.UrgencyHigh
-	case "high":
+	case "urgent", "high":
 		return webpush.UrgencyHigh
 	case "low":
 		return webpush.UrgencyLow

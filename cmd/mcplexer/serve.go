@@ -1136,7 +1136,8 @@ func buildServerDeps(ctx context.Context, cfg *Config, db *sqlite.DB, settingsSv
 	d.tasksSvc.SetBus(tasks.NewBus())
 	d.tasksSvc.SetWorkspaceLookup(db)
 	d.tasksSvc.SetPeerScopeLookup(db)
-	bridgeHumanTaskNotifications(ctx, d.tasksSvc.Bus(), d.notifyBus)
+	bridgeHumanTaskNotifications(ctx, d.tasksSvc.Bus(), d.notifyBus, db)
+	go humanTaskDueNotificationLoop(ctx, d.tasksSvc, db, d.notifyBus)
 
 	// Code index (migration 127) — local codebase indexer backing the
 	// index__* tools. Always wired; construction just wraps the store, and

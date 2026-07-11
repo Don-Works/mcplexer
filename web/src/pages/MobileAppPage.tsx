@@ -40,7 +40,6 @@ import {
 import { getHealth, listApprovals, listUsers, listWorkspaces, type HealthResponse } from '@/api/client'
 import {
   getPushPublicKey,
-  getPushStatus,
   subscribePush,
   unsubscribePush,
   type BrowserPushSubscriptionJSON,
@@ -54,6 +53,7 @@ import { cn } from '@/lib/utils'
 
 type TaskView = 'human' | 'mine' | 'all'
 type PriorityFilter = 'all' | 'critical' | 'high' | 'normal' | 'low'
+type PushState = 'checking' | 'unsupported' | 'needs_https' | 'blocked' | 'off' | 'on'
 
 const TASK_VIEWS: Array<{ id: TaskView; label: string }> = [
   { id: 'human', label: 'Human' },
@@ -180,7 +180,7 @@ export function MobileAppPage() {
 
   const usersFetcher = useCallback(() => listUsers(), [])
   const { data: usersResponse } = useApi(usersFetcher)
-  const users = usersResponse?.users ?? []
+  const users = useMemo(() => usersResponse?.users ?? [], [usersResponse?.users])
   const selfUser = users.find((u) => u.is_self)
   const usersById = useMemo(() => new Map(users.map((u) => [u.user_id, u])), [users])
 
@@ -331,7 +331,7 @@ function StatusStrip({
   taskCount: number
 }) {
   const [standalone, setStandalone] = useState(() => isStandaloneMode())
-  const [pushState, setPushState] = useState<'checking' | 'unsupported' | 'needs_https' | 'off' | 'on'>('checking')
+  const [pushState, setPushState] = useState<PushState>('checking')
   const [pushBusy, setPushBusy] = useState(false)
   const [expanded, setExpanded] = useState(false)
   const secure = secureOrigin()
@@ -344,13 +344,21 @@ function StatusStrip({
       return
     }
     if (!secureOrigin()) { setPushState('needs_https'); return }
+    if (window.Notification.permission === 'denied') { setPushState('blocked'); return }
     try {
-      const [registration] = await Promise.all([
-        navigator.serviceWorker.ready,
-        getPushStatus().catch(() => ({ subscription_count: 0 })),
-      ])
+      const registration = await navigator.serviceWorker.ready
       const sub = await registration.pushManager.getSubscription()
-      setPushState(sub ? 'on' : 'off')
+      if (!sub) {
+        setPushState('off')
+        return
+      }
+      // Refresh the server row on load. This repairs subscriptions the push
+      // service temporarily disabled without asking for permission again.
+      await subscribePush(
+        sub.toJSON() as BrowserPushSubscriptionJSON,
+        isStandaloneMode() ? 'PWA' : 'Browser',
+      )
+      setPushState('on')
     } catch { setPushState('off') }
   }, [])
 
@@ -368,6 +376,10 @@ function StatusStrip({
       toast.error('Push notifications are not supported'); return
     }
     if (!secureOrigin()) { toast.error('Push needs HTTPS or localhost'); return }
+    if (pushState === 'blocked') {
+      toast.error('Allow notifications for this site in browser settings, then reload')
+      return
+    }
     setPushBusy(true)
     try {
       if (pushState === 'on') {
@@ -378,7 +390,13 @@ function StatusStrip({
         toast.success('Push disabled')
       } else {
         const result = await window.Notification.requestPermission()
-        if (result !== 'granted') { setPushState('off'); return }
+        if (result !== 'granted') {
+          setPushState(result === 'denied' ? 'blocked' : 'off')
+          toast.error(result === 'denied'
+            ? 'Notifications are blocked in browser settings'
+            : 'Notification permission was not granted')
+          return
+        }
         const registration = await navigator.serviceWorker.ready
         let sub = await registration.pushManager.getSubscription()
         if (!sub) {
@@ -398,43 +416,59 @@ function StatusStrip({
   }
 
   const appLabel = standalone ? 'installed' : secure ? 'browser' : 'no HTTPS'
+  const pushLabel = pushState === 'on'
+    ? 'on'
+    : pushState === 'blocked'
+      ? 'blocked'
+      : pushState === 'checking'
+        ? 'checking'
+        : pushState === 'unsupported' || pushState === 'needs_https'
+          ? 'unavailable'
+          : 'off'
 
   return (
     <div className="space-y-1">
       <button
         type="button"
         onClick={() => setExpanded(!expanded)}
-        className="flex w-full items-center gap-3 border border-border bg-card px-3 py-2 text-left text-sm transition-colors hover:bg-muted/30"
+        aria-expanded={expanded}
+        aria-controls="pwa-notification-status"
+        className="flex w-full items-center gap-3 border border-border bg-card px-3 py-2 text-left text-sm transition-colors hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
-        <span className={cn('h-2 w-2', connected ? 'bg-emerald-400' : 'bg-amber-400 animate-pulse')} />
+        <span aria-hidden="true" className={cn('h-2 w-2', connected ? 'bg-emerald-400' : 'bg-amber-400 animate-pulse')} />
         <span className="font-mono text-xs text-muted-foreground">{pendingCount > 0 ? `${pendingCount} pending` : 'clear'}</span>
-        <span className="text-border">|</span>
+        <span aria-hidden="true" className="text-border">|</span>
         <span className="font-mono text-xs text-muted-foreground">{taskCount} tasks</span>
-        <span className="text-border">|</span>
+        <span aria-hidden="true" className="text-border">|</span>
         <span className="font-mono text-xs text-muted-foreground">{appLabel}</span>
-        <span className="ml-auto text-[10px] text-muted-foreground">{expanded ? 'hide' : 'status'}</span>
+        <span aria-hidden="true" className="ml-auto text-[10px] text-muted-foreground">{expanded ? 'hide' : 'status'}</span>
       </button>
 
       {expanded ? (
-        <div className="flex flex-wrap items-center justify-between gap-3 border border-border bg-card p-3">
-          <div className="flex flex-wrap items-center gap-1.5">
-            <Badge tone={connected ? 'success' : 'warn'} variant="outline" className="font-mono text-[10px]">
-              stream {connected ? 'live' : 'syncing'}
-            </Badge>
-            <Badge tone={standalone ? 'success' : secure ? 'info' : 'warn'} variant="outline" className="font-mono text-[10px]">
-              {appLabel}
-            </Badge>
-            <Badge tone={secure ? 'success' : 'warn'} variant="outline" className="font-mono text-[10px]">
-              {secure ? 'HTTPS' : 'HTTP'}
-            </Badge>
-            <Badge tone={trusted ? 'success' : 'warn'} variant="outline" className="font-mono text-[10px]">
-              {trusted ? 'trusted' : 'untrusted'}
-            </Badge>
+        <div id="pwa-notification-status" className="flex flex-wrap items-center justify-between gap-3 border border-border bg-card p-3">
+          <div className="min-w-0 space-y-2">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <Badge tone={connected ? 'success' : 'warn'} variant="outline" className="font-mono text-[10px]">
+                stream {connected ? 'live' : 'syncing'}
+              </Badge>
+              <Badge tone={standalone ? 'success' : secure ? 'info' : 'warn'} variant="outline" className="font-mono text-[10px]">
+                {appLabel}
+              </Badge>
+              <Badge tone={secure ? 'success' : 'warn'} variant="outline" className="font-mono text-[10px]">
+                {secure ? 'HTTPS' : 'HTTP'}
+              </Badge>
+              <Badge tone={trusted ? 'success' : 'warn'} variant="outline" className="font-mono text-[10px]">
+                {trusted ? 'trusted' : 'untrusted'}
+              </Badge>
+            </div>
+            <p className="max-w-[62ch] text-xs leading-relaxed text-muted-foreground">
+              Only approvals, human task assignments, due tasks, memory offers, and high-severity alerts.
+            </p>
           </div>
           <div className="flex items-center gap-2">
-            <span className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+            <span aria-live="polite" className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
               <Bell className="h-3.5 w-3.5" />
-              Push {pushState === 'on' ? 'on' : 'off'}
+              Push {pushLabel}
             </span>
             <Button
               size="sm"
@@ -443,7 +477,7 @@ function StatusStrip({
               disabled={pushBusy}
             >
               {pushState === 'on' ? <CheckCircle2 className="mr-1 h-4 w-4" /> : <BellRing className="mr-1 h-4 w-4" />}
-              {pushState === 'on' ? 'Disable' : 'Enable'}
+              {pushBusy ? 'Working' : pushState === 'on' ? 'Disable' : pushState === 'blocked' ? 'How to enable' : 'Enable'}
             </Button>
           </div>
         </div>

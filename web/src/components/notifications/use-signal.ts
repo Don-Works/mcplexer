@@ -8,7 +8,7 @@ import {
   type StoredNotification,
 } from '@/api/notifications'
 import { subscribeEvent } from '@/hooks/use-event-stream'
-import { fireSignalHighOrCritical } from './use-os-notifications'
+import { fireUsefulSignalNotification } from './use-os-notifications'
 import {
   consumeFlash,
   countsByKind,
@@ -88,8 +88,9 @@ export function useSignalStream() {
         read_at: null,
       }
       pushLive(synthetic)
-      // Also fire an OS-level notification for high/critical events.
-      fireSignalHighOrCritical({
+      // Foreground fallback only. A subscribed PWA receives Web Push and
+      // this helper suppresses the duplicate native notification.
+      void fireUsefulSignalNotification({
         message_id: synthetic.message_id,
         title: synthetic.title,
         body: synthetic.body,

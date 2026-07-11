@@ -13,9 +13,10 @@ export type TaskEventKind =
   | 'task_offer_updated'
 
 export interface TaskEvent {
-  kind: TaskEventKind
-  workspace_id: string
-  task?: Task
+	kind: TaskEventKind
+	workspace_id: string
+	task?: Task
+	assignee_changed?: boolean
   note?: TaskNote
   offer?: TaskOffer
   history?: TaskStatusHistoryEntry

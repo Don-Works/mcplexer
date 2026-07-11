@@ -92,12 +92,12 @@ function NotifyBridge() {
   useSignalTray()
   // OS-native browser notifications (replaces the old Electron shell).
   // This hook is permission-management only; the actual notification
-  // firing lives inside useSignalStream + useApprovalStream so we don't
+	// firing lives inside useSignalStream so we don't
   // double-subscribe to the same SSE endpoints (Chrome's 6-per-origin
   // HTTP/1.1 cap was getting blown otherwise).
   useOsNotifications()
-  // Approval stream — singleton, ref-counted. Keep it always-on at the
-  // root so OS notifications for incoming approvals fire on every page.
+	// Approval stream — singleton, ref-counted. Keep it always-on at the
+	// root so the pending queue stays current on every page.
   // DashboardPage + ApprovalsPage subscribe to the same module-level
   // EventSource via this hook; refcount=1+ keeps it open globally.
   useApprovalStream()
