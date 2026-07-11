@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/don-works/mcplexer/internal/store"
-	"github.com/don-works/mcplexer/internal/usage/collectors"
 )
 
 func (s *Service) providerSnapshot(
@@ -248,12 +247,10 @@ func injectMiMoCreditsWindow(
 	if snapshot.Provider != store.ProviderMiMo {
 		return
 	}
-	perModel := mimoPerModelObserved(local)
-	if len(perModel) == 0 {
+	if !isMiMoTokenPlan(snapshot, cfg) {
 		return
 	}
-	totalCredits := collectors.MiMoAggregateEstimatedCredits(perModel)
-	window, ok := collectors.MiMoTokenPlanWindow(cfg, snapshot.Observed, totalCredits)
+	window, ok := estimatedMiMoCreditsWindow(cfg, local)
 	if !ok {
 		return
 	}

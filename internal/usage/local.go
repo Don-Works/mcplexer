@@ -9,7 +9,6 @@ import (
 
 	"github.com/don-works/mcplexer/internal/store"
 	"github.com/don-works/mcplexer/internal/usage/clistats"
-	"github.com/don-works/mcplexer/internal/usage/collectors"
 )
 
 type localStatsResult struct {
@@ -166,33 +165,4 @@ func localUpdatedAt(local map[string]localStatsResult, provider string, now time
 		return &now
 	}
 	return nil
-}
-
-// mimoPerModelObserved returns per-model observed usage for MiMo models from
-// local stats. Each entry preserves the original model name for coefficient
-// matching.
-func mimoPerModelObserved(local map[string]localStatsResult) []collectors.ObservedModelUsage {
-	result, ok := local["mimo"]
-	if !ok || result.Err != nil {
-		return nil
-	}
-	var out []collectors.ObservedModelUsage
-	for _, stat := range result.Stats {
-		model := strings.ToLower(stat.Model)
-		if !strings.HasPrefix(model, "xiaomi/") && !strings.HasPrefix(model, "mimo/") {
-			continue
-		}
-		out = append(out, collectors.ObservedModelUsage{
-			Model: stat.Model,
-			Observed: store.ObservedUsage{
-				Requests:         stat.Requests,
-				InputTokens:      stat.InputTokens,
-				OutputTokens:     stat.OutputTokens,
-				CacheReadTokens:  stat.CacheReadTokens,
-				CacheWriteTokens: stat.CacheWriteTokens,
-				CostUSD:          stat.CostUSD,
-			},
-		})
-	}
-	return out
 }

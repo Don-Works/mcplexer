@@ -296,7 +296,10 @@ func TestMiMoEstimatedCreditsWindowInjectedFromLocalStats(t *testing.T) {
 		Store:      &fakeUsageStore{},
 		LocalStats: map[string]LocalStatsCollector{"mimo": mimo},
 	}
-	snapshot, err := service.Snapshot(context.Background(), nil, 30, false)
+	snapshot, err := service.Snapshot(context.Background(), []store.SourceConfig{{
+		Provider: store.ProviderMiMo, Kind: store.SourceKindCLI,
+		Plan: "Token Plan", Enabled: true,
+	}}, 30, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -381,7 +384,10 @@ func TestMiMoNoCreditsWindowForUnknownModels(t *testing.T) {
 		Store:      &fakeUsageStore{},
 		LocalStats: map[string]LocalStatsCollector{"mimo": mimo},
 	}
-	snapshot, err := service.Snapshot(context.Background(), nil, 30, false)
+	snapshot, err := service.Snapshot(context.Background(), []store.SourceConfig{{
+		Provider: store.ProviderMiMo, Kind: store.SourceKindCLI,
+		Plan: "Token Plan", Enabled: true,
+	}}, 30, false)
 	if err != nil {
 		t.Fatal(err)
 	}

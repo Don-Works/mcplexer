@@ -3,7 +3,6 @@ package collectors
 import (
 	"context"
 	"encoding/json"
-	"math"
 	"os/exec"
 	"regexp"
 	"strings"
@@ -16,33 +15,6 @@ const (
 	mimoWhoamiTimeout   = 8 * time.Second
 	mimoWhoamiOutputCap = 1 << 20
 )
-
-// MiMo credit-per-token coefficients. Aggregate CLI data cannot reconstruct
-// the official 0.8x off-peak discount, so all windows are labelled estimates.
-var (
-	mimoV25ProCoefficients = mimoCreditCoefficients{
-		Input:     300,
-		Output:    600,
-		CacheRead: 2.5,
-	}
-	mimoV25Coefficients = mimoCreditCoefficients{
-		Input:     100,
-		Output:    200,
-		CacheRead: 2,
-	}
-)
-
-type mimoCreditCoefficients struct {
-	Input     float64
-	Output    float64
-	CacheRead float64
-}
-
-func (c mimoCreditCoefficients) estimate(observed store.ObservedUsage) float64 {
-	return float64(observed.InputTokens)*c.Input +
-		float64(observed.OutputTokens)*c.Output +
-		float64(observed.CacheReadTokens)*c.CacheRead
-}
 
 var mimoProviderLine = regexp.MustCompile(`(?im)\bProvider:\s*([A-Za-z0-9._-]{1,64})\b`)
 
@@ -79,7 +51,7 @@ func (c *MiMoCollector) detectTokenPlan(ctx context.Context, cfg store.SourceCon
 	if err != nil || len(secret) == 0 {
 		return false
 	}
-	return MiMoIsTokenPlanCredential(string(secret))
+	return mimoIsTokenPlanCredential(string(secret))
 }
 
 func (c *MiMoCollector) binary() string {
@@ -191,7 +163,7 @@ func mimoAuthResult(
 	snapshot.AllowanceStatus = store.StatusOK
 	snapshot.UpdatedAt = timePtr(start)
 	snapshot.AllowanceUpdatedAt = timePtr(start)
-	snapshot.Detail = "Local MiMoCode session usage collected; subscription balance is not exposed by the CLI/API"
+	snapshot.Detail = "Local MiMoCode session usage collected; exact remaining balance requires Xiaomi console login"
 	return store.CollectorResult{Snapshot: snapshot, Duration: time.Since(start)}
 }
 
@@ -206,76 +178,9 @@ func redactMiMoError(err error) string {
 	return message
 }
 
-// MiMoEstimatedCredits returns the estimated Token Plan credits for the
-// observed token usage. Returns 0 if the model is unknown.
-func MiMoEstimatedCredits(model string, observed store.ObservedUsage) float64 {
-	coefficients, ok := mimoCoefficientsForModel(model)
-	if !ok {
-		return 0
-	}
-	return coefficients.estimate(observed)
-}
-
-func mimoCoefficientsForModel(model string) (mimoCreditCoefficients, bool) {
-	lower := strings.ToLower(model)
-	if strings.Contains(lower, "v2.5-pro") || strings.Contains(lower, "v2_5-pro") {
-		return mimoV25ProCoefficients, true
-	}
-	if strings.Contains(lower, "v2.5") || strings.Contains(lower, "v2_5") {
-		return mimoV25Coefficients, true
-	}
-	return mimoCreditCoefficients{}, false
-}
-
-// MiMoIsTokenPlanCredential reports whether the credential value starts with
+// mimoIsTokenPlanCredential reports whether the credential value starts with
 // the "tp-" prefix that identifies a MiMo Token Plan key. The raw value is
 // never stored, logged, or returned.
-func MiMoIsTokenPlanCredential(credential string) bool {
-	return strings.HasPrefix(credential, "tp-")
-}
-
-// MiMoTokenPlanWindow builds an estimated Token Plan credits window from
-// aggregated observed usage across supported MiMo models. The window is
-// labelled as an estimate because the CLI cannot reconstruct the official
-// 0.8x off-peak discount.
-//
-// If cfg has Limit > 0 and Unit == "credits", Used/Remaining/Percent are
-// computed. Without a configured limit, only Used is populated.
-func MiMoTokenPlanWindow(
-	cfg store.SourceConfig,
-	observed store.ObservedUsage,
-	totalCredits float64,
-) (store.UsageWindow, bool) {
-	if totalCredits <= 0 {
-		return store.UsageWindow{}, false
-	}
-	window := store.UsageWindow{
-		ID:    "mimo_token_plan_credits",
-		Label: "Token Plan credits (estimate)",
-		Unit:  store.UnitCredits,
-		Used:  numberPtr(totalCredits),
-	}
-	if cfg.Limit > 0 && cfg.Unit == store.UnitCredits {
-		window.Limit = numberPtr(cfg.Limit)
-		window.Remaining = numberPtr(math.Max(0, cfg.Limit-totalCredits))
-		window.UsedPercent = numberPtr(math.Min(100, totalCredits/cfg.Limit*100))
-	}
-	return window, true
-}
-
-// MiMoAggregateEstimatedCredits sums estimated credits across per-model
-// stats, skipping models with unknown coefficients.
-func MiMoAggregateEstimatedCredits(stats []ObservedModelUsage) float64 {
-	var total float64
-	for _, entry := range stats {
-		total += MiMoEstimatedCredits(entry.Model, entry.Observed)
-	}
-	return total
-}
-
-// ObservedModelUsage pairs a model name with its observed usage for
-// per-model credit estimation.
-type ObservedModelUsage struct {
-	Model    string
-	Observed store.ObservedUsage
+func mimoIsTokenPlanCredential(credential string) bool {
+	return strings.HasPrefix(strings.TrimSpace(credential), "tp-")
 }

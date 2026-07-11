@@ -25,7 +25,7 @@ func TestMiMoCollectorAuthenticatedWithoutFakeAllowance(t *testing.T) {
 	if snapshot.Status != store.StatusOK || snapshot.AllowanceSource != "auth" || len(snapshot.Windows) != 0 {
 		t.Fatalf("snapshot = status:%s windows:%d", snapshot.Status, len(snapshot.Windows))
 	}
-	if snapshot.Detail != "Local MiMoCode session usage collected; subscription balance is not exposed by the CLI/API" {
+	if snapshot.Detail != "Local MiMoCode session usage collected; exact remaining balance requires Xiaomi console login" {
 		t.Fatalf("detail = %q", snapshot.Detail)
 	}
 	if strings.Contains(snapshot.Detail, "user@example.com") || strings.Contains(snapshot.Detail, "u-123") {
@@ -82,102 +82,6 @@ func TestMiMoCollectorSetsUpdatedAtOnSuccess(t *testing.T) {
 	}
 	if result.Duration < 0 || start.After(time.Now()) {
 		t.Fatalf("duration = %s", result.Duration)
-	}
-}
-
-func TestMiMoEstimatedCreditsV25Pro(t *testing.T) {
-	observed := store.ObservedUsage{
-		InputTokens:     1000,
-		OutputTokens:    500,
-		CacheReadTokens: 2000,
-	}
-	got := MiMoEstimatedCredits("xiaomi/mimo-v2.5-pro", observed)
-	// 1000*300 + 500*600 + 2000*2.5 = 300000 + 300000 + 5000 = 605000
-	want := 605000.0
-	if got != want {
-		t.Fatalf("v2.5-pro credits = %f, want %f", got, want)
-	}
-}
-
-func TestMiMoEstimatedCreditsV25(t *testing.T) {
-	observed := store.ObservedUsage{
-		InputTokens:     1000,
-		OutputTokens:    500,
-		CacheReadTokens: 2000,
-	}
-	got := MiMoEstimatedCredits("mimo/mimo-v2.5", observed)
-	// 1000*100 + 500*200 + 2000*2 = 100000 + 100000 + 4000 = 204000
-	want := 204000.0
-	if got != want {
-		t.Fatalf("v2.5 credits = %f, want %f", got, want)
-	}
-}
-
-func TestMiMoEstimatedCreditsUnknownModelIgnored(t *testing.T) {
-	observed := store.ObservedUsage{InputTokens: 1000}
-	got := MiMoEstimatedCredits("xiaomi/unknown-model", observed)
-	if got != 0 {
-		t.Fatalf("unknown model credits = %f, want 0", got)
-	}
-}
-
-func TestMiMoTokenPlanWindowWithConfiguredLimit(t *testing.T) {
-	cfg := store.SourceConfig{
-		Provider: store.ProviderMiMo,
-		Limit:    1000000,
-		Unit:     store.UnitCredits,
-	}
-	observed := store.ObservedUsage{InputTokens: 100, OutputTokens: 50}
-	window, ok := MiMoTokenPlanWindow(cfg, observed, 50000)
-	if !ok {
-		t.Fatal("expected window")
-	}
-	if window.Label != "Token Plan credits (estimate)" {
-		t.Fatalf("label = %q", window.Label)
-	}
-	if window.Unit != store.UnitCredits {
-		t.Fatalf("unit = %q", window.Unit)
-	}
-	if window.Used == nil || *window.Used != 50000 {
-		t.Fatalf("used = %v", window.Used)
-	}
-	if window.Limit == nil || *window.Limit != 1000000 {
-		t.Fatalf("limit = %v", window.Limit)
-	}
-	if window.Remaining == nil || *window.Remaining != 950000 {
-		t.Fatalf("remaining = %v", window.Remaining)
-	}
-	if window.UsedPercent == nil || *window.UsedPercent != 5.0 {
-		t.Fatalf("used_percent = %v", window.UsedPercent)
-	}
-}
-
-func TestMiMoTokenPlanWindowWithoutLimit(t *testing.T) {
-	cfg := store.SourceConfig{Provider: store.ProviderMiMo}
-	observed := store.ObservedUsage{InputTokens: 100}
-	window, ok := MiMoTokenPlanWindow(cfg, observed, 30000)
-	if !ok {
-		t.Fatal("expected window")
-	}
-	if window.Used == nil || *window.Used != 30000 {
-		t.Fatalf("used = %v", window.Used)
-	}
-	if window.Limit != nil {
-		t.Fatalf("limit should be nil without configured limit, got %v", window.Limit)
-	}
-	if window.Remaining != nil {
-		t.Fatalf("remaining should be nil without configured limit, got %v", window.Remaining)
-	}
-	if window.UsedPercent != nil {
-		t.Fatalf("used_percent should be nil without configured limit, got %v", window.UsedPercent)
-	}
-}
-
-func TestMiMoTokenPlanWindowZeroCreditsReturnsFalse(t *testing.T) {
-	cfg := store.SourceConfig{Provider: store.ProviderMiMo}
-	_, ok := MiMoTokenPlanWindow(cfg, store.ObservedUsage{}, 0)
-	if ok {
-		t.Fatal("expected false for zero credits")
 	}
 }
 
@@ -266,28 +170,17 @@ func TestMiMoCollectorSecretNotLeaked(t *testing.T) {
 	}
 }
 
-func TestMiMoAggregateEstimatedCreditsSkipsUnknownModels(t *testing.T) {
-	stats := []ObservedModelUsage{
-		{Model: "xiaomi/mimo-v2.5-pro", Observed: store.ObservedUsage{InputTokens: 100}},
-		{Model: "xiaomi/unknown-model", Observed: store.ObservedUsage{InputTokens: 200}},
-		{Model: "mimo/mimo-v2.5", Observed: store.ObservedUsage{InputTokens: 300}},
-	}
-	got := MiMoAggregateEstimatedCredits(stats)
-	// v2.5-pro: 100*300 = 30000; v2.5: 300*100 = 30000; unknown: 0
-	want := 60000.0
-	if got != want {
-		t.Fatalf("aggregate credits = %f, want %f", got, want)
-	}
-}
-
 func TestMiMoIsTokenPlanCredential(t *testing.T) {
-	if !MiMoIsTokenPlanCredential("tp-abc123") {
+	if !mimoIsTokenPlanCredential("tp-abc123") {
 		t.Fatal("expected tp- prefix to be detected")
 	}
-	if MiMoIsTokenPlanCredential("sk-regular") {
+	if !mimoIsTokenPlanCredential("  tp-abc123  ") {
+		t.Fatal("expected surrounding whitespace to be ignored")
+	}
+	if mimoIsTokenPlanCredential("sk-regular") {
 		t.Fatal("expected non-tp- prefix to be rejected")
 	}
-	if MiMoIsTokenPlanCredential("") {
+	if mimoIsTokenPlanCredential("") {
 		t.Fatal("expected empty string to be rejected")
 	}
 }
