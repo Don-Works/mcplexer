@@ -46,16 +46,7 @@ func buildMonitoring(db store.Store, secretsMgr *secrets.Manager, meshMgr *mesh.
 			senders[store.ChannelKindGChatWebhook] = &escalate.GChatWebhookSender{Secrets: secretsMgr}
 		}
 		if meshMgr != nil {
-			senders[store.ChannelKindMesh] = &escalate.MeshSender{
-				Mesh: meshMgr,
-				WorkspaceMeta: func(workspaceID string) mesh.SessionMeta {
-					return mesh.SessionMeta{
-						SessionID:    "monitoring-dispatcher",
-						WorkspaceIDs: []string{workspaceID},
-						ClientType:   "system",
-					}
-				},
-			}
+			senders[store.ChannelKindMesh] = newMeshSender(meshMgr)
 		}
 		monitoringDispatch = escalate.NewDispatcher(db, senders)
 		monitoringQry = distill.NewQuery(db)
@@ -64,6 +55,34 @@ func buildMonitoring(db store.Store, secretsMgr *secrets.Manager, meshMgr *mesh.
 			monitoringCollector = collect.NewManager(db, secretsMgr, distiller, nil)
 		}
 	})
+	// Late-bind the mesh sender. The singleton is sealed by the FIRST
+	// buildMonitoring call, and during daemon boot that first call often
+	// lands before the mesh.Manager exists (meshMgr=nil). A later call
+	// carrying a live manager must still register kind=mesh — otherwise a
+	// configured Monitoring mesh channel logs "no sender wired for channel
+	// kind" forever. RegisterSender replaces under the dispatcher lock and
+	// leaves the throttle state and every other sender intact, so calling
+	// it on each non-nil pass is idempotent. meshMgr==nil never unwires an
+	// already-registered sender, so the wiring only ever ratchets on.
+	if meshMgr != nil && monitoringDispatch != nil {
+		monitoringDispatch.RegisterSender(store.ChannelKindMesh, newMeshSender(meshMgr))
+	}
+}
+
+// newMeshSender builds the Monitoring mesh escalate sender. Factored out
+// so the initial (in-Once) assembly and the late-bind path above stay in
+// lock-step — both must produce the same session-meta binding.
+func newMeshSender(meshMgr *mesh.Manager) *escalate.MeshSender {
+	return &escalate.MeshSender{
+		Mesh: meshMgr,
+		WorkspaceMeta: func(workspaceID string) mesh.SessionMeta {
+			return mesh.SessionMeta{
+				SessionID:    "monitoring-dispatcher",
+				WorkspaceIDs: []string{workspaceID},
+				ClientType:   "system",
+			}
+		},
+	}
 }
 
 // gatewayToolCaller adapts a gateway server into the escalate

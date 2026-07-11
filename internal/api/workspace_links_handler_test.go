@@ -72,9 +72,10 @@ func TestWorkspaceLinkRESTLifecycle(t *testing.T) {
 	body := `{"peer_id":"peer-B","local_workspace":"gateway","remote_workspace_id":"remote-ws-1","remote_workspace_name":"bravo"}`
 	resp := doReq(t, srv, http.MethodPost, "/api/v1/workspace-links", body)
 	var created struct {
-		Linked       bool   `json:"linked"`
-		GrantedScope string `json:"granted_scope"`
-		LocalWsID    string `json:"local_workspace_id"`
+		Linked           bool   `json:"linked"`
+		GrantedScope     string `json:"granted_scope"`
+		GrantedSyncScope string `json:"granted_sync_scope"`
+		LocalWsID        string `json:"local_workspace_id"`
 	}
 	if err := json.Unmarshal(resp, &created); err != nil {
 		t.Fatalf("unmarshal create: %v (%s)", err, resp)
@@ -85,8 +86,17 @@ func TestWorkspaceLinkRESTLifecycle(t *testing.T) {
 	if created.GrantedScope != "task_assign:bravo" {
 		t.Fatalf("granted_scope = %q, want task_assign:bravo", created.GrantedScope)
 	}
+	// Parity with the control tool: the link also grants task_sync keyed
+	// by the LOCAL workspace id so the peer can catch up over task-sync.
+	wantSync := "task_sync:" + ws.ID
+	if created.GrantedSyncScope != wantSync {
+		t.Fatalf("granted_sync_scope = %q, want %q", created.GrantedSyncScope, wantSync)
+	}
 	if ok, _ := db.HasPeerScope(ctx, "peer-B", "task_assign:bravo"); !ok {
 		t.Fatalf("link did not grant task_assign:bravo to peer-B")
+	}
+	if ok, _ := db.HasPeerScope(ctx, "peer-B", wantSync); !ok {
+		t.Fatalf("link did not grant %s to peer-B", wantSync)
 	}
 
 	// List shows it.
@@ -98,10 +108,13 @@ func TestWorkspaceLinkRESTLifecycle(t *testing.T) {
 		t.Fatalf("unexpected list: %+v", links)
 	}
 
-	// Unlink revokes the scope + drops the row.
+	// Unlink revokes BOTH scopes + drops the row.
 	doReq(t, srv, http.MethodDelete, "/api/v1/workspace-links?peer_id=peer-B&remote_workspace_id=remote-ws-1", "")
 	if ok, _ := db.HasPeerScope(ctx, "peer-B", "task_assign:bravo"); ok {
 		t.Fatalf("unlink did not revoke task_assign:bravo")
+	}
+	if ok, _ := db.HasPeerScope(ctx, "peer-B", wantSync); ok {
+		t.Fatalf("unlink did not revoke %s", wantSync)
 	}
 	links = nil
 	if err := json.Unmarshal(doReq(t, srv, http.MethodGet, "/api/v1/workspace-links", ""), &links); err != nil {

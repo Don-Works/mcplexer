@@ -12,8 +12,10 @@ import (
 // cross-machine task replication links (migration 088). It mirrors the
 // CWD-gated MCP admin tools (mcplexer__link_workspace etc.) but runs
 // in-process so the dashboard + the integration harness can drive it
-// without the control-server stdio. The grant-task_assign-on-link policy
-// is kept in lock-step with internal/control/handlers_workspace_link.go.
+// without the control-server stdio. The grant-on-link policy — both
+// task_assign:<remote name> and task_sync:<local id> on create, both
+// revoked on delete — is kept in lock-step with
+// internal/control/handlers_workspace_link.go.
 type workspaceLinkHandler struct {
 	store store.Store
 }
@@ -80,10 +82,14 @@ func (h *workspaceLinkHandler) create(w http.ResponseWriter, r *http.Request) {
 		writeErrorDetail(w, http.StatusInternalServerError, "failed to set workspace link", err.Error())
 		return
 	}
-	// The link IS the authorization: grant the peer task_assign for its
-	// workspace so its replicated tasks land here. Best-effort — a grant
-	// failure (peer not paired yet) is a warning, not a failure.
+	// The link IS the authorization. Grant BOTH scopes the control tool
+	// grants so REST + MCP stay in lock-step: task_assign:<remote name>
+	// so the peer's replicated task pushes land here, and
+	// task_sync:<local id> so the peer may pull this workspace's task
+	// state for catch-up over /mcplexer/task-sync/1.0.0. Both best-effort
+	// — a grant failure (peer not paired yet) is a warning, not a failure.
 	grantScope := taskAssignScopeForLink(req.RemoteWorkspaceName)
+	syncScope := taskSyncScopeForLink(localID)
 	resp := map[string]any{
 		"linked":                true,
 		"peer_id":               binding.PeerID,
@@ -92,10 +98,15 @@ func (h *workspaceLinkHandler) create(w http.ResponseWriter, r *http.Request) {
 		"local_workspace_id":    localID,
 		"local_workspace_name":  localName,
 		"granted_scope":         grantScope,
+		"granted_sync_scope":    syncScope,
 	}
 	if err := h.store.GrantPeerScope(r.Context(), req.PeerID, grantScope); err != nil {
 		resp["granted_scope"] = ""
 		resp["scope_grant_warning"] = fmt.Sprintf("could not grant %s (%v) — pair the peer then re-link", grantScope, err)
+	}
+	if err := h.store.GrantPeerScope(r.Context(), req.PeerID, syncScope); err != nil {
+		resp["granted_sync_scope"] = ""
+		resp["sync_scope_grant_warning"] = fmt.Sprintf("could not grant %s (%v) — pair the peer then re-link", syncScope, err)
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -107,16 +118,24 @@ func (h *workspaceLinkHandler) delete(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "peer_id and remote_workspace_id query params are required")
 		return
 	}
-	revokeScope := ""
+	// Revoke BOTH scopes the link granted, mirroring the control tool:
+	// task_assign:<remote name> and task_sync:<local id>. Look them up
+	// from the binding before clearing it (best-effort — a missing
+	// binding just means there's nothing to revoke).
+	revokeScopes := []string{}
 	if b, err := h.store.GetWorkspacePeerBinding(r.Context(), peerID, remoteWsID); err == nil {
-		revokeScope = taskAssignScopeForLink(b.RemoteWorkspaceName)
+		revokeScopes = append(revokeScopes, taskAssignScopeForLink(b.RemoteWorkspaceName))
+		if b.LocalWorkspaceID != "" {
+			revokeScopes = append(revokeScopes, taskSyncScopeForLink(b.LocalWorkspaceID))
+		}
 	}
 	if err := h.store.ClearWorkspaceLink(r.Context(), peerID, remoteWsID); err != nil {
 		writeErrorDetail(w, http.StatusInternalServerError, "failed to clear workspace link", err.Error())
 		return
 	}
-	if revokeScope != "" {
-		_ = h.store.RevokePeerScope(r.Context(), peerID, revokeScope)
+	for _, scope := range revokeScopes {
+		// Revoke is idempotent; ignore "scope wasn't granted" races.
+		_ = h.store.RevokePeerScope(r.Context(), peerID, scope)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"unlinked": true})
 }
@@ -210,10 +229,21 @@ func (h *workspaceLinkHandler) workspaceNames(r *http.Request) map[string]string
 }
 
 // taskAssignScopeForLink mirrors the control-server helper: the scope a
-// linked peer must hold to land replicated tasks here.
+// linked peer must hold to land replicated tasks here. Keyed by the
+// peer's workspace name (the inbound-push receiver checks
+// task_assign:<remote_workspace_name>); wildcard when the name is absent.
 func taskAssignScopeForLink(remoteWorkspaceName string) string {
 	if remoteWorkspaceName == "" {
 		return "task_assign:*"
 	}
 	return "task_assign:" + remoteWorkspaceName
+}
+
+// taskSyncScopeForLink mirrors the control-server helper: the scope a
+// linked peer must hold to PULL this LOCAL workspace's task state over
+// /mcplexer/task-sync/1.0.0. Keyed by local workspace id (that's what
+// rides in the peer's Hello frame) — unlike task_assign, which the
+// inbound-push receiver checks by the sender's workspace name.
+func taskSyncScopeForLink(localWorkspaceID string) string {
+	return "task_sync:" + localWorkspaceID
 }
