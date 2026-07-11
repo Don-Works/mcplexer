@@ -1,11 +1,13 @@
-// router/index.ts — public surface for the Pi MCPlexer router.
-// Re-exports everything the extension needs.
-
-export { classify, parseClassifierOutput } from "./classifier.ts";
+export { classify, buildClassifierPrompt, parseClassifierOutput } from "./classifier.ts";
 export { rankCandidates } from "./ranker.ts";
 export { compileCapabilities } from "./capabilities.ts";
-export { dispatch } from "./dispatch.ts";
-export { DEFAULT_CANDIDATES, resolveCatalog, candidatesFromEnv } from "./catalog.ts";
+export { dispatch, reviewDelegation } from "./dispatch.ts";
+export {
+  candidatesFromEnv,
+  loadCandidates,
+  capacityRowsToCandidates,
+  parseCandidateOverrides,
+} from "./catalog.ts";
 export {
   route,
   getRouterState,
@@ -19,17 +21,22 @@ export {
 } from "./router.ts";
 export type { CompleteFn } from "./router.ts";
 export type {
-  RouteDecision,
+  CapabilityBundle,
+  DispatchResult,
+  InputMeta,
+  LiveModelEvidence,
+  ModelCandidate,
+  RankedCandidate,
   RouteAction,
+  RouteDecision,
+  RouteQuality,
+  RouteResult,
+  RouteRisk,
+  RouterConfig,
+  RouterState,
+  ScoreBreakdown,
+  ShimResult,
+  ShimRunner,
   TaskKind,
   WorkerMode,
-  ModelCandidate,
-  CapabilityBundle,
-  ScoreBreakdown,
-  RankedCandidate,
-  RouteResult,
-  RouterState,
-  RouterConfig,
-  InputMeta,
-  ShimRunner,
 } from "./types.ts";

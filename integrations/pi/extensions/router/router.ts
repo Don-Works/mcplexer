@@ -1,223 +1,153 @@
-// router/router.ts — main router orchestrator.
-//
-// Ties together classifier → ranker → capabilities → dispatch.
-// Disabled by default. Toggle via /router on|off|status.
-// Fails open to normal Pi on any error.
+// Stateful orchestration: classify -> live catalog -> rank -> capability
+// policy -> MCPlexer delegation. Router mode remains opt-in and fail-open
+// until a delegation has actually been created.
 
 import type {
-  RouteResult,
-  RouterState,
-  RouterConfig,
   InputMeta,
+  RouteResult,
+  RouterConfig,
+  RouterState,
   ShimRunner,
 } from "./types.ts";
 import { classify } from "./classifier.ts";
+import { loadCandidates, candidatesFromEnv } from "./catalog.ts";
 import { rankCandidates } from "./ranker.ts";
 import { compileCapabilities } from "./capabilities.ts";
 import { dispatch } from "./dispatch.ts";
-import { resolveCatalog, candidatesFromEnv } from "./catalog.ts";
+import { shouldInterceptInput } from "./core.mjs";
 
-/** LLM completion function for the classifier. */
 export type CompleteFn = (prompt: string) => Promise<string>;
 
-// --- Module state ---
+let enabled = false;
+let busy = false;
+let lastRoute: string | null = null;
+let lastDelegationId: string | null = null;
+let config: RouterConfig | null = null;
 
-let _enabled = false;
-let _busy = false;
-let _lastRoute: string | null = null;
-let _config: RouterConfig | null = null;
+function positiveInt(value: string | undefined, fallback: number): number {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
 
-/** Get current router state (for /router status). */
 export function getRouterState(): RouterState {
   return {
-    enabled: _enabled,
-    busy: _busy,
-    last_route: _lastRoute,
+    enabled,
+    busy,
+    last_route: lastRoute,
+    last_delegation_id: lastDelegationId,
   };
 }
 
-/** Enable or disable the router. */
-export function setRouterEnabled(enabled: boolean): void {
-  _enabled = enabled;
+export function setRouterEnabled(value: boolean): void {
+  enabled = value;
 }
 
-/** Get or initialize the router config. */
 export function getConfig(): RouterConfig {
-  if (_config) return _config;
-
-  const envCandidates = candidatesFromEnv();
-  const candidates = resolveCatalog(envCandidates);
-
-  _config = {
-    enabled: false,
-    candidates,
-    confidence_threshold: 0.6,
-    max_poll_attempts: 60,
-    poll_interval_ms: 2000,
-  };
-  return _config;
+  if (!config) {
+    config = {
+      candidate_overrides: candidatesFromEnv(),
+      max_poll_attempts: positiveInt(process.env.MCPLEXER_ROUTER_POLL_ATTEMPTS, 180),
+      poll_interval_ms: positiveInt(process.env.MCPLEXER_ROUTER_POLL_MS, 2000),
+    };
+  }
+  return config;
 }
 
-/** Override config (for testing). */
-export function setConfig(config: Partial<RouterConfig>): void {
-  _config = { ...getConfig(), ...config };
+export function setConfig(value: Partial<RouterConfig>): void {
+  config = { ...getConfig(), ...value };
 }
 
-/** Reset all state (for testing). */
 export function resetRouter(): void {
-  _enabled = false;
-  _busy = false;
-  _lastRoute = null;
-  _config = null;
+  enabled = false;
+  busy = false;
+  lastRoute = null;
+  lastDelegationId = null;
+  config = null;
 }
 
-/**
- * Check whether input should be intercepted by the router.
- * Returns true if the router should attempt to classify this input.
- */
 export function shouldIntercept(meta: InputMeta): boolean {
-  // Router must be enabled
-  if (!_enabled) return false;
-
-  // Already processing a route — serialize
-  if (_busy) return false;
-
-  // Bypass: extension-origin input (prevent recursion)
-  if (meta.origin === "extension") return false;
-
-  // Bypass: slash commands (handled by Pi natively)
-  if (meta.is_slash_command) return false;
-
-  // Bypass: images (not supported initially)
-  if (meta.has_images) return false;
-
-  // Bypass: empty or whitespace-only input
-  if (!meta.text.trim()) return false;
-
-  return true;
+  return shouldInterceptInput(enabled, busy, meta);
 }
 
-/**
- * Format the route result as a Pi custom message with expandable metadata.
- */
 export function formatRouteResult(result: RouteResult): string {
-  const lines: string[] = [];
-
-  // Main output
-  if (result.output) {
-    lines.push(result.output);
-  } else {
-    lines.push("(No output from delegation)");
-  }
-
-  // Route metadata — compact, expandable
-  lines.push("");
-  lines.push("---");
-  lines.push(`**Route**: ${result.chosen.candidate.label} (score: ${result.chosen.score})`);
-  lines.push(`**Task**: ${result.decision.task_kind} | ${result.decision.quality} quality | ${result.decision.worker_mode}`);
-  lines.push(`**Reason**: ${result.decision.reason}`);
-
-  if (result.delegation_id) {
-    lines.push(`**Delegation**: \`${result.delegation_id}\``);
-  }
-
-  // Score breakdown
   const bd = result.chosen.breakdown;
+  const lines = [result.output || result.error || "Delegation completed without text output", "", "---"];
+  lines.push(`Route: ${result.chosen.candidate.label} · score ${result.chosen.score}`);
+  lines.push(`Task: ${result.decision.task_kind} · ${result.decision.quality} · ${result.decision.worker_mode}`);
+  lines.push(`Why: ${result.decision.reason}`);
   lines.push(
-    `**Score**: prior=${bd.task_prior} review=${bd.review_boost} rel=${bd.reliability} lat=${bd.latency_score} cost=${bd.cost_score}`,
+    `Evidence: task=${bd.task_quality} review=${bd.review} reliability=${bd.reliability} ` +
+    `speed=${bd.speed} cost=${bd.cost} load=${bd.load} priority=${bd.priority}`,
   );
-
-  if (result.decision.risk !== "safe") {
-    lines.push(`**Risk**: ${result.decision.risk}`);
-  }
-
+  lines.push(`Capability: ${result.capabilities.capability_preset} · ${result.status}`);
+  if (result.delegation_id) lines.push(`Delegation: ${result.delegation_id}`);
+  if (result.error && result.output) lines.push(`Warning: ${result.error}`);
   return lines.join("\n");
 }
 
-/**
- * Format a busy response when the router is already processing a route.
- */
 export function formatBusyResponse(): string {
-  return "Router is busy processing a previous request. Please wait for it to complete, or use Ctrl+C to cancel.";
+  return "Router is already waiting on a delegation. Wait for it to finish, or use normal Pi after /router off.";
 }
 
-/**
- * Main routing entry point. Classifies input, ranks candidates, dispatches
- * to the best model via MCPlexer delegation. On any failure, returns null
- * so the caller can fail-open to normal Pi.
- *
- * @param input    The user's input text.
- * @param meta     Input metadata (images, slash commands, origin).
- * @param complete LLM function for the classifier.
- * @param runShim  Shim runner for MCPlexer tool calls.
- */
 export async function route(
   input: string,
   meta: InputMeta,
-  complete: CompleteFn,
+  completePrompt: CompleteFn,
   runShim: ShimRunner,
+  signal?: AbortSignal,
 ): Promise<RouteResult | null> {
   if (!shouldIntercept(meta)) return null;
-
-  _busy = true;
-  _lastRoute = null;
-
+  busy = true;
   try {
-    // Step 1: Classify
-    const decision = await classify(meta, complete);
-    if (!decision) {
-      // Classifier failed — fail open
-      console.error("[mcplexer-router] classifier failed, falling through to normal Pi");
-      return null;
+    const decision = await classify(meta, completePrompt);
+    if (!decision || decision.action === "passthrough") return null;
+
+    const capabilityBundle = compileCapabilities(decision);
+    if (capabilityBundle.blocked_reason) {
+      throw new Error(capabilityBundle.blocked_reason);
     }
 
-    // Step 2: If passthrough, let normal Pi handle it
-    if (decision.action === "passthrough") {
-      return null;
-    }
-
-    // Step 3: Rank candidates
-    const config = getConfig();
-    const ranked = rankCandidates(config.candidates, decision);
+    const currentConfig = getConfig();
+    const candidates = await loadCandidates(
+      runShim,
+      decision.task_kind,
+      currentConfig.candidate_overrides,
+      signal,
+    );
+    const ranked = rankCandidates(candidates, decision);
     if (ranked.length === 0) {
-      console.error("[mcplexer-router] no eligible model candidates for this task");
-      return null;
+      throw new Error("no eligible configured MCPlexer delegation model");
     }
-
     const chosen = ranked[0];
-
-    // Step 4: Compile capabilities
-    const bundle = compileCapabilities(decision);
-
-    // Step 5: Dispatch
-    const dispatchResult = await dispatch(
+    const dispatched = await dispatch(
       runShim,
       input,
       chosen,
-      bundle,
+      capabilityBundle,
       decision,
-      config.max_poll_attempts,
-      config.poll_interval_ms,
+      currentConfig.max_poll_attempts,
+      currentConfig.poll_interval_ms,
+      signal,
     );
 
-    if (dispatchResult.error) {
-      console.error(`[mcplexer-router] dispatch error: ${dispatchResult.error}`);
-      return null;
+    // Before dispatch, fail-open is safe. After a delegation exists, surface
+    // its state and do not let normal Pi duplicate the same work.
+    if (dispatched.error && !dispatched.started) {
+      throw new Error(dispatched.error);
     }
 
-    const result: RouteResult = {
+    lastRoute = chosen.candidate.id;
+    lastDelegationId = dispatched.delegation_id;
+    return {
       decision,
       chosen,
-      delegation_id: dispatchResult.delegation_id,
-      output: dispatchResult.output,
+      capabilities: capabilityBundle,
+      delegation_id: dispatched.delegation_id,
+      output: dispatched.output,
+      status: dispatched.status,
+      error: dispatched.error ?? undefined,
     };
-
-    _lastRoute = chosen.candidate.id;
-    return result;
-  } catch (err) {
-    console.error(`[mcplexer-router] unexpected error: ${err}`);
-    return null;
   } finally {
-    _busy = false;
+    busy = false;
   }
 }

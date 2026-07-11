@@ -125,9 +125,10 @@ like `picoclaw`, `copilot`, `raspberry-pi`, and `pip` do NOT match.
 
 ## Router mode (opt-in)
 
-The optional MCPlexer router intercepts user input, classifies the task, ranks
-available model candidates, and delegates to the best model via MCPlexer's
-worker system. It is **disabled by default** — normal Pi behavior is preserved.
+The optional router turns Pi into a thin, stateful input brain: a configured
+local model classifies each substantive prompt, trusted policy code ranks the
+currently registered MCPlexer worker models, and MCPlexer executes the work.
+It is **disabled by default**.
 
 ### Enable
 
@@ -139,88 +140,119 @@ pi --mcpx-router
 /router on
 /router off
 /router status
+/router cancel
+/router score 90
 ```
 
 ### How it works
 
 ```
-User input → Classifier (LLM) → RouteDecision → Ranker → Best model → MCPlexer delegation → Result
+input → local classifier → validated RouteDecision → live model catalog
+      → evidence ranker → capability compiler → MCPlexer delegate → Pi result
 ```
 
-1. **Classifier** — a local LLM call returns a strict `RouteDecision` with
-   action, task kind, quality, worker mode, tool intents, risk, and requirements.
-   It NEVER selects raw model IDs, providers, or tool globs.
+1. **Classifier** — Pi calls a separate configured local model through
+   `@earendil-works/pi-ai`. It returns task kind, quality, worker mode, safe
+   intent labels, risk, and model requirements. Provider names, model IDs,
+   namespaces, and tool globs are rejected by the schema.
 
-2. **Ranker** — eligibility gates filter candidates by required capabilities,
-   then scores each on: task-specific prior (40%), review boost (15%),
-   reliability (20%), latency (15%), cost (10%). Missing evidence is neutral
-   (50 for priors, 80 for reliability), never zero. Ties are broken
-   deterministically by candidate id.
+2. **Live catalog** — `mcpx__list_delegation_model_capacity` supplies the
+   registered profile/model pairs plus reviewed quality, reliability, average
+   duration, cost/accounting status, active load, and availability. Optional
+   operator overlays add capabilities, task priors, measured speed, and
+   task-specific benchmark evidence.
 
-3. **Capabilities** — tool intents are compiled through trusted bundles to an
-   explicit `capability_preset` + `capability_profile` + `tool_allowlist`.
-   Classifier strings are NEVER passed through as permissions. Dangerous intents
-   (secrets, admin, force-push) downgrade to read-only.
+3. **Ranker** — hard capability/modalities gates run first. The eligible pool is
+   scored with task-specific benchmark/prior evidence, MCPlexer parent reviews,
+   operational reliability, speed, cost, active load, and an operator priority.
+   High-quality tasks emphasize task/review quality; low-quality tasks emphasize
+   speed and operator-supplied normalized cost. Missing evidence is neutral (50).
+   MCPlexer's cumulative live `cost_usd` is shown for audit but is not treated as
+   a per-run score, so well-established models are not penalized for more history.
+   Missing accounting stays neutral; it is never treated as free.
 
-4. **Dispatch** — the chosen candidate is dispatched via `mcpx__delegate_worker`.
-   The router polls for completion and displays the result with auditable route
-   metadata (chosen model, score breakdown, delegation id).
+4. **Capabilities** — safe intent labels compile into real MCPlexer
+   `capability_preset`, `capability_profile`, and gateway tool allowlist fields.
+   Classifier output never becomes a permission string. Secrets, admin,
+   deployment, destructive operations, and external writes are passed back to
+   normal Pi for direct human-controlled handling rather than auto-delegated.
+
+5. **Dispatch and learning** — the chosen explicit provider/profile/model is
+   sent to `mcpx__delegate_worker` with `review_required:true`. Pi polls the
+   delegation tree and displays the worker output plus the score breakdown and
+   delegation ID. `/router score <0-100>` records user feedback so task-specific
+   MCPlexer rankings improve over time.
 
 ### Bypasses
 
-The router does NOT intercept:
+The router bypasses:
 - Extension-origin input (prevents recursion)
 - Slash commands (handled by Pi natively)
 - Input with images (not supported initially)
 - Empty/whitespace input
-- Input while a previous route is still processing (serialized)
+- Streaming steering/follow-up input
 
-On any classifier or dispatch failure, the router **fails open** to normal Pi
-with a concise warning.
+Only one routed request runs at a time. Additional plain input gets a busy
+message instead of silently starting duplicate work. `/router cancel` stops
+Pi waiting locally; an already-created MCPlexer delegation continues and stays
+visible in the Delegations UI.
 
-### Model candidate catalog
+Classifier, catalog, policy, and pre-dispatch failures fail open to normal Pi.
+Once a delegation ID exists, Pi does not run the same prompt again: timeout or
+polling errors are surfaced with that ID to avoid duplicate side effects.
 
-The default catalog includes Claude Sonnet 4, Claude Haiku 3.5, GPT-4o,
-GPT-4o Mini, and o3-mini. Each candidate has:
+### Configuration
 
-- Task-specific quality priors (coding, research, review, chat) — operator-configurable
-- Speed and cost tiers for eligibility gating
-- Reliability score from observed delegation success
-- Capability list for eligibility filtering
-
-Override via environment variable:
+The classifier defaults to `local/qwen3.6-35b-a3b` on this installation. Set a
+different persistent, fast local model with:
 
 ```bash
-MCPLEXER_ROUTER_CANDIDATES='[{"id":"custom/model","provider":"custom",...}]'
+export MCPLEXER_ROUTER_CLASSIFIER_MODEL=local/your-fast-router-model
+export MCPLEXER_ROUTER_CLASSIFY_TIMEOUT_MS=8000
 ```
 
-### Ranking formula
+Model evidence overlays are optional JSON. Entries match the live catalog by
+`id` (`provider/model-id`) or by `provider` + `model_id`:
 
-```
-score = task_prior × 0.40 × quality_multiplier
-      + review_boost × 0.15
-      + reliability × 0.20
-      + latency_score × 0.15
-      + cost_score × 0.10
+```bash
+export MCPLEXER_ROUTER_CANDIDATES='[
+  {
+    "id": "mimo_cli/xiaomi/mimo-v2.5-pro",
+    "benchmark_scores": {"coding": 84, "review": 79},
+    "task_priors": {"architecture": 82},
+    "speed_score": 88,
+    "operator_priority": 96,
+    "capabilities": ["code", "reasoning", "analysis", "tool_use", "workspace_tools"]
+  }
+]'
 ```
 
-Quality multiplier: high=1.2, medium=1.0, low=0.8.
+`benchmark_scores.coding` is where a normalized SWE-bench-style score belongs;
+other tasks can use their appropriate evaluation. MCPlexer does not ship
+fabricated benchmark values. With no overlay, task quality is neutral and the
+reviewed live evidence plus a conservative workhorse preference drives routing.
+
+Polling is configurable with `MCPLEXER_ROUTER_POLL_ATTEMPTS` (default 180)
+and `MCPLEXER_ROUTER_POLL_MS` (default 2000).
 
 ### Safety
 
-- Dangerous tool intents (secrets, admin, force-push, delete-production) always
-  downgrade to read-only capabilities.
-- External writes/secrets/admin are NEVER auto-granted.
-- Admin operations remain impossible through the router.
+- External writes, secrets, deployments, destructive operations, and admin are
+  never auto-granted.
+- Delegate profiles disable mesh, secrets, task offers, and subdelegation.
+- Gateway permissions use explicit MCP tool names/globs and namespace limits.
+- MCPlexer independently hard-denies admin tools to delegated workers.
 - The router is opt-in and off by default.
 
 ### Limitations
 
-- Workers run in isolated git worktrees — follow-up context does not carry over.
+- Worker isolation and native CLI permissions remain MCPlexer concerns. The
+  gateway capability profile constrains MCP tools; it cannot remove a CLI
+  harness's native read/bash/edit/write tools or host networking.
+- Coding follow-up context and branch integration are not automated yet.
 - Image input is not supported initially.
-- The classifier uses a local LLM call, adding ~1-2s latency to the first response.
-- The candidate catalog uses neutral priors until real review evidence accumulates.
-- MCP tool gates do not constrain CLI-native tools or direct network access.
+- A cold local classifier can be much slower than a warm one; keep it resident
+  or configure a smaller model.
 
 ## Testing
 
@@ -228,13 +260,15 @@ Quality multiplier: high=1.2, medium=1.0, low=0.8.
 npm test
 ```
 
-Runs the router test suite (classifier parsing, ranker scoring, capability
-compilation, interception logic) with `node:test`. No network required.
+The Node 20-compatible suite imports the same dependency-free `core.mjs` used
+by the extension. It covers schema validation, live capacity ingestion,
+task/benchmark ranking, missing accounting, load/speed tradeoffs, capability
+policy, delegation tree parsing, input bypasses, and the installed Pi API seam.
 
 ## Assumptions / known unknowns
 
-See the parent task's follow-ups. In short: the exact Pi package sub-directory
-resolution, the precise `clientInfo.name` Pi sends over MCP, and the stability
-of the `ExtensionAPI` / `defineTool` signatures across Pi releases were taken
-from Pi's public docs (June 2026) and may need a one-line adjustment against
-your installed Pi version.
+The router event and completion paths are verified against installed Pi 0.80.3
+(`pi.on("input")`, `@earendil-works/pi-ai/compat.complete`). Package
+sub-directory resolution and the exact MCP `clientInfo.name` still depend on
+the Pi package loader version; the gateway's harness-name tests cover the
+known Pi/Earendil variants.
