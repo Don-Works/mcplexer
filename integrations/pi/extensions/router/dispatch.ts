@@ -12,6 +12,7 @@ import {
   ROUTER_META_SENTINEL,
   ROUTER_OUTPUT_SENTINEL,
   ROUTER_SENTINEL,
+  encodeJSONStringArgument,
   parseDelegationPollText,
   parseSentinelJSON,
 } from "./core.mjs";
@@ -70,7 +71,7 @@ export async function dispatch(
     model_profile_id: chosen.candidate.model_profile_id,
     capability_preset: bundle.capability_preset,
     capability_profile: bundle.capability_profile,
-    tool_allowlist_json: JSON.stringify(bundle.tool_allowlist),
+    tool_allowlist_json: encodeJSONStringArgument(bundle.tool_allowlist),
     review_required: true,
     parallelism: 1,
     max_tool_calls: decision.quality === "high" ? 180 : 100,

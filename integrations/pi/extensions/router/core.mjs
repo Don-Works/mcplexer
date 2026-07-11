@@ -8,6 +8,13 @@ export const ROUTER_META_SENTINEL = "MCPLEXER_ROUTER_META:";
 export const ROUTER_OUTPUT_SENTINEL = "MCPLEXER_ROUTER_OUTPUT:";
 export const ROUTER_ERROR_SENTINEL = "MCPLEXER_ROUTER_ERROR:";
 
+// The gateway's compatibility coercer parses JSON-looking strings when a
+// builtin schema is unavailable to Code Mode. Leading JSON whitespace keeps
+// the wire value a string while remaining valid JSON for the builtin parser.
+export function encodeJSONStringArgument(value) {
+  return ` ${JSON.stringify(value)}`;
+}
+
 const TASK_KINDS = new Set([
   "coding",
   "research",

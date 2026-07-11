@@ -22,6 +22,20 @@ func TestCoerceStringifiedArgs_RespectsStringSchema(t *testing.T) {
 	}
 }
 
+func TestCoerceStringifiedArgs_LeadingWhitespacePreservesJSONString(t *testing.T) {
+	in := `{"tool_allowlist_json":" [\"mcpx__execute_code\"]"}`
+	got := coerceStringifiedArgs(json.RawMessage(in), nil)
+
+	var gotMap map[string]any
+	if err := json.Unmarshal(got, &gotMap); err != nil {
+		t.Fatalf("unmarshal got: %v", err)
+	}
+	value, ok := gotMap["tool_allowlist_json"].(string)
+	if !ok || value != ` ["mcpx__execute_code"]` {
+		t.Fatalf("JSON-string allowlist should remain a string; got %T %v", gotMap["tool_allowlist_json"], gotMap["tool_allowlist_json"])
+	}
+}
+
 func TestStringFieldsFromInputSchema(t *testing.T) {
 	cases := []struct {
 		name   string

@@ -11,6 +11,7 @@ export const ROUTER_ROW_SENTINEL: string;
 export const ROUTER_META_SENTINEL: string;
 export const ROUTER_OUTPUT_SENTINEL: string;
 export const ROUTER_ERROR_SENTINEL: string;
+export function encodeJSONStringArgument(value: unknown): string;
 export function parseClassifierOutput(raw: string): RouteDecision | null;
 export function buildClassifierPrompt(text: string): string;
 export function parseCandidateOverrides(raw: string | unknown): Array<Record<string, unknown>>;

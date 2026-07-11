@@ -12,6 +12,7 @@ import {
   capacityRowsToCandidates,
   compileCapabilities,
   delegationSnapshot,
+  encodeJSONStringArgument,
   parseCandidateOverrides,
   parseClassifierOutput,
   parseDelegationPollText,
@@ -203,6 +204,12 @@ describe("evidence-weighted ranking", () => {
 });
 
 describe("capability policy", () => {
+  test("keeps JSON-string allowlists intact through legacy gateway coercion", () => {
+    const encoded = encodeJSONStringArgument(["mcpx__execute_code", "index__context"]);
+    assert.equal(encoded[0], " ");
+    assert.deepEqual(JSON.parse(encoded), ["mcpx__execute_code", "index__context"]);
+  });
+
   test("uses real MCPlexer coder fields and gateway tool names", () => {
     const bundle = compileCapabilities(decision());
     assert.equal(bundle.capability_preset, "coder");
