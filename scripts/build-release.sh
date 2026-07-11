@@ -44,7 +44,7 @@ build_one() {
     go build -trimpath -tags p2p -ldflags "$LDFLAGS" -o "$binary" ./cmd/mcplexer
 
   if [[ "$goos" == "darwin" ]]; then
-    scripts/codesign-darwin.sh "$binary"
+    sh scripts/codesign-darwin.sh "$binary"
   fi
 
   cp README.md LICENSE NOTICE THIRD_PARTY_NOTICES.md "$pkg/"
