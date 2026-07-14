@@ -1143,6 +1143,8 @@ func buildServerDeps(ctx context.Context, cfg *Config, db *sqlite.DB, settingsSv
 	// index__* tools. Always wired; construction just wraps the store, and
 	// leaving it nil would advertise the tools but reply "unavailable".
 	d.codeIndex = index.NewService(db, nil)
+	codeEmbedder, codeEmbedModel := resolveCodeIndexEmbedder(ctx, settingsSvc.Load(ctx))
+	d.codeIndex.ConfigureEmbeddings(ctx, codeEmbedder, codeEmbedModel)
 
 	// Concierge — chat turn signal classifier + log (epic
 	// 01KSGKFZMVFZRWVDSZMK8W9JN1). Always wired alongside the tasks
@@ -1836,6 +1838,8 @@ func runStdio(ctx context.Context, cfg *Config, db *sqlite.DB, settingsSvc *conf
 		stdioTasksSvc.SetEmitter(tasks.NewEmitter(meshMgr))
 	}
 	stdioCodeIndex := index.NewService(db, nil)
+	stdioCodeEmbedder, stdioCodeEmbedModel := resolveCodeIndexEmbedder(ctx, settingsSvc.Load(ctx))
+	stdioCodeIndex.ConfigureEmbeddings(ctx, stdioCodeEmbedder, stdioCodeEmbedModel)
 
 	gwOpts := []gateway.ServerOption{
 		gateway.WithApprovals(approvalMgr),

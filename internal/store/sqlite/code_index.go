@@ -162,6 +162,9 @@ func (d *DB) deleteCodeIndexChunksForFile(ctx context.Context, fileID int64) err
 	if err := rows.Err(); err != nil {
 		return err
 	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("close chunk id rows: %w", err)
+	}
 	for _, id := range chunkIDs {
 		if _, err := d.q.ExecContext(ctx,
 			`DELETE FROM code_index_chunks_vec WHERE chunk_id = ?`, id); err != nil {

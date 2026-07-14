@@ -32,6 +32,7 @@ type buildRun struct {
 	batch       []store.IndexedFile
 	res         *BuildResult
 	symbolTotal int
+	chunkTotal  int
 	tsImports   int
 	tsAliases   int
 	deadline    time.Time
@@ -46,6 +47,7 @@ func (s *Service) runBuild(ctx context.Context, req BuildRequest) (*BuildResult,
 		res: &BuildResult{}, deadline: time.Now().Add(wallGuard),
 		enumSet: map[string]bool{},
 	}
+	br.res.IndexID = req.WorkspaceID
 	start := time.Now()
 	files, _, err := enumerate(ctx, req.Root, br.git, req.Paths)
 	if err != nil {
@@ -74,9 +76,7 @@ func (s *Service) runBuild(ctx context.Context, req BuildRequest) (*BuildResult,
 func (br *buildRun) loadState(ctx context.Context) error {
 	if prev, err := br.svc.store.GetCodeIndexBuild(ctx, br.req.WorkspaceID); err == nil {
 		br.lastIndexed = prev.BuiltAt.Unix()
-		if !br.req.Force {
-			br.symbolTotal = prev.SymbolCount
-		}
+		br.symbolTotal = prev.SymbolCount
 	}
 	stats, err := br.svc.store.ListCodeIndexFileStats(ctx, br.req.WorkspaceID)
 	if err != nil {
@@ -86,9 +86,8 @@ func (br *buildRun) loadState(ctx context.Context) error {
 	br.storedPaths = make(map[string]bool, len(stats))
 	for _, st := range stats {
 		br.storedPaths[st.Path] = true
-		if !br.req.Force {
-			br.existing[st.Path] = st
-		}
+		br.chunkTotal += st.ChunkCount
+		br.existing[st.Path] = st
 	}
 	return nil
 }
@@ -119,13 +118,17 @@ func (br *buildRun) processAll(ctx context.Context, files []string) error {
 // processFile classifies one file as unchanged, skipped (too large / binary),
 // or (re)indexed, updating counters and the write batch accordingly.
 func (br *buildRun) processFile(ctx context.Context, rel string) error {
+	if !ShouldIndexPath(rel) {
+		return nil
+	}
 	info, err := os.Lstat(filepath.Join(br.req.Root, rel))
 	if err != nil || !info.Mode().IsRegular() {
 		return nil // vanished or non-regular between enumeration and stat — skip
 	}
 	size, mtime := int(info.Size()), info.ModTime().Unix()
 	prev, known := br.existing[rel]
-	if known && prev.SizeBytes == size && prev.MtimeUnix == mtime && prev.MtimeUnix <= br.lastIndexed-mtimeGraceSecs {
+	needsRechunk := known && prev.ChunkVersion != chunkSchemaVersion
+	if known && !br.req.Force && !needsRechunk && prev.SizeBytes == size && prev.MtimeUnix == mtime && prev.MtimeUnix <= br.lastIndexed-mtimeGraceSecs {
 		br.res.FilesUnchanged++
 		return nil
 	}
@@ -141,8 +144,12 @@ func (br *buildRun) processFile(ctx context.Context, rel string) error {
 		br.addSkipped(ctx, rel, size, mtime, "", "binary file")
 		return nil
 	}
+	if likelyGeneratedSource(data) {
+		br.addSkipped(ctx, rel, size, mtime, hashBytes(data), "generated or minified source")
+		return nil
+	}
 	hash := hashBytes(data)
-	if known && prev.ContentHash == hash {
+	if known && !br.req.Force && !needsRechunk && prev.ContentHash == hash {
 		br.res.FilesUnchanged++ // content identical; leave the stored row as-is
 		return nil
 	}
@@ -159,35 +166,47 @@ func (br *buildRun) addIndexed(ctx context.Context, rel string, size int, mtime 
 	}
 	if known {
 		br.symbolTotal -= br.oldSymbolCount(ctx, rel)
+		br.chunkTotal -= br.existing[rel].ChunkCount
 	}
 	br.symbolTotal += len(ex.Symbols)
 	br.res.FilesIndexed++
 	br.res.SymbolCount += len(ex.Symbols)
-	br.batch = append(br.batch, br.assemble(rel, size, mtime, hash, ex))
+	assembled := br.assemble(rel, size, mtime, hash, data, ex)
+	remaining := maxWorkspaceChunks - br.chunkTotal
+	if remaining < len(assembled.Chunks) {
+		if remaining < 0 {
+			remaining = 0
+		}
+		assembled.Chunks = assembled.Chunks[:remaining]
+		br.warn(fmt.Sprintf("%s: source chunks truncated at workspace cap %d", rel, maxWorkspaceChunks))
+	}
+	br.chunkTotal += len(assembled.Chunks)
+	br.batch = append(br.batch, assembled)
 }
 
 // addSkipped records a file row for a too-large or binary file with no parse.
 func (br *buildRun) addSkipped(ctx context.Context, rel string, size int, mtime int64, hash, reason string) {
 	if known, ok := br.existing[rel]; ok && known.ContentHash != "" {
 		br.symbolTotal -= br.oldSymbolCount(ctx, rel)
+		br.chunkTotal -= known.ChunkCount
 	}
 	br.res.FilesSkipped++
 	f := store.CodeIndexFile{
 		WorkspaceID: br.req.WorkspaceID, Path: rel, PathTokens: tokenString(rel),
 		SizeBytes: size, MtimeUnix: mtime, ContentHash: hash, IsTest: isTestPath(rel),
-		SkippedReason: reason, IndexedAt: time.Now().UTC(),
+		SkippedReason: reason, ChunkVersion: chunkSchemaVersion, IndexedAt: time.Now().UTC(),
 	}
 	br.batch = append(br.batch, store.IndexedFile{File: f})
 }
 
 // assemble folds an Extraction into a store.IndexedFile: file row + tokenized
 // symbols + resolved import edges.
-func (br *buildRun) assemble(rel string, size int, mtime int64, hash string, ex *Extraction) store.IndexedFile {
+func (br *buildRun) assemble(rel string, size int, mtime int64, hash string, data []byte, ex *Extraction) store.IndexedFile {
 	f := store.CodeIndexFile{
 		WorkspaceID: br.req.WorkspaceID, Path: rel, PathTokens: tokenString(rel),
 		Language: ex.Language, Package: ex.Package, SizeBytes: size, LineCount: ex.LineCount,
 		MtimeUnix: mtime, ContentHash: hash, DocSummary: ex.DocSummary,
-		IsTest: isTestPath(rel), IndexedAt: time.Now().UTC(),
+		IsTest: isTestPath(rel), ChunkVersion: chunkSchemaVersion, IndexedAt: time.Now().UTC(),
 	}
 	syms := make([]store.CodeIndexSymbol, 0, len(ex.Symbols))
 	for _, s := range ex.Symbols {
@@ -195,7 +214,11 @@ func (br *buildRun) assemble(rel string, size int, mtime int64, hash string, ex 
 		s.NameTokens = tokenString(s.Name)
 		syms = append(syms, s)
 	}
-	return store.IndexedFile{File: f, Symbols: syms, Edges: br.edges(rel, ex)}
+	chunks, truncated := chunkSource(rel, data, syms)
+	if truncated {
+		br.warn(fmt.Sprintf("%s: source chunks truncated at per-file cap %d", rel, maxChunksPerFile))
+	}
+	return store.IndexedFile{File: f, Symbols: syms, Edges: br.edges(rel, ex), Chunks: chunks}
 }
 
 // edges resolves an extraction's import specifiers into store edges, tallying
@@ -238,9 +261,8 @@ func (br *buildRun) pruneRemoved(ctx context.Context) {
 		}
 		if !br.enumSet[p] {
 			gone = append(gone, p)
-			if !br.req.Force {
-				br.symbolTotal -= br.oldSymbolCount(ctx, p)
-			}
+			br.symbolTotal -= br.oldSymbolCount(ctx, p)
+			br.chunkTotal -= br.existing[p].ChunkCount
 		}
 	}
 	if len(gone) == 0 {
@@ -292,7 +314,12 @@ func (br *buildRun) finish(ctx context.Context, start time.Time) (*BuildResult, 
 	build := &store.CodeIndexBuild{
 		WorkspaceID: br.req.WorkspaceID, RootPath: br.req.Root, GitHead: head, DirtyCount: dirty,
 		BuiltAt: time.Now().UTC(), DurationMS: br.res.DurationMS,
-		FileCount: fileCount, SymbolCount: symbolCount, WarningsJSON: warningsJSON(br.res.Warnings),
+		FileCount: fileCount, SymbolCount: symbolCount, ChunkCount: br.chunkTotal,
+		WarningsJSON: warningsJSON(br.res.Warnings),
+	}
+	if n, err := br.svc.store.CountCodeIndexChunks(ctx, br.req.WorkspaceID); err == nil {
+		build.ChunkCount = n
+		br.res.ChunkCount = n
 	}
 	if err := br.svc.store.PutCodeIndexBuild(ctx, build); err != nil {
 		return nil, fmt.Errorf("index: put build row: %w", err)

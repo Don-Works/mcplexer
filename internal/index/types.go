@@ -26,6 +26,9 @@ var (
 	// ErrRootUnsafe means the resolved workspace root is empty, "/", or does
 	// not exist — the index refuses to run from the seeded global workspace.
 	ErrRootUnsafe = errors.New("code index root unsafe: run from a project workspace")
+	// ErrQueryRequired prevents an empty search from degenerating into a large
+	// unranked source dump.
+	ErrQueryRequired = errors.New("code index query required")
 )
 
 // BuildRequest asks for a build or incremental refresh. Paths restricts the
@@ -39,14 +42,69 @@ type BuildRequest struct {
 
 // BuildResult reports what an incremental build changed.
 type BuildResult struct {
-	FilesIndexed   int      `json:"files_indexed"`
-	FilesUnchanged int      `json:"files_unchanged"`
-	FilesSkipped   int      `json:"files_skipped"`
-	FilesRemoved   int      `json:"files_removed"`
-	SymbolCount    int      `json:"symbol_count"`
-	DurationMS     int      `json:"duration_ms"`
-	GitHead        string   `json:"git_head"`
-	Warnings       []string `json:"warnings,omitempty"`
+	IndexID        string          `json:"index_id"`
+	FilesIndexed   int             `json:"files_indexed"`
+	FilesUnchanged int             `json:"files_unchanged"`
+	FilesSkipped   int             `json:"files_skipped"`
+	FilesRemoved   int             `json:"files_removed"`
+	SymbolCount    int             `json:"symbol_count"`
+	ChunkCount     int             `json:"chunk_count"`
+	DurationMS     int             `json:"duration_ms"`
+	GitHead        string          `json:"git_head"`
+	Warnings       []string        `json:"warnings,omitempty"`
+	Embeddings     EmbeddingStatus `json:"embeddings"`
+}
+
+// SearchRequest asks for ranked source chunks. Kind optionally restricts the
+// declaration kind recorded for a chunk (func, method, type, class, source…).
+type SearchRequest struct {
+	WorkspaceID string `json:"workspace_id"`
+	Root        string `json:"root"`
+	Query       string `json:"query"`
+	Kind        string `json:"kind,omitempty"`
+	Limit       int    `json:"limit,omitempty"`
+}
+
+// CodeSnippet is a bounded, line-addressable slice of source. Citation is
+// always root-relative and can be fed straight to a file reader.
+type CodeSnippet struct {
+	Path       string `json:"path"`
+	StartLine  int    `json:"start_line"`
+	EndLine    int    `json:"end_line"`
+	Citation   string `json:"citation"`
+	Kind       string `json:"kind,omitempty"`
+	SymbolName string `json:"symbol_name,omitempty"`
+	Content    string `json:"content"`
+}
+
+// ChunkHit is one fused lexical/semantic source result. Sources contains
+// "lexical", "semantic", or both; callers never have to compare BM25 with
+// vector distance themselves.
+type ChunkHit struct {
+	CodeSnippet
+	Score   float64  `json:"score"`
+	Sources []string `json:"sources"`
+}
+
+// EmbeddingStatus makes vector availability explicit. Lexical retrieval is
+// still active in every state, including disabled and error.
+type EmbeddingStatus struct {
+	Enabled   bool   `json:"enabled"`
+	Model     string `json:"model,omitempty"`
+	State     string `json:"state"`
+	Embedded  int    `json:"embedded"`
+	Pending   int    `json:"pending"`
+	Total     int    `json:"total"`
+	LastError string `json:"last_error,omitempty"`
+}
+
+// SearchResult is the complete index__search response.
+type SearchResult struct {
+	IndexID    string          `json:"index_id"`
+	Query      string          `json:"query"`
+	Mode       string          `json:"mode"`
+	Hits       []ChunkHit      `json:"hits"`
+	Embeddings EmbeddingStatus `json:"embeddings"`
 }
 
 // SymbolsRequest parameterizes a symbol search.
@@ -170,35 +228,40 @@ type ContextRequest struct {
 // ContextFile is one ranked file in a context pack, with the reasons it was
 // selected and the assembled orientation payload.
 type ContextFile struct {
-	Path          string      `json:"path"`
-	Score         float64     `json:"score"`
-	Why           []string    `json:"why,omitempty"`
-	Summary       string      `json:"summary,omitempty"`
-	Symbols       []SymbolHit `json:"symbols,omitempty"`
-	Tests         []string    `json:"tests,omitempty"`
-	RecentCommits []CommitRef `json:"recent_commits,omitempty"`
+	Path          string        `json:"path"`
+	Score         float64       `json:"score"`
+	Why           []string      `json:"why,omitempty"`
+	Summary       string        `json:"summary,omitempty"`
+	Symbols       []SymbolHit   `json:"symbols,omitempty"`
+	Tests         []string      `json:"tests,omitempty"`
+	RecentCommits []CommitRef   `json:"recent_commits,omitempty"`
+	Snippets      []CodeSnippet `json:"snippets,omitempty"`
 }
 
 // ContextPack is the whole-task context bundle returned by index__context.
 type ContextPack struct {
-	Query        string        `json:"query"`
-	BudgetTokens int           `json:"budget_tokens"`
-	UsedTokens   int           `json:"used_tokens"`
-	Stale        bool          `json:"stale"`
-	BuiltAt      time.Time     `json:"built_at"`
-	Files        []ContextFile `json:"files"`
+	Query        string          `json:"query"`
+	BudgetTokens int             `json:"budget_tokens"`
+	UsedTokens   int             `json:"used_tokens"`
+	Stale        bool            `json:"stale"`
+	BuiltAt      time.Time       `json:"built_at"`
+	Files        []ContextFile   `json:"files"`
+	Embeddings   EmbeddingStatus `json:"embeddings"`
 }
 
 // Status is the freshness verdict returned by index__status.
 type Status struct {
-	Built       bool      `json:"built"`
-	BuiltAt     time.Time `json:"built_at"`
-	GitHead     string    `json:"git_head"`
-	CurrentHead string    `json:"current_head"`
-	Stale       bool      `json:"stale"`
-	DirtyFiles  int       `json:"dirty_files"`
-	FileCount   int       `json:"file_count"`
-	SymbolCount int       `json:"symbol_count"`
-	DurationMS  int       `json:"duration_ms"`
-	Warnings    []string  `json:"warnings,omitempty"`
+	IndexID     string          `json:"index_id"`
+	Built       bool            `json:"built"`
+	BuiltAt     time.Time       `json:"built_at"`
+	GitHead     string          `json:"git_head"`
+	CurrentHead string          `json:"current_head"`
+	Stale       bool            `json:"stale"`
+	DirtyFiles  int             `json:"dirty_files"`
+	FileCount   int             `json:"file_count"`
+	SymbolCount int             `json:"symbol_count"`
+	ChunkCount  int             `json:"chunk_count"`
+	DurationMS  int             `json:"duration_ms"`
+	Warnings    []string        `json:"warnings,omitempty"`
+	Embeddings  EmbeddingStatus `json:"embeddings"`
 }

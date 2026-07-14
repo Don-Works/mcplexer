@@ -14,6 +14,7 @@ func (s *Service) Symbols(ctx context.Context, req SymbolsRequest) ([]SymbolHit,
 	if err := s.ensureBuilt(ctx, req.WorkspaceID, req.Root); err != nil {
 		return nil, err
 	}
+	req.WorkspaceID = indexIDForRoot(req.Root)
 	hits, err := s.store.SearchCodeIndexSymbols(ctx, store.CodeIndexSymbolQuery{
 		WorkspaceID:  req.WorkspaceID,
 		Query:        req.Query,
@@ -36,6 +37,7 @@ func (s *Service) Deps(ctx context.Context, req DepsRequest) (*DepsResult, error
 	if err := s.ensureBuilt(ctx, req.WorkspaceID, req.Root); err != nil {
 		return nil, err
 	}
+	req.WorkspaceID = indexIDForRoot(req.Root)
 	dir := req.Direction
 	if dir == "" {
 		dir = "imports"
@@ -114,6 +116,7 @@ func (s *Service) TestsFor(ctx context.Context, workspaceID, root, file string) 
 	if err := s.ensureBuilt(ctx, workspaceID, root); err != nil {
 		return nil, err
 	}
+	workspaceID = indexIDForRoot(root)
 	filePaths, err := s.filePathSet(ctx, workspaceID)
 	if err != nil {
 		return nil, err
@@ -130,6 +133,7 @@ func (s *Service) Summary(ctx context.Context, workspaceID, root, file string) (
 	if err := s.ensureBuilt(ctx, workspaceID, root); err != nil {
 		return nil, err
 	}
+	workspaceID = indexIDForRoot(root)
 	f, err := s.store.GetCodeIndexFile(ctx, workspaceID, file)
 	if err != nil {
 		return nil, err
@@ -202,15 +206,18 @@ func (s *Service) MapFailure(ctx context.Context, workspaceID, root, text string
 	if err := s.ensureBuilt(ctx, workspaceID, root); err != nil {
 		return nil, err
 	}
+	workspaceID = indexIDForRoot(root)
 	return s.mapFailure(ctx, workspaceID, root, text, clampLimit(limit, 10, 100))
 }
 
-// ContextPack returns the token-budgeted context pack, auto-refreshing the
-// index when git HEAD or the dirty count moved (plan D3 / P4).
+// ContextPack returns the token-budgeted context pack, auto-refreshing when
+// tracked source state changes and including ranked citation-ready snippets.
 func (s *Service) ContextPack(ctx context.Context, req ContextRequest) (*ContextPack, error) {
 	if err := s.ensureBuilt(ctx, req.WorkspaceID, req.Root); err != nil {
 		return nil, err
 	}
+	req.WorkspaceID = indexIDForRoot(req.Root)
+	s.startEmbeddingBackfill(req.WorkspaceID)
 	req.BudgetTokens = clampLimit(req.BudgetTokens, 4000, 16000)
 	build, err := s.store.GetCodeIndexBuild(ctx, req.WorkspaceID)
 	if err != nil {
@@ -231,6 +238,7 @@ func (s *Service) ContextPack(ctx context.Context, req ContextRequest) (*Context
 		return nil, err
 	}
 	pack.Stale = stale
+	pack.Embeddings = s.embeddingStatus(ctx, req.WorkspaceID)
 	if pack.Files == nil {
 		pack.Files = []ContextFile{}
 	}
@@ -243,6 +251,7 @@ func (s *Service) Status(ctx context.Context, workspaceID, root string) (*Status
 	if err := validateRoot(root); err != nil {
 		return nil, err
 	}
+	workspaceID = indexIDForRoot(root)
 	build, err := s.store.GetCodeIndexBuild(ctx, workspaceID)
 	if err != nil {
 		if isNotFound(err) {
@@ -251,9 +260,11 @@ func (s *Service) Status(ctx context.Context, workspaceID, root string) (*Status
 		return nil, err
 	}
 	git := newGitRunner(root, s.logger)
+	s.startEmbeddingBackfill(workspaceID)
 	head, _ := git.head(ctx)
 	dirty, _ := git.dirtyCount(ctx)
 	return &Status{
+		IndexID:     workspaceID,
 		Built:       true,
 		BuiltAt:     build.BuiltAt,
 		GitHead:     build.GitHead,
@@ -262,7 +273,9 @@ func (s *Service) Status(ctx context.Context, workspaceID, root string) (*Status
 		DirtyFiles:  dirty,
 		FileCount:   build.FileCount,
 		SymbolCount: build.SymbolCount,
+		ChunkCount:  build.ChunkCount,
 		DurationMS:  build.DurationMS,
 		Warnings:    parseWarnings(build.WarningsJSON),
+		Embeddings:  s.embeddingStatus(ctx, workspaceID),
 	}, nil
 }

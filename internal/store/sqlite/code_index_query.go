@@ -22,10 +22,11 @@ func (d *DB) ListCodeIndexFileStats(
 	ctx context.Context, workspaceID string,
 ) ([]store.CodeIndexFileStat, error) {
 	rows, err := d.q.QueryContext(ctx, `
-		SELECT path, size_bytes, mtime_unix, content_hash, chunk_version
-		FROM code_index_files
+		SELECT f.path, f.size_bytes, f.mtime_unix, f.content_hash, f.chunk_version,
+		       (SELECT COUNT(*) FROM code_index_chunks c WHERE c.file_id = f.id)
+		FROM code_index_files f
 		WHERE workspace_id = ?
-		ORDER BY path`, workspaceID)
+		ORDER BY f.path`, workspaceID)
 	if err != nil {
 		return nil, fmt.Errorf("list code index file stats: %w", err)
 	}
@@ -34,7 +35,7 @@ func (d *DB) ListCodeIndexFileStats(
 	var out []store.CodeIndexFileStat
 	for rows.Next() {
 		var s store.CodeIndexFileStat
-		if err := rows.Scan(&s.Path, &s.SizeBytes, &s.MtimeUnix, &s.ContentHash, &s.ChunkVersion); err != nil {
+		if err := rows.Scan(&s.Path, &s.SizeBytes, &s.MtimeUnix, &s.ContentHash, &s.ChunkVersion, &s.ChunkCount); err != nil {
 			return nil, err
 		}
 		out = append(out, s)
@@ -192,6 +193,9 @@ func (d *DB) VectorSearchCodeIndexChunks(
 	if strings.TrimSpace(embedModel) == "" {
 		return nil, fmt.Errorf("VectorSearchCodeIndexChunks: embed_model required")
 	}
+	if embedVersion <= 0 {
+		return nil, fmt.Errorf("VectorSearchCodeIndexChunks: embed_version must be positive")
+	}
 	if len(vector) != memoryVecDim {
 		return nil, fmt.Errorf("VectorSearchCodeIndexChunks: vector dim %d, want %d",
 			len(vector), memoryVecDim)
@@ -203,10 +207,15 @@ func (d *DB) VectorSearchCodeIndexChunks(
 		FROM code_index_chunks_vec v
 		JOIN code_index_chunks c ON c.id = v.chunk_id
 		WHERE v.embedding MATCH ? AND v.k = ?
+		  AND v.workspace_id = ?
+		  AND v.embed_model = ?
+		  AND v.embed_version = ?
 		  AND c.workspace_id = ?
 		  AND c.embed_model = ?
 		  AND c.embed_version = ?
-		ORDER BY v.distance, c.id`, vecJSON, k, workspaceID, embedModel, embedVersion)
+		ORDER BY v.distance`, vecJSON, k,
+		workspaceID, embedModel, embedVersion,
+		workspaceID, embedModel, embedVersion)
 	if err != nil {
 		return nil, fmt.Errorf("vector search code index chunks: %w", err)
 	}
@@ -229,6 +238,9 @@ func (d *DB) ListCodeIndexChunksNeedingEmbedding(
 ) ([]store.CodeIndexEmbedTarget, error) {
 	if strings.TrimSpace(workspaceID) == "" || strings.TrimSpace(embedModel) == "" {
 		return nil, fmt.Errorf("ListCodeIndexChunksNeedingEmbedding: workspace_id and embed_model required")
+	}
+	if embedVersion <= 0 {
+		return nil, fmt.Errorf("ListCodeIndexChunksNeedingEmbedding: embed_version must be positive")
 	}
 	limit = codeIndexLimit(limit, 200, 500)
 	rows, err := d.q.QueryContext(ctx, `
@@ -270,6 +282,9 @@ func (d *DB) CountCodeIndexEmbeddingProgress(
 	if strings.TrimSpace(workspaceID) == "" || strings.TrimSpace(embedModel) == "" {
 		return 0, 0, fmt.Errorf("CountCodeIndexEmbeddingProgress: workspace_id and embed_model required")
 	}
+	if embedVersion <= 0 {
+		return 0, 0, fmt.Errorf("CountCodeIndexEmbeddingProgress: embed_version must be positive")
+	}
 	row := d.q.QueryRowContext(ctx, `
 		SELECT
 		  COALESCE(SUM(CASE WHEN `+codeIndexChunkStaleEmbedSQL+` THEN 1 ELSE 0 END), 0),
@@ -290,9 +305,13 @@ func (d *DB) UpsertCodeIndexChunkEmbeddings(
 	if strings.TrimSpace(workspaceID) == "" || strings.TrimSpace(embedModel) == "" {
 		return fmt.Errorf("UpsertCodeIndexChunkEmbeddings: workspace_id and embed_model required")
 	}
+	if embedVersion <= 0 {
+		return fmt.Errorf("UpsertCodeIndexChunkEmbeddings: embed_version must be positive")
+	}
 	if len(rows) == 0 {
 		return nil
 	}
+	seen := make(map[int64]struct{}, len(rows))
 	for i, row := range rows {
 		if row.ChunkID <= 0 {
 			return fmt.Errorf("UpsertCodeIndexChunkEmbeddings: row %d: chunk_id required", i)
@@ -301,6 +320,10 @@ func (d *DB) UpsertCodeIndexChunkEmbeddings(
 			return fmt.Errorf("UpsertCodeIndexChunkEmbeddings: row %d: vector dim %d, want %d",
 				i, len(row.Vector), memoryVecDim)
 		}
+		if _, duplicate := seen[row.ChunkID]; duplicate {
+			return fmt.Errorf("UpsertCodeIndexChunkEmbeddings: duplicate chunk_id %d", row.ChunkID)
+		}
+		seen[row.ChunkID] = struct{}{}
 	}
 	return d.withTx(ctx, func(q queryable) error {
 		for _, row := range rows {
@@ -321,8 +344,10 @@ func (d *DB) UpsertCodeIndexChunkEmbeddings(
 				return fmt.Errorf("delete prior vector for chunk %d: %w", row.ChunkID, err)
 			}
 			if _, err := q.ExecContext(ctx, `
-				INSERT INTO code_index_chunks_vec(chunk_id, embedding) VALUES (?, ?)`,
-				row.ChunkID, vectorToJSON(row.Vector)); err != nil {
+				INSERT INTO code_index_chunks_vec(
+					chunk_id, embedding, workspace_id, embed_model, embed_version)
+				VALUES (?, ?, ?, ?, ?)`,
+				row.ChunkID, vectorToJSON(row.Vector), workspaceID, embedModel, embedVersion); err != nil {
 				return fmt.Errorf("insert vector for chunk %d: %w", row.ChunkID, err)
 			}
 			res, err := q.ExecContext(ctx, `

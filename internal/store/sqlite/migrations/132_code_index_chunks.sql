@@ -64,7 +64,12 @@ CREATE TRIGGER code_index_chunks_ai AFTER INSERT ON code_index_chunks BEGIN
     );
 END;
 
-CREATE TRIGGER code_index_chunks_au AFTER UPDATE ON code_index_chunks BEGIN
+-- Embedding backfill only updates embed_model/embed_version; limiting this
+-- trigger to searchable columns avoids deleting/reinserting the FTS row for
+-- every vector written.
+CREATE TRIGGER code_index_chunks_au AFTER UPDATE OF
+    symbol_tokens, symbol_name, path_tokens, code_tokens, content, workspace_id
+ON code_index_chunks BEGIN
     DELETE FROM code_index_chunks_fts WHERE rowid = old.rowid;
     INSERT INTO code_index_chunks_fts(
         rowid, symbol_tokens, symbol_name, path_tokens, code_tokens, content,
@@ -85,8 +90,13 @@ CREATE TRIGGER code_index_chunks_ad AFTER DELETE ON code_index_chunks BEGIN
     DELETE FROM code_index_chunks_fts WHERE rowid = old.rowid;
 END;
 
--- Vector mirror — sqlite-vec vec0, 1536 dims (OpenAI text-embedding-3-small).
+-- Vector mirror — sqlite-vec vec0, 1536 dims. Partition keys are part of the
+-- KNN plan, so a busy second workspace/model cannot consume k before the
+-- requested workspace is filtered (post-join filtering would be incorrect).
 CREATE VIRTUAL TABLE code_index_chunks_vec USING vec0(
     chunk_id INTEGER PRIMARY KEY,
-    embedding FLOAT[1536]
+    embedding FLOAT[1536],
+    workspace_id TEXT PARTITION KEY,
+    embed_model TEXT PARTITION KEY,
+    embed_version INTEGER PARTITION KEY
 );

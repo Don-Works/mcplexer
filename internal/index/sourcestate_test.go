@@ -55,15 +55,16 @@ func TestContextStaleSameDirtyCountDifferentFiles(t *testing.T) {
 
 	svc, ms := testService(t)
 	ctx := context.Background()
+	indexID := indexIDForRoot(dir)
 	if _, err := svc.Build(ctx, BuildRequest{WorkspaceID: "ws", Root: dir}); err != nil {
 		t.Fatal(err)
 	}
-	build, err := ms.GetCodeIndexBuild(ctx, "ws")
+	build, err := ms.GetCodeIndexBuild(ctx, indexID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	git := newGitRunner(dir, svc.logger)
-	if contextStale(ctx, git, build, ms, "ws", dir) {
+	if contextStale(ctx, git, build, ms, indexID, dir) {
 		t.Fatal("clean tree should be fresh")
 	}
 
@@ -72,7 +73,7 @@ func TestContextStaleSameDirtyCountDifferentFiles(t *testing.T) {
 	if n, _ := git.dirtyCount(ctx); n != 1 {
 		t.Fatalf("dirty count = %d, want 1 after editing a.go", n)
 	}
-	if !contextStale(ctx, git, build, ms, "ws", dir) {
+	if !contextStale(ctx, git, build, ms, indexID, dir) {
 		t.Fatal("edited a.go must be stale")
 	}
 	writeWorkspaceFile(t, dir, "a.go", goFileA) // restore tracked file
@@ -80,7 +81,7 @@ func TestContextStaleSameDirtyCountDifferentFiles(t *testing.T) {
 	if n, _ := git.dirtyCount(ctx); n != 1 {
 		t.Fatalf("dirty count = %d, want 1 after swapping to b.ts", n)
 	}
-	if !contextStale(ctx, git, build, ms, "ws", dir) {
+	if !contextStale(ctx, git, build, ms, indexID, dir) {
 		t.Fatal("different dirty file at same count must be stale")
 	}
 }
@@ -95,15 +96,16 @@ func TestContextStaleDirtyBuildBecomesClean(t *testing.T) {
 
 	svc, ms := testService(t)
 	ctx := context.Background()
+	indexID := indexIDForRoot(dir)
 	if _, err := svc.Build(ctx, BuildRequest{WorkspaceID: "ws", Root: dir}); err != nil {
 		t.Fatal(err)
 	}
-	build, _ := ms.GetCodeIndexBuild(ctx, "ws")
+	build, _ := ms.GetCodeIndexBuild(ctx, indexID)
 	if build.DirtyCount != 1 {
 		t.Fatalf("dirty build count = %d, want 1", build.DirtyCount)
 	}
 	runGit(t, dir, "checkout", "--", "a.go")
-	if !contextStale(ctx, newGitRunner(dir, svc.logger), build, ms, "ws", dir) {
+	if !contextStale(ctx, newGitRunner(dir, svc.logger), build, ms, indexID, dir) {
 		t.Fatal("cleaning a tree indexed while dirty must make the index stale")
 	}
 }
@@ -119,12 +121,13 @@ func TestContextStaleIgnoresDeniedDirtyPath(t *testing.T) {
 
 	svc, ms := testService(t)
 	ctx := context.Background()
+	indexID := indexIDForRoot(dir)
 	if _, err := svc.Build(ctx, BuildRequest{WorkspaceID: "ws", Root: dir}); err != nil {
 		t.Fatal(err)
 	}
-	build, _ := ms.GetCodeIndexBuild(ctx, "ws")
+	build, _ := ms.GetCodeIndexBuild(ctx, indexID)
 	writeWorkspaceFile(t, dir, "node_modules/dep/index.js", "new")
-	if contextStale(ctx, newGitRunner(dir, svc.logger), build, ms, "ws", dir) {
+	if contextStale(ctx, newGitRunner(dir, svc.logger), build, ms, indexID, dir) {
 		t.Fatal("a denied dependency-only edit must not stale the code index")
 	}
 }
@@ -133,19 +136,20 @@ func TestContextStaleNonGitWorkspace(t *testing.T) {
 	svc, ms := testService(t)
 	dir := newWorkspace(t)
 	ctx := context.Background()
+	indexID := indexIDForRoot(dir)
 	if _, err := svc.Build(ctx, BuildRequest{WorkspaceID: "ws", Root: dir}); err != nil {
 		t.Fatal(err)
 	}
-	build, err := ms.GetCodeIndexBuild(ctx, "ws")
+	build, err := ms.GetCodeIndexBuild(ctx, indexID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	git := newGitRunner(dir, svc.logger)
-	if contextStale(ctx, git, build, ms, "ws", dir) {
+	if contextStale(ctx, git, build, ms, indexID, dir) {
 		t.Fatal("unchanged non-git tree should be fresh")
 	}
 	writeWorkspaceFile(t, dir, "a.go", goFileA+"\nfunc Extra() {}\n")
-	if !contextStale(ctx, git, build, ms, "ws", dir) {
+	if !contextStale(ctx, git, build, ms, indexID, dir) {
 		t.Fatal("edited non-git file must be stale")
 	}
 }
@@ -178,12 +182,13 @@ func TestNonGitWorkspaceStaleNewFile(t *testing.T) {
 	svc, ms := testService(t)
 	dir := newWorkspace(t)
 	ctx := context.Background()
+	indexID := indexIDForRoot(dir)
 	if _, err := svc.Build(ctx, BuildRequest{WorkspaceID: "ws", Root: dir}); err != nil {
 		t.Fatal(err)
 	}
-	build, _ := ms.GetCodeIndexBuild(ctx, "ws")
+	build, _ := ms.GetCodeIndexBuild(ctx, indexID)
 	writeWorkspaceFile(t, dir, "extra.go", "package main\n")
-	if !nonGitWorkspaceStale(ctx, ms, "ws", dir, build) {
+	if !nonGitWorkspaceStale(ctx, ms, indexID, dir, build) {
 		t.Fatal("new file not in index must be stale")
 	}
 }

@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -261,6 +262,50 @@ func TestCodeIndexChunkVectorModelVersionIsolation(t *testing.T) {
 	stale, err := db.ListCodeIndexChunksNeedingEmbedding(ctx, "ws-1", "model-a", 3, 10)
 	if err != nil || len(stale) != 1 {
 		t.Fatalf("version mismatch backfill: %+v err=%v", stale, err)
+	}
+}
+
+func TestCodeIndexChunkVectorKNNPartitionsBeforeTopK(t *testing.T) {
+	ctx := context.Background()
+	db := newCodeIndexTestDB(t)
+	now := time.Now().UTC()
+	query := makeVec(memoryVecDim, 0)
+
+	wanted := testIndexedFile("wanted.go", "Wanted", now)
+	wanted.Chunks = []store.CodeIndexChunk{testChunk(0, "Wanted", "wanted")}
+	if err := db.UpsertCodeIndexedFiles(ctx, "ws-wanted", []store.IndexedFile{wanted}); err != nil {
+		t.Fatal(err)
+	}
+	wt, _ := db.ListCodeIndexChunksNeedingEmbedding(ctx, "ws-wanted", "model", 1, 10)
+	if err := db.UpsertCodeIndexChunkEmbeddings(ctx, "ws-wanted", "model", 1,
+		[]store.CodeIndexChunkEmbedding{{ChunkID: wt[0].ChunkID, Vector: makeVec(memoryVecDim, 0.2)}}); err != nil {
+		t.Fatal(err)
+	}
+
+	// More than k closer vectors in another workspace must not consume the
+	// requested workspace's candidate budget.
+	for i := 0; i < 8; i++ {
+		f := testIndexedFile(fmt.Sprintf("decoy-%d.go", i), "Decoy", now)
+		f.Chunks = []store.CodeIndexChunk{testChunk(0, "Decoy", "decoy")}
+		if err := db.UpsertCodeIndexedFiles(ctx, "ws-decoy", []store.IndexedFile{f}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	dt, _ := db.ListCodeIndexChunksNeedingEmbedding(ctx, "ws-decoy", "model", 1, 20)
+	rows := make([]store.CodeIndexChunkEmbedding, 0, len(dt))
+	for _, target := range dt {
+		rows = append(rows, store.CodeIndexChunkEmbedding{ChunkID: target.ChunkID, Vector: makeVec(memoryVecDim, 0.01)})
+	}
+	if err := db.UpsertCodeIndexChunkEmbeddings(ctx, "ws-decoy", "model", 1, rows); err != nil {
+		t.Fatal(err)
+	}
+
+	hits, err := db.VectorSearchCodeIndexChunks(ctx, "ws-wanted", "model", 1, query, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hits) != 1 || hits[0].Path != "wanted.go" {
+		t.Fatalf("partitioned KNN = %+v, want wanted.go", hits)
 	}
 }
 

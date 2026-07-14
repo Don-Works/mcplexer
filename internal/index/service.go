@@ -2,6 +2,8 @@ package index
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"log/slog"
 	"os"
@@ -28,6 +30,19 @@ type Service struct {
 	guard     sync.Mutex
 	inflight  map[string]bool
 	buildWait time.Duration
+
+	// Code embeddings are independently configured and local-only. Retrieval
+	// snapshots this state under embedMu; slow provider calls never hold it.
+	embedMu         sync.RWMutex
+	embedder        Embedder
+	embedModel      string
+	embedContext    context.Context
+	embedCancel     context.CancelFunc
+	embedGeneration uint64
+
+	backfillMu      sync.Mutex
+	backfillRunning map[string]uint64
+	backfillErrors  map[string]embeddingError
 }
 
 // NewService constructs a Service over the given store. A nil logger falls back
@@ -39,6 +54,8 @@ func NewService(st store.CodeIndexStore, logger *slog.Logger) *Service {
 	return &Service{
 		store: st, logger: logger,
 		inflight: make(map[string]bool), buildWait: 8 * time.Second,
+		embedder: NoopEmbedder{}, embedContext: context.Background(),
+		backfillRunning: make(map[string]uint64), backfillErrors: make(map[string]embeddingError),
 	}
 }
 
@@ -102,7 +119,8 @@ func (s *Service) ensureBuilt(ctx context.Context, workspaceID, root string) err
 	if err := validateRoot(root); err != nil {
 		return err
 	}
-	if _, err := s.store.GetCodeIndexBuild(ctx, workspaceID); err == nil {
+	indexID := indexIDForRoot(root)
+	if _, err := s.store.GetCodeIndexBuild(ctx, indexID); err == nil {
 		return nil
 	}
 	_, err := s.Build(ctx, BuildRequest{WorkspaceID: workspaceID, Root: root})
@@ -118,11 +136,37 @@ func (s *Service) Build(ctx context.Context, req BuildRequest) (*BuildResult, er
 	if err := requireDir(req.Root); err != nil {
 		return nil, err
 	}
+	// The gateway has already authorized the logical workspace. Persist the
+	// derived index under a canonical repository key so multiple authorized
+	// shared-workspace IDs pointing at the same on-disk root reuse one build,
+	// FTS mirror, and vector set.
+	req.WorkspaceID = indexIDForRoot(req.Root)
 	if err := s.acquire(ctx, req.WorkspaceID); err != nil {
 		return nil, err
 	}
 	defer s.release(req.WorkspaceID)
-	return s.runBuild(ctx, req)
+	res, err := s.runBuild(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	s.startEmbeddingBackfill(req.WorkspaceID)
+	res.Embeddings = s.embeddingStatus(ctx, req.WorkspaceID)
+	return res, nil
+}
+
+// indexIDForRoot returns the physical index namespace for a repository root.
+// It resolves symlinks before hashing, so aliases to the same root share. The
+// local absolute path never leaves the process or appears in agent responses.
+func indexIDForRoot(root string) string {
+	canonical := filepath.Clean(root)
+	if abs, err := filepath.Abs(canonical); err == nil {
+		canonical = abs
+	}
+	if resolved, err := filepath.EvalSymlinks(canonical); err == nil {
+		canonical = resolved
+	}
+	sum := sha256.Sum256([]byte("mcplexer-code-index-v1\x00" + canonical))
+	return "repo-" + hex.EncodeToString(sum[:12])
 }
 
 // filePathSet returns the set of indexed root-relative file paths for a

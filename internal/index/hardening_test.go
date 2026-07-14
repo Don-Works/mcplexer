@@ -98,18 +98,20 @@ func TestSummaryGoImporterCountUsesPackageDir(t *testing.T) {
 	ms := newMemStore()
 	svc, _ := testService(t)
 	svc.store = ms
-	seedContextFile(t, ms, "ws", "internal/downstream/manager.go", "Downstream manager.",
+	root := t.TempDir()
+	indexID := indexIDForRoot(root)
+	seedContextFile(t, ms, indexID, "internal/downstream/manager.go", "Downstream manager.",
 		[]store.CodeIndexSymbol{{Name: "StartAll", Kind: "func", Exported: true, StartLine: 3}}, nil)
-	seedContextFile(t, ms, "ws", "cmd/mcplexer/main.go", "Entry point.",
+	seedContextFile(t, ms, indexID, "cmd/mcplexer/main.go", "Entry point.",
 		[]store.CodeIndexSymbol{{Name: "main", Kind: "func", StartLine: 5}},
 		[]store.CodeIndexEdge{{Kind: "import", ToPath: "internal/downstream"}})
 	if err := ms.PutCodeIndexBuild(context.Background(), &store.CodeIndexBuild{
-		WorkspaceID: "ws", BuiltAt: time.Now(), FileCount: 2, SymbolCount: 2,
+		WorkspaceID: indexID, BuiltAt: time.Now(), FileCount: 2, SymbolCount: 2,
 	}); err != nil {
 		t.Fatal(err)
 	}
 
-	sum, err := svc.Summary(context.Background(), "ws", t.TempDir(), "internal/downstream/manager.go")
+	sum, err := svc.Summary(context.Background(), "ws", root, "internal/downstream/manager.go")
 	if err != nil {
 		t.Fatal(err)
 	}

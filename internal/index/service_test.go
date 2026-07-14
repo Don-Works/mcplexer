@@ -43,6 +43,22 @@ func (fakeCodeIndexStore) SearchCodeIndexFiles(ctx context.Context, workspaceID,
 	return nil, nil
 }
 
+func (fakeCodeIndexStore) SearchCodeIndexChunks(context.Context, store.CodeIndexChunkQuery) ([]store.CodeIndexChunkHit, error) {
+	return nil, nil
+}
+func (fakeCodeIndexStore) VectorSearchCodeIndexChunks(context.Context, string, string, int, []float32, int) ([]store.CodeIndexChunkHit, error) {
+	return nil, nil
+}
+func (fakeCodeIndexStore) ListCodeIndexChunksNeedingEmbedding(context.Context, string, string, int, int) ([]store.CodeIndexEmbedTarget, error) {
+	return nil, nil
+}
+func (fakeCodeIndexStore) CountCodeIndexEmbeddingProgress(context.Context, string, string, int) (int, int, error) {
+	return 0, 0, nil
+}
+func (fakeCodeIndexStore) UpsertCodeIndexChunkEmbeddings(context.Context, string, string, int, []store.CodeIndexChunkEmbedding) error {
+	return nil
+}
+
 func (fakeCodeIndexStore) ListCodeIndexEdges(ctx context.Context, f store.CodeIndexEdgeFilter) ([]store.CodeIndexEdgeHit, error) {
 	return nil, nil
 }
@@ -58,6 +74,8 @@ func (fakeCodeIndexStore) GetCodeIndexBuild(ctx context.Context, workspaceID str
 func (fakeCodeIndexStore) CountCodeIndexSymbols(ctx context.Context, workspaceID string) (int, error) {
 	return 0, nil
 }
+
+func (fakeCodeIndexStore) CountCodeIndexChunks(context.Context, string) (int, error) { return 0, nil }
 
 // Compile-time proof the fake satisfies the frozen interface.
 var _ store.CodeIndexStore = fakeCodeIndexStore{}

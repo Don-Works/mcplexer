@@ -53,6 +53,7 @@ func newWorkspace(t *testing.T) string {
 func TestBuildCold(t *testing.T) {
 	svc, ms := testService(t)
 	dir := newWorkspace(t)
+	indexID := indexIDForRoot(dir)
 	res, err := svc.Build(context.Background(), BuildRequest{WorkspaceID: "ws", Root: dir})
 	if err != nil {
 		t.Fatalf("build: %v", err)
@@ -63,7 +64,7 @@ func TestBuildCold(t *testing.T) {
 	if res.SymbolCount != 3 { // Alpha, beta, widget
 		t.Errorf("SymbolCount = %d, want 3", res.SymbolCount)
 	}
-	build, err := ms.GetCodeIndexBuild(context.Background(), "ws")
+	build, err := ms.GetCodeIndexBuild(context.Background(), indexID)
 	if err != nil {
 		t.Fatalf("build row missing: %v", err)
 	}
@@ -91,6 +92,7 @@ func TestBuildIncrementalUnchanged(t *testing.T) {
 func TestBuildHashChangeReindex(t *testing.T) {
 	svc, ms := testService(t)
 	dir := newWorkspace(t)
+	indexID := indexIDForRoot(dir)
 	ctx := context.Background()
 	if _, err := svc.Build(ctx, BuildRequest{WorkspaceID: "ws", Root: dir}); err != nil {
 		t.Fatal(err)
@@ -103,11 +105,11 @@ func TestBuildHashChangeReindex(t *testing.T) {
 	if res.FilesIndexed != 1 {
 		t.Errorf("FilesIndexed = %d, want 1", res.FilesIndexed)
 	}
-	syms, _ := ms.ListCodeIndexSymbolsByPath(ctx, "ws", "a.go")
+	syms, _ := ms.ListCodeIndexSymbolsByPath(ctx, indexID, "a.go")
 	if _, ok := symByName(syms, "Gamma"); !ok {
 		t.Error("new symbol Gamma should be indexed after the edit")
 	}
-	build, _ := ms.GetCodeIndexBuild(ctx, "ws")
+	build, _ := ms.GetCodeIndexBuild(ctx, indexID)
 	if build.SymbolCount != 4 { // Alpha, beta, widget, Gamma
 		t.Errorf("carried symbol total = %d, want 4", build.SymbolCount)
 	}
@@ -116,6 +118,7 @@ func TestBuildHashChangeReindex(t *testing.T) {
 func TestBuildDeletion(t *testing.T) {
 	svc, ms := testService(t)
 	dir := newWorkspace(t)
+	indexID := indexIDForRoot(dir)
 	ctx := context.Background()
 	if _, err := svc.Build(ctx, BuildRequest{WorkspaceID: "ws", Root: dir}); err != nil {
 		t.Fatal(err)
@@ -130,7 +133,7 @@ func TestBuildDeletion(t *testing.T) {
 	if res.FilesRemoved != 1 {
 		t.Errorf("FilesRemoved = %d, want 1", res.FilesRemoved)
 	}
-	if _, err := ms.GetCodeIndexFile(ctx, "ws", "web/b.ts"); err == nil {
+	if _, err := ms.GetCodeIndexFile(ctx, indexID, "web/b.ts"); err == nil {
 		t.Error("deleted file should be gone from the store")
 	}
 }
@@ -141,6 +144,7 @@ func TestBuildDeletion(t *testing.T) {
 func TestBuildScopedPreservesOutOfScope(t *testing.T) {
 	svc, ms := testService(t)
 	dir := newWorkspace(t)
+	indexID := indexIDForRoot(dir)
 	ctx := context.Background()
 	if _, err := svc.Build(ctx, BuildRequest{WorkspaceID: "ws", Root: dir}); err != nil {
 		t.Fatal(err)
@@ -152,10 +156,10 @@ func TestBuildScopedPreservesOutOfScope(t *testing.T) {
 	if res.FilesRemoved != 0 {
 		t.Errorf("scoped build removed %d out-of-scope files, want 0", res.FilesRemoved)
 	}
-	if _, err := ms.GetCodeIndexFile(ctx, "ws", "a.go"); err != nil {
+	if _, err := ms.GetCodeIndexFile(ctx, indexID, "a.go"); err != nil {
 		t.Errorf("out-of-scope a.go pruned by scoped build: %v", err)
 	}
-	build, err := ms.GetCodeIndexBuild(ctx, "ws")
+	build, err := ms.GetCodeIndexBuild(ctx, indexID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,7 +178,7 @@ func TestBuildScopedPreservesOutOfScope(t *testing.T) {
 	if res.FilesRemoved != 1 {
 		t.Errorf("FilesRemoved = %d, want 1", res.FilesRemoved)
 	}
-	if _, err := ms.GetCodeIndexFile(ctx, "ws", "a.go"); err != nil {
+	if _, err := ms.GetCodeIndexFile(ctx, indexID, "a.go"); err != nil {
 		t.Errorf("out-of-scope a.go pruned on second scoped build: %v", err)
 	}
 }
@@ -182,6 +186,7 @@ func TestBuildScopedPreservesOutOfScope(t *testing.T) {
 func TestBuildScopedForceReportsWholeSymbolCount(t *testing.T) {
 	svc, ms := testService(t)
 	dir := newWorkspace(t)
+	indexID := indexIDForRoot(dir)
 	ctx := context.Background()
 	if _, err := svc.Build(ctx, BuildRequest{WorkspaceID: "ws", Root: dir}); err != nil {
 		t.Fatal(err)
@@ -191,7 +196,7 @@ func TestBuildScopedForceReportsWholeSymbolCount(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	build, err := ms.GetCodeIndexBuild(ctx, "ws")
+	build, err := ms.GetCodeIndexBuild(ctx, indexID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -222,6 +227,7 @@ func TestBuildForce(t *testing.T) {
 func TestBuildSkipsLargeAndBinary(t *testing.T) {
 	svc, ms := testService(t)
 	dir := t.TempDir()
+	indexID := indexIDForRoot(dir)
 	writeWorkspaceFile(t, dir, "big.txt", strings.Repeat("x", (1<<20)+10))
 	writeWorkspaceFile(t, dir, "blob.dat", "abc\x00def")
 	ctx := context.Background()
@@ -232,11 +238,11 @@ func TestBuildSkipsLargeAndBinary(t *testing.T) {
 	if res.FilesSkipped != 2 {
 		t.Fatalf("FilesSkipped = %d, want 2", res.FilesSkipped)
 	}
-	big, _ := ms.GetCodeIndexFile(ctx, "ws", "big.txt")
+	big, _ := ms.GetCodeIndexFile(ctx, indexID, "big.txt")
 	if big == nil || !strings.Contains(big.SkippedReason, "1 MiB") {
 		t.Errorf("big file skip reason = %v", big)
 	}
-	blob, _ := ms.GetCodeIndexFile(ctx, "ws", "blob.dat")
+	blob, _ := ms.GetCodeIndexFile(ctx, indexID, "blob.dat")
 	if blob == nil || blob.SkippedReason != "binary file" {
 		t.Errorf("binary skip reason = %v", blob)
 	}
@@ -245,9 +251,10 @@ func TestBuildSkipsLargeAndBinary(t *testing.T) {
 func TestBuildSingleFlight(t *testing.T) {
 	svc, _ := testService(t)
 	dir := newWorkspace(t)
+	indexID := indexIDForRoot(dir)
 	svc.buildWait = 20 * time.Millisecond
 	svc.guard.Lock()
-	svc.inflight["ws"] = true // simulate an in-flight build
+	svc.inflight[indexID] = true // simulate an in-flight build for this physical repo index
 	svc.guard.Unlock()
 	_, err := svc.Build(context.Background(), BuildRequest{WorkspaceID: "ws", Root: dir})
 	if !errors.Is(err, ErrBuildInProgress) {

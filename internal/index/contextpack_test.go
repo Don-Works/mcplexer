@@ -117,14 +117,16 @@ func TestContextPackEndToEnd(t *testing.T) {
 	ms := newMemStore()
 	svc, _ := testService(t)
 	svc.store = ms
-	seedKVWorkspace(t, ms, "ws")
+	root := t.TempDir()
+	indexID := indexIDForRoot(root)
+	seedKVWorkspace(t, ms, indexID)
 	if err := ms.PutCodeIndexBuild(context.Background(), &store.CodeIndexBuild{
-		WorkspaceID: "ws", BuiltAt: time.Now(), FileCount: 3, SymbolCount: 4,
+		WorkspaceID: indexID, RootPath: root, BuiltAt: time.Now(), FileCount: 3, SymbolCount: 4,
 	}); err != nil {
 		t.Fatal(err)
 	}
 	pack, err := svc.ContextPack(context.Background(),
-		ContextRequest{WorkspaceID: "ws", Root: t.TempDir(), Query: "kv set"})
+		ContextRequest{WorkspaceID: "ws", Root: root, Query: "kv set"})
 	if err != nil {
 		t.Fatal(err)
 	}

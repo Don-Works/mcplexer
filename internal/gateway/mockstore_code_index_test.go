@@ -39,6 +39,22 @@ func (m *mockStore) SearchCodeIndexFiles(_ context.Context, _, _ string, _ int) 
 	return nil, nil
 }
 
+func (m *mockStore) SearchCodeIndexChunks(_ context.Context, _ store.CodeIndexChunkQuery) ([]store.CodeIndexChunkHit, error) {
+	return nil, nil
+}
+func (m *mockStore) VectorSearchCodeIndexChunks(_ context.Context, _, _ string, _ int, _ []float32, _ int) ([]store.CodeIndexChunkHit, error) {
+	return nil, nil
+}
+func (m *mockStore) ListCodeIndexChunksNeedingEmbedding(_ context.Context, _, _ string, _, _ int) ([]store.CodeIndexEmbedTarget, error) {
+	return nil, nil
+}
+func (m *mockStore) CountCodeIndexEmbeddingProgress(_ context.Context, _, _ string, _ int) (int, int, error) {
+	return 0, 0, nil
+}
+func (m *mockStore) UpsertCodeIndexChunkEmbeddings(_ context.Context, _, _ string, _ int, _ []store.CodeIndexChunkEmbedding) error {
+	return nil
+}
+
 func (m *mockStore) ListCodeIndexEdges(_ context.Context, _ store.CodeIndexEdgeFilter) ([]store.CodeIndexEdgeHit, error) {
 	return nil, nil
 }
@@ -54,3 +70,5 @@ func (m *mockStore) GetCodeIndexBuild(_ context.Context, _ string) (*store.CodeI
 func (m *mockStore) CountCodeIndexSymbols(_ context.Context, _ string) (int, error) {
 	return 0, nil
 }
+
+func (m *mockStore) CountCodeIndexChunks(_ context.Context, _ string) (int, error) { return 0, nil }

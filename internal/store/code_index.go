@@ -190,6 +190,7 @@ type CodeIndexFileStat struct {
 	MtimeUnix    int64  `json:"mtime_unix"`
 	ContentHash  string `json:"content_hash"`
 	ChunkVersion int    `json:"chunk_version"`
+	ChunkCount   int    `json:"chunk_count"`
 }
 
 // CodeIndexSymbolQuery parameterizes a symbol FTS search.

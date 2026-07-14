@@ -24,16 +24,20 @@ const (
 	ctxFileFTSCoeff      = 0.3
 	ctxChurnCoeff        = 0.15
 	ctxGraphCoeff        = 0.3
+	ctxChunkCoeff        = 1.15
+	ctxChunkLimit        = 40
+	ctxMaxSnippets       = 2
 	ctxMaxPkgDirFiles    = 8
 	ctxMaxGraphNeighbors = 50
 )
 
 // ctxCand is an in-progress context-pack candidate before assembly.
 type ctxCand struct {
-	path        string
-	score       float64
-	why         []string
-	matchedSyms []store.CodeIndexSymbol
+	path          string
+	score         float64
+	why           []string
+	matchedSyms   []store.CodeIndexSymbol
+	matchedChunks []CodeSnippet
 }
 
 // contextPack ranks files for a query and assembles a token-budgeted pack
@@ -43,6 +47,7 @@ func (s *Service) contextPack(ctx context.Context, req ContextRequest, git *gitR
 	cands := map[string]*ctxCand{}
 	s.rankBySymbols(ctx, req, cands)
 	s.rankByFiles(ctx, req, cands)
+	s.rankByChunks(ctx, req, cands)
 	applyChurn(ctx, git, cands)
 	filePaths, _ := s.filePathSet(ctx, req.WorkspaceID)
 	s.applyGraphProximity(ctx, req.WorkspaceID, cands, filePaths)
@@ -53,6 +58,33 @@ func (s *Service) contextPack(ctx context.Context, req ContextRequest, git *gitR
 	pack := &ContextPack{Query: req.Query, BudgetTokens: req.BudgetTokens, BuiltAt: builtAt}
 	s.fillBudget(ctx, req, git, ordered, filePaths, pack)
 	return pack, nil
+}
+
+// rankByChunks is the highest-signal context source: it searches actual code
+// slices (lexical, plus semantic when the local backfill is ready), groups
+// them by file, and carries bounded citations into the final pack.
+func (s *Service) rankByChunks(ctx context.Context, req ContextRequest, cands map[string]*ctxCand) {
+	result, err := s.searchChunks(ctx, req.WorkspaceID, req.Query, "", ctxChunkLimit)
+	if err != nil {
+		return
+	}
+	maxScore := map[string]float64{}
+	count := map[string]int{}
+	for _, hit := range result.Hits {
+		cand := candFor(cands, hit.Path)
+		if len(cand.matchedChunks) < ctxMaxSnippets {
+			cand.matchedChunks = append(cand.matchedChunks, hit.CodeSnippet)
+		}
+		if hit.Score > maxScore[hit.Path] {
+			maxScore[hit.Path] = hit.Score
+		}
+		count[hit.Path]++
+	}
+	for file, score := range maxScore {
+		cand := cands[file]
+		cand.score += ctxChunkCoeff*score + 0.05*math.Log(1+float64(count[file]))
+		cand.why = append(cand.why, "source code matches query")
+	}
 }
 
 // rankBySymbols contributes max_symbol_score + 0.1·ln(1+hits) per file.
@@ -216,6 +248,7 @@ func (s *Service) buildContextFile(ctx context.Context, ws string, git *gitRunne
 		cf.Summary = f.DocSummary
 	}
 	cf.Symbols = s.contextSymbols(ctx, ws, c)
+	cf.Snippets = append(cf.Snippets, c.matchedChunks...)
 	for _, o := range ownerTests(ctx, s.store, ws, c.path, filePaths) {
 		cf.Tests = append(cf.Tests, o.Path)
 	}
