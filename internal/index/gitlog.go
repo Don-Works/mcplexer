@@ -68,9 +68,12 @@ func (g *gitRunner) run(ctx context.Context, args ...string) (string, error) {
 	cmd.Stdout = &buf
 	cmd.Stderr = &buf
 	err := cmd.Run()
-	out := strings.TrimSpace(buf.String())
+	// Preserve byte-exact output. Porcelain -z begins with the XY status
+	// columns, whose first byte is often a significant space; trimming here
+	// corrupts the record and can turn " M path" into a different path.
+	out := buf.String()
 	if err != nil {
-		return out, fmt.Errorf("index: git %s: %w: %s", strings.Join(args, " "), err, out)
+		return out, fmt.Errorf("index: git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(out))
 	}
 	return out, nil
 }
@@ -113,7 +116,7 @@ func (g *gitRunner) statusPorcelain(ctx context.Context) (string, error) {
 	if !g.available() {
 		return "", nil
 	}
-	out, err := g.run(ctx, "status", "--porcelain")
+	out, err := g.run(ctx, "status", "--porcelain=v1", "-z", "--untracked-files=all")
 	if err != nil {
 		return "", nil
 	}
@@ -126,6 +129,21 @@ func (g *gitRunner) dirtyCount(ctx context.Context) (int, error) {
 	out, err := g.statusPorcelain(ctx)
 	if err != nil || out == "" {
 		return 0, err
+	}
+	if strings.ContainsRune(out, '\x00') {
+		n := 0
+		parts := strings.Split(out, "\x00")
+		for i := 0; i < len(parts); i++ {
+			rec := parts[i]
+			if len(rec) < 4 {
+				continue
+			}
+			n++
+			if strings.ContainsAny(rec[:2], "RC") {
+				i++ // the second NUL field is the other rename/copy path
+			}
+		}
+		return n, nil
 	}
 	n := 0
 	for _, line := range strings.Split(out, "\n") {

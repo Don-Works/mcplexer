@@ -27,7 +27,9 @@ func contextStale(
 		}
 		porcelain, _ := git.statusPorcelain(ctx)
 		if strings.TrimSpace(porcelain) == "" {
-			return false
+			// If the prior build captured a dirty tree, becoming clean changes
+			// source content even though HEAD is unchanged.
+			return build.DirtyCount != 0
 		}
 		return gitDirtyPathsStale(ctx, st, workspaceID, root, porcelain)
 	}
@@ -50,6 +52,11 @@ func gitDirtyPathsStale(
 		byPath[s.Path] = s
 	}
 	for _, rel := range parsePorcelainPaths(porcelain) {
+		// A tracked dependency/build artifact can be dirty, but it is outside
+		// the index by policy and must not force an endless refresh loop.
+		if !ShouldIndexPath(rel) {
+			continue
+		}
 		if fileStatStale(root, rel, byPath[rel]) {
 			return true
 		}
@@ -114,6 +121,9 @@ func fileStatStale(root, rel string, stored store.CodeIndexFileStat) bool {
 // parsePorcelainPaths extracts root-relative paths from `git status --porcelain`
 // lines. Renames report the post-image path (the segment after " -> ").
 func parsePorcelainPaths(porcelain string) []string {
+	if strings.ContainsRune(porcelain, '\x00') {
+		return parsePorcelainZPaths(porcelain)
+	}
 	seen := map[string]bool{}
 	var out []string
 	for _, line := range strings.Split(porcelain, "\n") {
@@ -131,6 +141,37 @@ func parsePorcelainPaths(porcelain string) []string {
 		}
 		seen[rest] = true
 		out = append(out, rest)
+	}
+	return out
+}
+
+// parsePorcelainZPaths parses `git status --porcelain=v1 -z`. NUL framing is
+// unambiguous for spaces, quotes, tabs and newlines. Rename/copy records carry
+// a second path; retain both sides so either a newly-added or removed indexed
+// path makes the source state stale.
+func parsePorcelainZPaths(porcelain string) []string {
+	parts := strings.Split(porcelain, "\x00")
+	seen := map[string]bool{}
+	var out []string
+	add := func(p string) {
+		p = filepath.ToSlash(p)
+		if p == "" || seen[p] {
+			return
+		}
+		seen[p] = true
+		out = append(out, p)
+	}
+	for i := 0; i < len(parts); i++ {
+		rec := parts[i]
+		if len(rec) < 4 {
+			continue
+		}
+		status := rec[:2]
+		add(rec[3:])
+		if strings.ContainsAny(status, "RC") && i+1 < len(parts) {
+			i++
+			add(parts[i])
+		}
 	}
 	return out
 }

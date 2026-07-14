@@ -179,6 +179,21 @@ type Settings struct {
 	// MemoryEmbedModel is the embedding model id for local/auto providers.
 	// It MUST emit 1536-dim vectors (memories_vec is FLOAT[1536]).
 	MemoryEmbedModel string `json:"memory_embed_model,omitempty"`
+
+	// CodeIndexEmbedProvider controls semantic code retrieval independently
+	// from memory embeddings. The safe default is "none": source code is never
+	// sent to an embedding endpoint unless the operator explicitly chooses
+	// "local" or "auto". Both modes are loopback-only; cloud providers and the
+	// generic memory/OpenAI environment variables are intentionally ignored.
+	//   "none"  — FTS5 source-chunk retrieval only (default).
+	//   "local" — use CodeIndexEmbedBaseURL + CodeIndexEmbedModel.
+	//   "auto"  — explicitly permit probing loopback model servers.
+	CodeIndexEmbedProvider string `json:"code_index_embed_provider,omitempty"`
+	// CodeIndexEmbedBaseURL is an OpenAI-compatible loopback /v1 endpoint.
+	CodeIndexEmbedBaseURL string `json:"code_index_embed_base_url,omitempty"`
+	// CodeIndexEmbedModel is the local model id. Vectors are isolated by exact
+	// model + schema version so changing it can never mix vector spaces.
+	CodeIndexEmbedModel string `json:"code_index_embed_model,omitempty"`
 	// UsageSources contains non-secret metadata for AI subscription usage
 	// collectors. Credentials remain in auth scopes; these rows only point at
 	// the scope/key to read when a provider supports a first-party usage API.
@@ -212,6 +227,7 @@ func DefaultSettings() Settings {
 		AutoUpdateBootstrap:         true,
 		ShellGuardAllowChaining:     true,
 		MemoryEmbedProvider:         "auto",
+		CodeIndexEmbedProvider:      "none",
 	}
 }
 
@@ -418,6 +434,11 @@ func validateSettings(s Settings) error {
 	if err := ValidateUsageSources(s.UsageSources); err != nil {
 		return err
 	}
+	switch strings.ToLower(strings.TrimSpace(s.CodeIndexEmbedProvider)) {
+	case "", "none", "local", "auto":
+	default:
+		return fmt.Errorf("code_index_embed_provider must be one of: none, local, auto")
+	}
 
 	return nil
 }
@@ -517,6 +538,25 @@ func applyEnvOverrides(s Settings) Settings {
 		if normalized, err := NormalizeRemoteSkillServerURL(v); err == nil {
 			s.RemoteSkillServerURL = normalized
 		}
+	}
+	// Dedicated code-index variables are deliberately separate from memory's
+	// MCPLEXER_EMBED_* and MCPLEXER_OPENAI_API_KEY knobs. Merely configuring
+	// semantic memory must never upload or embed a repository.
+	if v := strings.TrimSpace(os.Getenv("MCPLEXER_CODE_INDEX_EMBED_PROVIDER")); v != "" {
+		switch strings.ToLower(v) {
+		case "none", "local", "auto":
+			s.CodeIndexEmbedProvider = strings.ToLower(v)
+		}
+	}
+	if v := strings.TrimSpace(os.Getenv("MCPLEXER_CODE_INDEX_EMBED_BASE_URL")); v != "" {
+		s.CodeIndexEmbedBaseURL = v
+		// Supplying the dedicated endpoint is itself an explicit opt-in.
+		if strings.TrimSpace(os.Getenv("MCPLEXER_CODE_INDEX_EMBED_PROVIDER")) == "" {
+			s.CodeIndexEmbedProvider = "local"
+		}
+	}
+	if v := strings.TrimSpace(os.Getenv("MCPLEXER_CODE_INDEX_EMBED_MODEL")); v != "" {
+		s.CodeIndexEmbedModel = v
 	}
 	// MeshEnabled has no UI toggle today; the dashboard flips it via
 	// PUT /api/v1/settings. The env override exists so headless test +

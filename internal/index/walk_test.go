@@ -38,7 +38,8 @@ func TestShouldIndexPathTable(t *testing.T) {
 		{"", false},
 		{"../escape.go", false},
 		{"foo/../../etc/passwd", false},
-		{"node_modules/../src/main.go", true},
+		{"node_modules/../src/main.go", false},
+		{"/absolute/path.go", false},
 
 		// dependency / build / cache dirs (even if committed)
 		{"node_modules/react/index.js", false},
@@ -73,6 +74,15 @@ func TestShouldIndexPathTable(t *testing.T) {
 		{"assets/style.min.css", false},
 		{"web/src/app.js.map", false},
 		{"internal/foo.lock", false},
+		{"web/src/APP.MIN.JS", false},
+		{"proto/service.pb.go", false},
+		{"src/client.generated.ts", false},
+		{".env", false},
+		{"config/.env.production", false},
+		{"certs/server.pem", false},
+		{"keys/id_rsa", false},
+		{"third_party/lib/source.cc", false},
+		{"python/site-packages/pkg/mod.py", false},
 	}
 	for _, tc := range tests {
 		got := ShouldIndexPath(tc.path)
@@ -87,9 +97,9 @@ func TestNormalizeIndexPath(t *testing.T) {
 	tests := []struct{ in, want string }{
 		{"./foo/bar.go", "foo/bar.go"},
 		{`foo\bar.go`, "foo/bar.go"},
-		{"/abs/trim.go", "abs/trim.go"},
+		{"/abs/trim.go", ""},
 		{"foo//bar.go", "foo/bar.go"},
-		{"a/../b.go", "b.go"},
+		{"a/../b.go", ""},
 		{"../outside.go", ""},
 		{"", ""},
 	}

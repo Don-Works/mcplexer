@@ -273,6 +273,38 @@ func TestDefaultSettings_ShellGuardAllowChainingDefaultsOn(t *testing.T) {
 	}
 }
 
+func TestDefaultSettings_CodeIndexEmbeddingsAreOff(t *testing.T) {
+	if got := DefaultSettings().CodeIndexEmbedProvider; got != "none" {
+		t.Fatalf("CodeIndexEmbedProvider = %q, want privacy-safe default none", got)
+	}
+}
+
+func TestSaveSettingsRejectsRemoteCodeIndexProvider(t *testing.T) {
+	st := &mockSettingsStore{}
+	svc := NewSettingsService(st)
+	s := DefaultSettings()
+	s.CodeIndexEmbedProvider = "openai"
+	if err := svc.Save(context.Background(), s); err == nil || !strings.Contains(err.Error(), "code_index_embed_provider") {
+		t.Fatalf("Save(openai) error = %v, want provider validation error", err)
+	}
+}
+
+func TestCodeIndexEmbedEnvIsDedicatedAndExplicit(t *testing.T) {
+	t.Setenv("MCPLEXER_EMBED_BASE_URL", "http://127.0.0.1:9999/v1")
+	t.Setenv("MCPLEXER_CODE_INDEX_EMBED_BASE_URL", "")
+	s := applyEnvOverrides(DefaultSettings())
+	if s.CodeIndexEmbedProvider != "none" || s.CodeIndexEmbedBaseURL != "" {
+		t.Fatalf("generic memory env leaked into code index settings: %+v", s)
+	}
+
+	t.Setenv("MCPLEXER_CODE_INDEX_EMBED_BASE_URL", "http://127.0.0.1:1234/v1")
+	t.Setenv("MCPLEXER_CODE_INDEX_EMBED_MODEL", "nomic-embed-code")
+	s = applyEnvOverrides(DefaultSettings())
+	if s.CodeIndexEmbedProvider != "local" || s.CodeIndexEmbedModel != "nomic-embed-code" {
+		t.Fatalf("dedicated code-index env not applied: %+v", s)
+	}
+}
+
 // TestLoadSettings_LegacyRowBackfillsShellGuardAllowChaining covers the
 // upgrade path: a settings row persisted before this field existed has no
 // shell_guard_allow_chaining key. A plain unmarshal would leave it false

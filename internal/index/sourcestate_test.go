@@ -31,6 +31,20 @@ func TestParsePorcelainPathsRename(t *testing.T) {
 	}
 }
 
+func TestParsePorcelainZPathsUnusualNamesAndRename(t *testing.T) {
+	porcelain := " M ordinary.go\x00?? dir/a file.go\x00R  new name.go\x00old\nname.go\x00"
+	got := parsePorcelainPaths(porcelain)
+	want := []string{"ordinary.go", "dir/a file.go", "new name.go", "old\nname.go"}
+	if len(got) != len(want) {
+		t.Fatalf("paths = %#v, want %#v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("paths[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
 func TestContextStaleSameDirtyCountDifferentFiles(t *testing.T) {
 	dir := t.TempDir()
 	initGitRepo(t, dir)
@@ -68,6 +82,50 @@ func TestContextStaleSameDirtyCountDifferentFiles(t *testing.T) {
 	}
 	if !contextStale(ctx, git, build, ms, "ws", dir) {
 		t.Fatal("different dirty file at same count must be stale")
+	}
+}
+
+func TestContextStaleDirtyBuildBecomesClean(t *testing.T) {
+	dir := t.TempDir()
+	initGitRepo(t, dir)
+	writeWorkspaceFile(t, dir, "a.go", goFileA)
+	runGit(t, dir, "add", ".")
+	runGit(t, dir, "commit", "-m", "init")
+	writeWorkspaceFile(t, dir, "a.go", goFileA+"\nfunc DirtyBuild() {}\n")
+
+	svc, ms := testService(t)
+	ctx := context.Background()
+	if _, err := svc.Build(ctx, BuildRequest{WorkspaceID: "ws", Root: dir}); err != nil {
+		t.Fatal(err)
+	}
+	build, _ := ms.GetCodeIndexBuild(ctx, "ws")
+	if build.DirtyCount != 1 {
+		t.Fatalf("dirty build count = %d, want 1", build.DirtyCount)
+	}
+	runGit(t, dir, "checkout", "--", "a.go")
+	if !contextStale(ctx, newGitRunner(dir, svc.logger), build, ms, "ws", dir) {
+		t.Fatal("cleaning a tree indexed while dirty must make the index stale")
+	}
+}
+
+func TestContextStaleIgnoresDeniedDirtyPath(t *testing.T) {
+	dir := t.TempDir()
+	initGitRepo(t, dir)
+	writeWorkspaceFile(t, dir, "a.go", goFileA)
+	writeWorkspaceFile(t, dir, "node_modules/dep/index.js", "old")
+	runGit(t, dir, "add", "a.go")
+	runGit(t, dir, "add", "-f", "node_modules/dep/index.js")
+	runGit(t, dir, "commit", "-m", "init")
+
+	svc, ms := testService(t)
+	ctx := context.Background()
+	if _, err := svc.Build(ctx, BuildRequest{WorkspaceID: "ws", Root: dir}); err != nil {
+		t.Fatal(err)
+	}
+	build, _ := ms.GetCodeIndexBuild(ctx, "ws")
+	writeWorkspaceFile(t, dir, "node_modules/dep/index.js", "new")
+	if contextStale(ctx, newGitRunner(dir, svc.logger), build, ms, "ws", dir) {
+		t.Fatal("a denied dependency-only edit must not stale the code index")
 	}
 }
 

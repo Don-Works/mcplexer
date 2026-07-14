@@ -25,16 +25,19 @@ import (
 var denyDirs = map[string]struct{}{
 	// JS/TS
 	"node_modules": {}, "dist": {}, "build": {}, "out": {}, ".next": {},
-	"coverage": {}, ".turbo": {}, ".parcel-cache": {},
+	"coverage": {}, ".turbo": {}, ".parcel-cache": {}, "bower_components": {},
+	".nuxt": {}, ".svelte-kit": {}, ".angular": {}, ".expo": {},
 	// Go / general
-	".git": {}, "vendor": {}, "bin": {},
+	".git": {}, "vendor": {}, "bin": {}, "deps": {}, "_deps": {},
+	"third_party": {}, "generated": {}, "generated-src": {}, "generated-sources": {},
 	// Rust / Maven / Gradle
 	"target": {}, ".gradle": {},
 	// Python
 	"__pycache__": {}, ".venv": {}, "venv": {}, ".tox": {},
-	".mypy_cache": {}, ".pytest_cache": {}, ".ruff_cache": {},
+	".mypy_cache": {}, ".pytest_cache": {}, ".ruff_cache": {}, "site-packages": {},
 	// Ruby / iOS / IaC / caches
-	".bundle": {}, "Pods": {}, ".terraform": {}, ".cache": {},
+	".bundle": {}, "Pods": {}, "Carthage": {}, "DerivedData": {},
+	".terraform": {}, ".serverless": {}, ".aws-sam": {}, ".dart_tool": {}, ".cache": {},
 	// Agent/tool scratch
 	".claude": {}, ".impeccable": {}, ".playwright-mcp": {},
 }
@@ -47,25 +50,48 @@ var denyFileNames = map[string]struct{}{
 	"Gemfile.lock": {}, "flake.lock": {},
 	"checksums.txt": {}, "checksum.txt": {}, "CHECKSUMS": {},
 	"SHA256SUMS": {}, "MD5SUMS": {}, "sha256sum.txt": {}, "md5sum.txt": {},
+	// Credentials and private key material are not code and must never enter
+	// either the local FTS mirror or an embedding request.
+	".env": {}, "credentials.json": {}, "service-account.json": {},
+	"id_rsa": {}, "id_ed25519": {}, "known_hosts": {},
 }
 
 // denyFileSuffixes are generated/minified artifact suffixes.
-var denyFileSuffixes = []string{".min.js", ".min.css", ".map", ".lock"}
+var denyFileSuffixes = []string{
+	".min.js", ".min.css", ".map", ".lock",
+	".pem", ".key", ".p12", ".pfx", ".jks",
+	".pb.go", ".generated.go", "_generated.go", ".gen.go",
+	".generated.ts", ".generated.js", ".g.dart",
+}
 
 // normalizeIndexPath canonicalizes a root-relative path for policy checks:
 // forward slashes, no leading ./ or /, path.Clean, and rejection of .. escapes.
 func normalizeIndexPath(rel string) string {
 	rel = strings.TrimSpace(rel)
 	rel = strings.ReplaceAll(rel, "\\", "/")
+	// The index contract is root-relative. Reject absolute paths and any raw
+	// traversal component instead of cleaning them into an apparently safe
+	// path: this function is also the final gate before chunking/embedding.
+	if strings.HasPrefix(rel, "/") || hasTraversalComponent(rel) {
+		return ""
+	}
 	for strings.HasPrefix(rel, "./") {
 		rel = strings.TrimPrefix(rel, "./")
 	}
-	rel = strings.TrimPrefix(rel, "/")
 	rel = path.Clean(rel)
 	if rel == "." || rel == ".." || strings.HasPrefix(rel, "../") || strings.Contains(rel, "/../") {
 		return ""
 	}
 	return rel
+}
+
+func hasTraversalComponent(rel string) bool {
+	for _, part := range strings.Split(rel, "/") {
+		if part == ".." {
+			return true
+		}
+	}
+	return false
 }
 
 // ShouldIndexPath reports whether rel may be enumerated, chunked, or embedded.
@@ -80,6 +106,10 @@ func ShouldIndexPath(rel string) bool {
 
 // isDeniedFileName reports whether a bare filename is index noise.
 func isDeniedFileName(base string) bool {
+	lower := strings.ToLower(base)
+	if lower == ".env" || strings.HasPrefix(lower, ".env.") {
+		return true
+	}
 	if _, ok := denyFileNames[base]; ok {
 		return true
 	}
@@ -89,7 +119,7 @@ func isDeniedFileName(base string) bool {
 		}
 	}
 	for _, suf := range denyFileSuffixes {
-		if strings.HasSuffix(base, suf) {
+		if strings.HasSuffix(lower, strings.ToLower(suf)) {
 			return true
 		}
 	}
