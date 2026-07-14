@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"testing"
+	"time"
 
 	"github.com/don-works/mcplexer/internal/store"
 )
@@ -89,5 +90,28 @@ func TestServiceStatusNotBuilt(t *testing.T) {
 	_, err := svc.Status(context.Background(), "ws1", t.TempDir())
 	if !errors.Is(err, ErrNotBuilt) {
 		t.Fatalf("Status on never-built workspace: got %v, want ErrNotBuilt", err)
+	}
+}
+
+func TestEnsureBuiltRetriesIncompleteBuild(t *testing.T) {
+	svc, ms := testService(t)
+	root := newWorkspace(t)
+	indexID := indexIDForRoot(root)
+	if err := ms.PutCodeIndexBuild(context.Background(), &store.CodeIndexBuild{
+		WorkspaceID: indexID, RootPath: root, BuiltAt: time.Now(), Complete: false,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Symbols(context.Background(), SymbolsRequest{
+		WorkspaceID: "logical", Root: root, Query: "Alpha",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	build, err := ms.GetCodeIndexBuild(context.Background(), indexID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !build.Complete || build.FileCount != 2 {
+		t.Fatalf("incomplete build was not repaired: %+v", build)
 	}
 }

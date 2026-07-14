@@ -222,8 +222,29 @@ func TestFileStatStaleContentHash(t *testing.T) {
 	if fileStatStale(dir, rel, stored) {
 		t.Fatal("matching stat should be fresh")
 	}
+	// A metadata-only touch is not a source change. The persisted mtime may
+	// remain old after a hash-equal incremental pass, so freshness must trust
+	// the content hash instead of creating an endless non-git rebuild loop.
+	touched := info.ModTime().Add(5 * time.Second)
+	if err := os.Chtimes(filepath.Join(dir, rel), touched, touched); err != nil {
+		t.Fatal(err)
+	}
+	if fileStatStale(dir, rel, stored) {
+		t.Fatal("mtime-only touch with identical content should be fresh")
+	}
 	writeWorkspaceFile(t, dir, rel, goFileA+"\n// changed\n")
 	if !fileStatStale(dir, rel, stored) {
 		t.Fatal("content change with same mtime/size must be stale when hash differs")
+	}
+}
+
+func TestGitDirtyUnindexedAllowedPathIsStale(t *testing.T) {
+	root := t.TempDir()
+	ms := newMemStore()
+	if !gitDirtyPathsStale(context.Background(), ms, "repo", root, " D missing.go\x00") {
+		t.Fatal("an allowed dirty path absent from the index must be stale")
+	}
+	if gitDirtyPathsStale(context.Background(), ms, "repo", root, " D node_modules/pkg.js\x00") {
+		t.Fatal("a denied dirty path must not stale the index")
 	}
 }

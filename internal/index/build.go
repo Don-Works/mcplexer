@@ -33,6 +33,7 @@ type buildRun struct {
 	res         *BuildResult
 	symbolTotal int
 	chunkTotal  int
+	incomplete  bool
 	tsImports   int
 	tsAliases   int
 	deadline    time.Time
@@ -100,6 +101,7 @@ func (br *buildRun) processAll(ctx context.Context, files []string) error {
 			return ctx.Err()
 		}
 		if time.Now().After(br.deadline) {
+			br.incomplete = true
 			br.warn("build hit the 120s wall guard; index is partial — rerun index__build")
 			break
 		}
@@ -122,8 +124,13 @@ func (br *buildRun) processFile(ctx context.Context, rel string) error {
 		return nil
 	}
 	info, err := os.Lstat(filepath.Join(br.req.Root, rel))
-	if err != nil || !info.Mode().IsRegular() {
-		return nil // vanished or non-regular between enumeration and stat — skip
+	if err != nil {
+		br.incomplete = true
+		br.warn(fmt.Sprintf("%s: file vanished or could not be stated during build", rel))
+		return nil
+	}
+	if !info.Mode().IsRegular() {
+		return nil // symlink/non-regular entries are intentionally never indexed
 	}
 	size, mtime := int(info.Size()), info.ModTime().Unix()
 	prev, known := br.existing[rel]
@@ -138,6 +145,8 @@ func (br *buildRun) processFile(ctx context.Context, rel string) error {
 	}
 	data, err := os.ReadFile(filepath.Join(br.req.Root, rel))
 	if err != nil {
+		br.incomplete = true
+		br.warn(fmt.Sprintf("%s: could not read source during build", rel))
 		return nil
 	}
 	if sniffBinary(data) {
@@ -281,6 +290,7 @@ func (br *buildRun) pruneRemoved(ctx context.Context) {
 		return
 	}
 	if err := br.svc.store.DeleteCodeIndexFiles(ctx, br.req.WorkspaceID, gone); err != nil {
+		br.incomplete = true
 		br.warn("failed to prune removed files: " + err.Error())
 		return
 	}
@@ -327,6 +337,7 @@ func (br *buildRun) finish(ctx context.Context, start time.Time) (*BuildResult, 
 		WorkspaceID: br.req.WorkspaceID, RootPath: br.req.Root, GitHead: head, DirtyCount: dirty,
 		BuiltAt: time.Now().UTC(), DurationMS: br.res.DurationMS,
 		FileCount: fileCount, SymbolCount: symbolCount, ChunkCount: br.chunkTotal,
+		Complete:     !br.incomplete,
 		WarningsJSON: warningsJSON(br.res.Warnings),
 	}
 	if n, err := br.svc.store.CountCodeIndexChunks(ctx, br.req.WorkspaceID); err == nil {
@@ -336,6 +347,7 @@ func (br *buildRun) finish(ctx context.Context, start time.Time) (*BuildResult, 
 	if err := br.svc.store.PutCodeIndexBuild(ctx, build); err != nil {
 		return nil, fmt.Errorf("index: put build row: %w", err)
 	}
+	br.res.Complete = build.Complete
 	return br.res, nil
 }
 

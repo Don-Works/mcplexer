@@ -121,7 +121,7 @@ func TestContextPackEndToEnd(t *testing.T) {
 	indexID := indexIDForRoot(root)
 	seedKVWorkspace(t, ms, indexID)
 	if err := ms.PutCodeIndexBuild(context.Background(), &store.CodeIndexBuild{
-		WorkspaceID: indexID, RootPath: root, BuiltAt: time.Now(), FileCount: 3, SymbolCount: 4,
+		WorkspaceID: indexID, RootPath: root, BuiltAt: time.Now(), FileCount: 3, SymbolCount: 4, Complete: true,
 	}); err != nil {
 		t.Fatal(err)
 	}

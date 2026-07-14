@@ -171,6 +171,7 @@ type CodeIndexBuild struct {
 	FileCount    int       `json:"file_count"`
 	SymbolCount  int       `json:"symbol_count"`
 	ChunkCount   int       `json:"chunk_count"`
+	Complete     bool      `json:"complete"`
 	WarningsJSON string    `json:"warnings_json"`
 }
 

@@ -534,7 +534,7 @@ func TestCodeIndexBuildUpsert(t *testing.T) {
 	first := &store.CodeIndexBuild{
 		WorkspaceID: "ws-1", RootPath: "/proj", GitHead: "aaa",
 		DirtyCount: 2, BuiltAt: builtAt, DurationMS: 100,
-		FileCount: 3, SymbolCount: 10, ChunkCount: 25, WarningsJSON: `["w1"]`,
+		FileCount: 3, SymbolCount: 10, ChunkCount: 25, Complete: true, WarningsJSON: `["w1"]`,
 	}
 	if err := db.PutCodeIndexBuild(ctx, first); err != nil {
 		t.Fatalf("put first: %v", err)
@@ -544,14 +544,14 @@ func TestCodeIndexBuildUpsert(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	if got.DirtyCount != 2 || got.FileCount != 3 || got.ChunkCount != 25 {
+	if got.DirtyCount != 2 || got.FileCount != 3 || got.ChunkCount != 25 || !got.Complete {
 		t.Fatalf("build row: %+v", got)
 	}
 
 	second := &store.CodeIndexBuild{
 		WorkspaceID: "ws-1", RootPath: "/proj", GitHead: "bbb",
 		DirtyCount: 0, BuiltAt: builtAt.Add(time.Hour), DurationMS: 50,
-		FileCount: 4, SymbolCount: 12, ChunkCount: 30, WarningsJSON: `[]`,
+		FileCount: 4, SymbolCount: 12, ChunkCount: 30, Complete: false, WarningsJSON: `[]`,
 	}
 	if err := db.PutCodeIndexBuild(ctx, second); err != nil {
 		t.Fatalf("put second: %v", err)
@@ -560,7 +560,7 @@ func TestCodeIndexBuildUpsert(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get after upsert: %v", err)
 	}
-	if got2.GitHead != "bbb" || got2.DirtyCount != 0 || got2.FileCount != 4 || got2.ChunkCount != 30 {
+	if got2.GitHead != "bbb" || got2.DirtyCount != 0 || got2.FileCount != 4 || got2.ChunkCount != 30 || got2.Complete {
 		t.Fatalf("upserted build: %+v", got2)
 	}
 }

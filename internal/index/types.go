@@ -49,6 +49,7 @@ type BuildResult struct {
 	FilesRemoved   int             `json:"files_removed"`
 	SymbolCount    int             `json:"symbol_count"`
 	ChunkCount     int             `json:"chunk_count"`
+	Complete       bool            `json:"complete"`
 	DurationMS     int             `json:"duration_ms"`
 	GitHead        string          `json:"git_head"`
 	Warnings       []string        `json:"warnings,omitempty"`
@@ -261,6 +262,7 @@ type Status struct {
 	FileCount   int             `json:"file_count"`
 	SymbolCount int             `json:"symbol_count"`
 	ChunkCount  int             `json:"chunk_count"`
+	Complete    bool            `json:"complete"`
 	DurationMS  int             `json:"duration_ms"`
 	Warnings    []string        `json:"warnings,omitempty"`
 	Embeddings  EmbeddingStatus `json:"embeddings"`

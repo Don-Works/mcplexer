@@ -123,8 +123,12 @@ func (s *Service) ensureBuilt(ctx context.Context, workspaceID, root string) err
 		return err
 	}
 	indexID := indexIDForRoot(root)
-	if _, err := s.store.GetCodeIndexBuild(ctx, indexID); err == nil {
-		return nil
+	if build, err := s.store.GetCodeIndexBuild(ctx, indexID); err == nil {
+		if build.Complete {
+			return nil
+		}
+		_, err = s.Build(ctx, BuildRequest{WorkspaceID: workspaceID, Root: root})
+		return err
 	}
 	_, err := s.Build(ctx, BuildRequest{WorkspaceID: workspaceID, Root: root})
 	return err

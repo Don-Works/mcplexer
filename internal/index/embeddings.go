@@ -15,6 +15,7 @@ const (
 	embedBatchSize       = 32
 	embedVectorDim       = 1536
 	embedMaxAttempts     = 3
+	embedRetryCooldown   = 30 * time.Second
 )
 
 // Embedder is the deliberately tiny boundary between the code index and a
@@ -39,6 +40,7 @@ func (NoopEmbedder) HasModel() bool { return false }
 type embeddingError struct {
 	generation uint64
 	message    string
+	at         time.Time
 }
 
 // ConfigureEmbeddings replaces the optional vector provider. Production only
@@ -120,6 +122,11 @@ func (s *Service) startEmbeddingBackfill(indexID string) {
 	}
 	s.backfillMu.Lock()
 	if running, ok := s.backfillRunning[indexID]; ok && running == generation {
+		s.backfillMu.Unlock()
+		return
+	}
+	if last, ok := s.backfillErrors[indexID]; ok && last.generation == generation &&
+		time.Since(last.at) < embedRetryCooldown {
 		s.backfillMu.Unlock()
 		return
 	}
@@ -267,6 +274,8 @@ func (s *Service) recordEmbeddingError(indexID string, generation uint64, err er
 		delete(s.backfillErrors, indexID)
 		return
 	}
-	s.backfillErrors[indexID] = embeddingError{generation: generation, message: err.Error()}
+	s.backfillErrors[indexID] = embeddingError{
+		generation: generation, message: err.Error(), at: time.Now(),
+	}
 	s.logger.Warn("code-index embedding backfill stopped", "index_id", indexID, "error", err)
 }

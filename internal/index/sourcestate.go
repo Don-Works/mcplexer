@@ -20,6 +20,9 @@ func contextStale(
 	st store.CodeIndexStore,
 	workspaceID, root string,
 ) bool {
+	if build == nil || !build.Complete {
+		return true
+	}
 	if git.isRepo(ctx) {
 		head, _ := git.head(ctx)
 		if head != build.GitHead {
@@ -57,7 +60,8 @@ func gitDirtyPathsStale(
 		if !ShouldIndexPath(rel) {
 			continue
 		}
-		if fileStatStale(root, rel, byPath[rel]) {
+		stored, indexed := byPath[rel]
+		if !indexed || fileStatStale(root, rel, stored) {
 			return true
 		}
 	}
@@ -105,11 +109,11 @@ func fileStatStale(root, rel string, stored store.CodeIndexFileStat) bool {
 	}
 	size := int(info.Size())
 	mtime := info.ModTime().Unix()
-	if stored.Path == "" || stored.SizeBytes != size || stored.MtimeUnix != mtime {
+	if stored.Path == "" || stored.SizeBytes != size {
 		return true
 	}
 	if stored.ContentHash == "" {
-		return false
+		return stored.MtimeUnix != mtime
 	}
 	data, err := os.ReadFile(filepath.Join(root, rel))
 	if err != nil {

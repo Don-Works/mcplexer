@@ -604,8 +604,9 @@ func scanCodeIndexFileHit(r scanner) (*store.CodeIndexFileHit, error) {
 func scanCodeIndexBuild(r scanner) (*store.CodeIndexBuild, error) {
 	var b store.CodeIndexBuild
 	var builtAt string
+	var complete int
 	err := r.Scan(&b.WorkspaceID, &b.RootPath, &b.GitHead, &b.DirtyCount,
-		&builtAt, &b.DurationMS, &b.FileCount, &b.SymbolCount, &b.ChunkCount, &b.WarningsJSON)
+		&builtAt, &b.DurationMS, &b.FileCount, &b.SymbolCount, &b.ChunkCount, &complete, &b.WarningsJSON)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, store.ErrNotFound
 	}
@@ -613,5 +614,6 @@ func scanCodeIndexBuild(r scanner) (*store.CodeIndexBuild, error) {
 		return nil, err
 	}
 	b.BuiltAt = parseTime(builtAt)
+	b.Complete = complete != 0
 	return &b, nil
 }

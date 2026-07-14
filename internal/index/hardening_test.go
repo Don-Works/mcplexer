@@ -106,7 +106,7 @@ func TestSummaryGoImporterCountUsesPackageDir(t *testing.T) {
 		[]store.CodeIndexSymbol{{Name: "main", Kind: "func", StartLine: 5}},
 		[]store.CodeIndexEdge{{Kind: "import", ToPath: "internal/downstream"}})
 	if err := ms.PutCodeIndexBuild(context.Background(), &store.CodeIndexBuild{
-		WorkspaceID: indexID, BuiltAt: time.Now(), FileCount: 2, SymbolCount: 2,
+		WorkspaceID: indexID, BuiltAt: time.Now(), FileCount: 2, SymbolCount: 2, Complete: true,
 	}); err != nil {
 		t.Fatal(err)
 	}

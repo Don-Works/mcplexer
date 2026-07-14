@@ -87,7 +87,7 @@ func indexQueryToolDefinitions() []Tool {
 		},
 		{
 			Name:        "index__context",
-			Description: "Get the relevant context for a coding task: given a task description or question, returns a token-budgeted, ranked pack of the right files — summaries, key symbols with line numbers, owning tests, recent commits. Call this FIRST when exploring the codebase, orienting on unfamiliar code, or gathering context, instead of reading the repo wholesale. Auto-refreshes the index if git HEAD moved. Designed for small-context models: ask first, read files second. For one known file use index__summary; for a failure use index__map_failure.",
+			Description: "Get the relevant context for a coding task: a token-budgeted, ranked pack of source snippets with file:line citations, summaries, key symbols, owning tests, and recent commits. Call this FIRST for repo orientation instead of reading wholesale. It auto-builds and refreshes when tracked source state changes; lexical chunks always work and opted-in local vectors improve recall. For implementation-only search use index__search; for one known file use index__summary; for a failure use index__map_failure.",
 			InputSchema: json.RawMessage(`{
 				"type": "object",
 				"properties": {
@@ -107,7 +107,7 @@ func indexQueryToolDefinitions() []Tool {
 		},
 		{
 			Name:        "index__search",
-			Description: "Hybrid source-code search: retrieve citation-ready code snippets for a natural-language or keyword query. Lexical FTS5 always runs; when an opt-in local embedding model has embedded chunks, vector KNN is fused in and the result's `mode` reads \"hybrid\" instead of \"lexical\". Each hit carries a file:line `citation` you can hand straight to a file reader, a fused score, and its source (lexical/semantic), alongside an `embeddings` status block. Use this to find the code that IMPLEMENTS a behavior; for whole-task orientation use index__context, for a plain declaration lookup use index__symbols. Vendored/generated/minified/credential paths are excluded from the index, and embeddings (when enabled) are computed locally and never leave the machine.",
+			Description: "Hybrid source-code search: retrieve citation-ready snippets for a natural-language or keyword query. Lexical FTS5 always runs; when explicitly enabled loopback embeddings are ready, vector KNN is fused and `mode` becomes \"hybrid\". Hits carry file:line citations, fused scores, and `sources` provenance; the response includes embedding readiness. Use this for implementation/behavior source, index__context for whole-task orientation, and index__symbols for declarations. Dependency/build/generated/minified/credential paths never enter chunks or embedding requests.",
 			InputSchema: json.RawMessage(`{
 				"type": "object",
 				"properties": {

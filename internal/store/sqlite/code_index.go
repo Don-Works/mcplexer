@@ -31,7 +31,7 @@ func codeIndexChunkColsPrefixed(alias string) string {
 }
 
 const codeIndexBuildCols = `workspace_id, root_path, git_head, dirty_count,
-	built_at, duration_ms, file_count, symbol_count, chunk_count, warnings_json`
+	built_at, duration_ms, file_count, symbol_count, chunk_count, complete, warnings_json`
 
 // UpsertCodeIndexedFiles upserts each file (preserving row id on conflict) and
 // fully replaces its symbols, edges, and chunks inside one transaction.
@@ -297,7 +297,7 @@ func (d *DB) PutCodeIndexBuild(ctx context.Context, b *store.CodeIndexBuild) err
 	}
 	_, err := d.q.ExecContext(ctx, `
 		INSERT INTO code_index_builds (`+codeIndexBuildCols+`)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(workspace_id) DO UPDATE SET
 			root_path = excluded.root_path,
 			git_head = excluded.git_head,
@@ -307,10 +307,11 @@ func (d *DB) PutCodeIndexBuild(ctx context.Context, b *store.CodeIndexBuild) err
 			file_count = excluded.file_count,
 			symbol_count = excluded.symbol_count,
 			chunk_count = excluded.chunk_count,
+			complete = excluded.complete,
 			warnings_json = excluded.warnings_json`,
 		b.WorkspaceID, b.RootPath, b.GitHead, b.DirtyCount,
 		formatTime(b.BuiltAt), b.DurationMS, b.FileCount, b.SymbolCount,
-		b.ChunkCount, b.WarningsJSON)
+		b.ChunkCount, boolToInt(b.Complete), b.WarningsJSON)
 	if err != nil {
 		return fmt.Errorf("put code index build: %w", err)
 	}

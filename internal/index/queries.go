@@ -229,11 +229,11 @@ func (s *Service) ContextPack(ctx context.Context, req ContextRequest) (*Context
 	git := newGitRunner(req.Root, s.logger)
 	stale := contextStale(ctx, git, build, s.store, req.WorkspaceID, req.Root)
 	if stale {
-		if _, berr := s.Build(ctx, BuildRequest{WorkspaceID: req.WorkspaceID, Root: req.Root}); berr == nil {
+		if refreshedResult, berr := s.Build(ctx, BuildRequest{WorkspaceID: req.WorkspaceID, Root: req.Root}); berr == nil {
 			if refreshed, gerr := s.store.GetCodeIndexBuild(ctx, req.WorkspaceID); gerr == nil {
 				build = refreshed
 			}
-			stale = false
+			stale = !refreshedResult.Complete
 		}
 	}
 	pack, err := s.contextPack(ctx, req, git, build.BuiltAt)
@@ -280,6 +280,7 @@ func (s *Service) Status(ctx context.Context, workspaceID, root string) (*Status
 		FileCount:   build.FileCount,
 		SymbolCount: build.SymbolCount,
 		ChunkCount:  build.ChunkCount,
+		Complete:    build.Complete,
 		DurationMS:  build.DurationMS,
 		Warnings:    parseWarnings(build.WarningsJSON),
 		Embeddings:  s.embeddingStatus(ctx, workspaceID),

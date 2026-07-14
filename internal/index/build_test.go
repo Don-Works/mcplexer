@@ -64,12 +64,30 @@ func TestBuildCold(t *testing.T) {
 	if res.SymbolCount != 3 { // Alpha, beta, widget
 		t.Errorf("SymbolCount = %d, want 3", res.SymbolCount)
 	}
+	if !res.Complete {
+		t.Fatalf("cold build unexpectedly incomplete: %+v", res.Warnings)
+	}
 	build, err := ms.GetCodeIndexBuild(context.Background(), indexID)
 	if err != nil {
 		t.Fatalf("build row missing: %v", err)
 	}
 	if build.FileCount != 2 || build.SymbolCount != 3 {
 		t.Errorf("build row counts = files %d symbols %d, want 2/3", build.FileCount, build.SymbolCount)
+	}
+}
+
+func TestBuildWallGuardMarksResultIncomplete(t *testing.T) {
+	svc, _ := testService(t)
+	br := &buildRun{
+		svc:      svc,
+		res:      &BuildResult{},
+		deadline: time.Now().Add(-time.Second),
+	}
+	if err := br.processAll(context.Background(), []string{"never-read.go"}); err != nil {
+		t.Fatal(err)
+	}
+	if !br.incomplete || len(br.res.Warnings) == 0 || !strings.Contains(br.res.Warnings[0], "partial") {
+		t.Fatalf("wall guard did not mark partial build: incomplete=%v warnings=%v", br.incomplete, br.res.Warnings)
 	}
 }
 

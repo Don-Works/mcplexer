@@ -12,12 +12,12 @@ func indexToolDefinitions() []Tool {
 	core := []Tool{
 		{
 			Name:        "index__build",
-			Description: "Build or incrementally refresh the code index for this workspace's repo. Enumerates files via git (honoring .gitignore), extracts symbols/imports for Go and TS/JS, and stores a searchable map. Incremental: unchanged files (size+mtime+hash) are skipped, so rebuilds are cheap — run it after big edits or branch switches. `force:true` drops and rebuilds from scratch. Freshness is reported by index__status.",
+			Description: "Build or incrementally refresh the shared local index for this repo root. Enumerates through git/.gitignore, excludes dependency/build/generated/credential paths, extracts Go + TS/JS symbols/imports, and chunks allowed source for citation-ready FTS search. Unchanged content is skipped. `force:true` re-extracts every file in scope without deleting out-of-scope rows. The result reports completeness, chunks, and optional local-embedding backfill; index__status reports freshness.",
 			InputSchema: json.RawMessage(`{
 				"type": "object",
 				"properties": {
 					"paths": {"type": "array", "items": {"type": "string"}, "description": "Restrict the build to these root-relative path prefixes (e.g. [\"internal/gateway\"]). Omit to index the whole repo."},
-					"force": {"type": "boolean", "description": "Drop the existing index for this workspace and rebuild from scratch. Default false (incremental)."},
+					"force": {"type": "boolean", "description": "Re-extract every file in scope instead of using freshness shortcuts. Default false (incremental)."},
 					"workspace_id": {"type": "string", "description": "Override current workspace."}
 				}
 			}`),
@@ -31,7 +31,7 @@ func indexToolDefinitions() []Tool {
 		},
 		{
 			Name:        "index__status",
-			Description: "Freshness check for the code index: last build time, indexed git HEAD vs current HEAD, dirty-file count, file/symbol totals, and a staleness verdict. Call this when unsure whether index__symbols / index__deps / index__context results are trustworthy; run index__build to refresh.",
+			Description: "Freshness and readiness for the repo-root-shared code index: physical index id, build completeness, indexed vs current git state, dirty-file count, file/symbol/chunk totals, warnings, and optional local-embedding progress. Incomplete builds are stale and retry on the next query. Run index__build after large edits or branch switches.",
 			InputSchema: json.RawMessage(`{
 				"type": "object",
 				"properties": {

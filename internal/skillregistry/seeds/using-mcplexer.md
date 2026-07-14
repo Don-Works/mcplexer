@@ -1,6 +1,6 @@
 ---
 name: using-mcplexer
-description: Use when connected to the mcplexer gateway (mcpx__execute_code / mcpx__search_tools in your tool list) — the minimal operating contract. Discover via search, batch via code execution, fetch deeper playbooks from the skill registry on demand instead of preloading context. Includes the code-index-first contract (index.context before reading the repo).
+description: Use when connected to the mcplexer gateway (mcpx__execute_code / mcpx__search_tools in your tool list) — the minimal operating contract. Discover via search, batch via code execution, fetch deeper playbooks on demand, and ask the shared local code index first (index.context / index.search before reading the repo).
 ---
 
 # Using MCPlexer
@@ -24,7 +24,7 @@ Tool results consumed inside `mcpx__execute_code` are never pruned or reshaped: 
 
 ## Code index — ask the index BEFORE reading the repo (load-bearing)
 
-The gateway ships a built-in per-workspace codebase indexer (the `index` namespace: symbol map, import graph, test ownership, git churn, hybrid source search). Bad context selection is the top failure mode for agents — so ask the index first, read files second. The three you reach for most, in order of a typical task:
+The gateway ships a built-in shared local codebase indexer (the `index` namespace: symbol map, import graph, test ownership, git churn, hybrid source search). Bad context selection is the top failure mode for agents — so ask the index first, read files second. The three you reach for most, in order of a typical task:
 
 - `index.context({query, budget_tokens})` — ORIENT. THE opening move for any "what's relevant to this task / where do I look" question: a ranked, token-budgeted pack of the right files (summaries, key symbols with line numbers, owning tests, recent commits, and source snippets).
 - `index.search({query, kind})` — the SOURCE that implements a behavior. Hybrid retrieval: lexical FTS5 always runs, and an opt-in local embedding model adds semantic recall (the result's `mode` reads "hybrid" vs "lexical"). Hits are citation-ready (`file:line`) — read the cited slice instead of grepping. Reach for it when you need the actual implementation/behavior, not just a name.
@@ -34,7 +34,7 @@ The gateway ships a built-in per-workspace codebase indexer (the `index` namespa
 - `index.map_failure({text})` — paste a failing test / panic / stack trace, get ranked candidate files with reasons. Start debugging here, not with grep.
 - `index.summary({file})`, `index.recent_changes({path, days})`, `index.status({})`, `index.build({paths, force})`.
 
-Queries auto-build the index on first use. The physical index is keyed by the repo's canonical root, so worktrees and multiple logical workspaces that resolve to the same checkout share one index (authorization is still enforced per query, and semantic embeddings stay local — never uploaded). Run `index.build` after big edits or branch switches; `index.status` reports freshness and whether results are trustworthy.
+Queries auto-build the index on first use. The physical index is keyed by the exact canonical root, so multiple authorized logical/shared workspaces that resolve to the same checkout reuse its chunks and vectors. Different clones and worktrees remain isolated because their roots and source state can differ. Authorization is still enforced per query; embeddings are off by default and can only target an explicitly enabled loopback provider. `node_modules`, vendored/build/cache/generated/minified/credential paths never enter chunks or embedding requests. Run `index.build` after big edits or branch switches; `index.status` reports freshness, completeness, chunk totals, and embedding readiness.
 
 ## Memory contract — RECALL first, CAPTURE last (load-bearing)
 
