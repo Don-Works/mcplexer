@@ -6,7 +6,7 @@
 #
 # Start mcpx__search_tools in summary or exact-tool mode; avoid broad detail:"full" searches.
 #
-# Code index: ask the index BEFORE reading the repo. Inside mcpx__execute_code, index.context({query, budget_tokens}) returns a ranked, token-budgeted pack of the right files for a task; index.symbols finds where a function/type is defined (camelCase word-split); index.map_failure maps a pasted test failure or stack trace to candidate files.
+# Code index: ask the index BEFORE reading the repo. Inside mcpx__execute_code, index.context({query, budget_tokens}) returns a ranked, token-budgeted pack with source snippets; index.search({query, limit}) finds implementation/behavior in citation-ready source chunks; index.symbols finds definitions (camelCase word-split); index.map_failure maps a pasted failure. Lexical search always works; semantic search is optional, explicit, and local-only.
 #
 # Browser/browser-control tasks: assume brw may be installed. Search brw/browser tools first and prefer the brw namespace when available; for non-trivial browser workflows fetch an installed browser skill (for example generic-browser-operator, playwright-browser, or cmux-browser) with mcpx.skill_search/get.
 #

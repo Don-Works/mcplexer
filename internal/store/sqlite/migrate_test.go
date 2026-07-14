@@ -164,6 +164,62 @@ func TestMigrate028UpgradeFromPriorSchema(t *testing.T) {
 	}
 }
 
+func TestMigrate133PurgesLegacyWorkspaceCodeIndex(t *testing.T) {
+	ctx := context.Background()
+	db := openTestDB(t)
+	if err := ensureSchemaTable(ctx, db); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureLedgerTable(ctx, db); err != nil {
+		t.Fatal(err)
+	}
+	files, err := listMigrations()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, migration := range files {
+		if migration.version >= 133 {
+			break
+		}
+		if err := applyMigration(ctx, db, migration); err != nil {
+			t.Fatalf("apply %d: %v", migration.version, err)
+		}
+		if hook, ok := postMigrationHooks[migration.version]; ok {
+			if err := hook(ctx, db); err != nil {
+				t.Fatalf("hook %d: %v", migration.version, err)
+			}
+		}
+	}
+	now := "2026-07-14T12:00:00Z"
+	statements := []string{
+		`INSERT INTO code_index_builds(workspace_id, root_path, built_at) VALUES ('legacy-ws','/repo','` + now + `')`,
+		`INSERT INTO code_index_files(id,workspace_id,path,indexed_at,chunk_version) VALUES (1,'legacy-ws','a.go','` + now + `',1)`,
+		`INSERT INTO code_index_symbols(workspace_id,file_id,name,kind,start_line) VALUES ('legacy-ws',1,'Alpha','func',1)`,
+		`INSERT INTO code_index_edges(workspace_id,from_file_id,kind) VALUES ('legacy-ws',1,'import')`,
+		`INSERT INTO code_index_chunks(workspace_id,file_id,path,ordinal,indexed_at) VALUES ('legacy-ws',1,'a.go',0,'` + now + `')`,
+	}
+	for _, statement := range statements {
+		if _, err := db.Exec(statement); err != nil {
+			t.Fatalf("seed legacy code index: %v", err)
+		}
+	}
+	if err := migrate(ctx, db); err != nil {
+		t.Fatalf("apply migration 133: %v", err)
+	}
+	for _, table := range []string{
+		"code_index_builds", "code_index_files", "code_index_symbols", "code_index_edges",
+		"code_index_chunks", "code_index_files_fts", "code_index_symbols_fts", "code_index_chunks_fts",
+	} {
+		var count int
+		if err := db.QueryRow("SELECT COUNT(*) FROM " + table).Scan(&count); err != nil {
+			t.Fatalf("count %s: %v", table, err)
+		}
+		if count != 0 {
+			t.Fatalf("migration 133 left %d rows in %s", count, table)
+		}
+	}
+}
+
 // openTestDB opens a fresh sqlite database and registers cleanup.
 func openTestDB(t *testing.T) *sql.DB {
 	t.Helper()

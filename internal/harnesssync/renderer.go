@@ -15,7 +15,7 @@ For the full contract, fetch mcpx.skill_get({name:"using-mcplexer"}) directly. U
 
 Start mcpx__search_tools in summary or exact-tool mode; avoid broad detail:"full" searches.
 
-Code index: ask the index BEFORE reading the repo. Inside mcpx__execute_code, index.context({query, budget_tokens}) returns a ranked, token-budgeted pack of the right files for a task; index.symbols finds where a function/type is defined (camelCase word-split); index.map_failure maps a pasted test failure or stack trace to candidate files.
+Code index: ask the index BEFORE reading the repo. Inside mcpx__execute_code, index.context({query, budget_tokens}) returns a ranked, token-budgeted pack with source snippets; index.search({query, limit}) finds implementation/behavior in citation-ready source chunks; index.symbols finds definitions (camelCase word-split); index.map_failure maps a pasted failure. Lexical search always works; semantic search is optional, explicit, and local-only.
 
 Browser/browser-control tasks: assume brw may be installed. Search brw/browser tools first and prefer the brw namespace when available; for non-trivial browser workflows fetch an installed browser skill (for example generic-browser-operator, playwright-browser, or cmux-browser) with mcpx.skill_search/get.
 
@@ -36,7 +36,7 @@ func Render(k HarnessKey, version int) string {
 			"Full skill body: ~/.claude/skills/using-mcplexer/SKILL.md (materialized from registry v%d).\n\n"+
 			"Use the 4 top-level tools: mcpx__search_tools + mcpx__execute_code (batch everything), secret__prompt / secret__list_refs.\n"+
 			"Fetch deeper playbooks via the skill registry on demand.\n\n"+
-			"Code index: ask the index BEFORE reading the repo — inside mcpx__execute_code, index.context({query, budget_tokens}) returns a ranked context pack for a task, index.symbols finds definitions (camelCase word-split), index.map_failure maps a pasted test failure to candidate files.\n\n"+
+			"Code index: ask it BEFORE reading the repo — index.context({query, budget_tokens}) returns a ranked pack with snippets; index.search({query, limit}) finds citation-ready implementation source; index.symbols finds definitions; index.map_failure maps failures. Lexical search is always available; semantics are explicit and local-only.\n\n"+
 			"Browser work: search for brw/browser tools and prefer brw when installed; fetch an installed browser skill such as generic-browser-operator, playwright-browser, or cmux-browser for non-trivial workflows.\n\n"+
 			"## Memory — prefer the gateway store\n\n"+
 			"mcplexer memory (memory.save / memory.recall inside mcpx__execute_code) is cross-harness, cross-machine, and survives every session; harness-local memory files are siloed per client.\n"+
@@ -49,7 +49,7 @@ func Render(k HarnessKey, version int) string {
 			"Full skill body: ~/.config/opencode/skills/using-mcplexer/SKILL.md (materialized from registry v%d).\n\n"+
 			"Use the 4 top-level tools: mcpx__search_tools + mcpx__execute_code (batch everything), secret__prompt / secret__list_refs.\n"+
 			"Fetch deeper playbooks via the skill registry on demand.\n\n"+
-			"Code index: ask the index BEFORE reading the repo — inside mcpx__execute_code, index.context({query, budget_tokens}) returns a ranked context pack for a task, index.symbols finds definitions (camelCase word-split), index.map_failure maps a pasted test failure to candidate files.\n\n"+
+			"Code index: ask it BEFORE reading the repo — index.context({query, budget_tokens}) returns a ranked pack with snippets; index.search({query, limit}) finds citation-ready implementation source; index.symbols finds definitions; index.map_failure maps failures. Lexical search is always available; semantics are explicit and local-only.\n\n"+
 			"Browser work: search for brw/browser tools and prefer brw when installed; fetch an installed browser skill such as generic-browser-operator, playwright-browser, or cmux-browser for non-trivial workflows.\n\n"+
 			"## Memory — prefer the gateway store\n\n"+
 			"mcplexer memory (memory.save / memory.recall inside mcpx__execute_code) is cross-harness, cross-machine, and survives every session; harness-local memory files are siloed per client.\n"+

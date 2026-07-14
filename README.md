@@ -19,6 +19,7 @@ Your working directory determines which policies apply — tamper-proof in stdio
 ## Features
 
 - **Directory-scoped routing** — workspaces bind to directory trees, CWD determines policies
+- **Shared local code index** — citation-ready source search, symbols, dependency/test maps, and task context packs reused across authorized workspaces for the same repo; dependency/build trees are excluded
 - **Tool approvals** — per-route approval requirements with SSE streaming to the dashboard
 - **OAuth 2.0 + PKCE** — built-in flows with provider templates (GitHub, Linear, Google, ClickUp), automatic token refresh
 - **Audit trail** — every tool call logged with workspace, route, auth scope, latency, and parameter redaction
@@ -221,6 +222,12 @@ YAML-sourced items are auto-pruned when removed from the config file. Items crea
 | `MCPLEXER_PUBLIC_URL` | `MCPLEXER_EXTERNAL_URL` | Canonical HTTPS browser/PWA URL |
 | `MCPLEXER_WEB_PUSH_SUBJECT` | `MCPLEXER_PUBLIC_URL` | VAPID subject for standards-based browser push |
 | `MCPLEXER_LOG_LEVEL` | `info` | Log level: debug, info, warn, error |
+| `MCPLEXER_CODE_INDEX_EMBED_PROVIDER` | `none` | Optional semantic code search: `none`, `local`, or explicit loopback auto-detection with `auto` |
+| `MCPLEXER_CODE_INDEX_EMBED_BASE_URL` | — | OpenAI-compatible loopback `/v1` URL used only for code embeddings |
+| `MCPLEXER_CODE_INDEX_EMBED_MODEL` | — | Local code embedding model id; changing it triggers background vector backfill |
+| `MCPLEXER_CODE_INDEX_EMBED_API_KEY` | — | Optional bearer token for the loopback code-embedding server; never reused from cloud/memory settings |
+
+See [Code index](docs/code-index.md) for tools, sharing, exclusions, privacy, and local semantic-search setup.
 
 ## CLI Commands
 

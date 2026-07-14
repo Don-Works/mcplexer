@@ -114,6 +114,7 @@ func TestRenderV11LeanContract(t *testing.T) {
 		"memory.recall",
 		"memory.save",
 		"index.context",
+		"index.search",
 		"mesh.receive",
 		"mcpx.skill_*",
 		"delegate_worker",

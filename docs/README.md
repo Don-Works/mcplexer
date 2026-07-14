@@ -10,6 +10,7 @@ This directory contains design notes, architecture records, and operational guid
 | [mcp-spec-conformance.md](mcp-spec-conformance.md) | MCP protocol conformance notes |
 | [harnesses.md](harnesses.md) | Unified setup notes for MCP-wired harnesses, server-prefixed clients, and Pi |
 | [memory.md](memory.md) | Persistent memory design |
+| [code-index.md](code-index.md) | Shared local code search, context packs, exclusions, and optional local embeddings |
 | [data-workbench.md](data-workbench.md) | Scratch SQLite/RAG workbench tools |
 | [token-preservation-delegation.md](token-preservation-delegation.md) | Delegation and worker context model |
 | [nearly-autonomous-coding.md](nearly-autonomous-coding.md) | Safe near-autonomous coding loop using tasks, workers, mesh, and memory |

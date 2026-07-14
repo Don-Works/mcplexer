@@ -7,7 +7,7 @@ Full skill body: ~/.config/opencode/skills/using-mcplexer/SKILL.md (materialized
 Use the 4 top-level tools: mcpx__search_tools + mcpx__execute_code (batch everything), secret__prompt / secret__list_refs.
 Fetch deeper playbooks via the skill registry on demand.
 
-Code index: ask the index BEFORE reading the repo — inside mcpx__execute_code, index.context({query, budget_tokens}) returns a ranked context pack for a task, index.symbols finds definitions (camelCase word-split), index.map_failure maps a pasted test failure to candidate files.
+Code index: ask it BEFORE reading the repo — index.context({query, budget_tokens}) returns a ranked pack with snippets; index.search({query, limit}) finds citation-ready implementation source; index.symbols finds definitions; index.map_failure maps failures. Lexical search is always available; semantics are explicit and local-only.
 
 Browser work: search for brw/browser tools and prefer brw when installed; fetch an installed browser skill such as generic-browser-operator, playwright-browser, or cmux-browser for non-trivial workflows.
 
