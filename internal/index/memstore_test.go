@@ -231,6 +231,18 @@ func (m *memStore) GetCodeIndexBuild(ctx context.Context, ws string) (*store.Cod
 	return nil, store.ErrNotFound
 }
 
+func (m *memStore) CountCodeIndexSymbols(ctx context.Context, ws string) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for _, mf := range m.byKey {
+		if mf.file.WorkspaceID == ws {
+			n += len(mf.syms)
+		}
+	}
+	return n, nil
+}
+
 // tokenOverlap counts how many query terms appear as tokens in haystack.
 func tokenOverlap(terms []string, haystack string) int {
 	hay := " " + strings.ToLower(haystack) + " "

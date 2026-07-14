@@ -278,17 +278,21 @@ func (br *buildRun) finish(ctx context.Context, start time.Time) (*BuildResult, 
 	br.res.DurationMS = int(time.Since(start).Milliseconds())
 	br.res.GitHead = head
 	fileCount := len(br.enumSet)
+	symbolCount := br.symbolTotal
 	if len(br.req.Paths) > 0 {
 		// A scoped build only enumerated part of the workspace; the build row
 		// must still report whole-index totals.
 		if stats, err := br.svc.store.ListCodeIndexFileStats(ctx, br.req.WorkspaceID); err == nil {
 			fileCount = len(stats)
 		}
+		if n, err := br.svc.store.CountCodeIndexSymbols(ctx, br.req.WorkspaceID); err == nil {
+			symbolCount = n
+		}
 	}
 	build := &store.CodeIndexBuild{
 		WorkspaceID: br.req.WorkspaceID, RootPath: br.req.Root, GitHead: head, DirtyCount: dirty,
 		BuiltAt: time.Now().UTC(), DurationMS: br.res.DurationMS,
-		FileCount: fileCount, SymbolCount: br.symbolTotal, WarningsJSON: warningsJSON(br.res.Warnings),
+		FileCount: fileCount, SymbolCount: symbolCount, WarningsJSON: warningsJSON(br.res.Warnings),
 	}
 	if err := br.svc.store.PutCodeIndexBuild(ctx, build); err != nil {
 		return nil, fmt.Errorf("index: put build row: %w", err)

@@ -148,7 +148,8 @@ func (s *Service) Summary(ctx context.Context, workspaceID, root, file string) (
 		}
 	}
 	sum.ImportCount = s.edgeCount(ctx, store.CodeIndexEdgeFilter{WorkspaceID: workspaceID, FromPath: file, Limit: 1000})
-	sum.ImporterCount = s.edgeCount(ctx, store.CodeIndexEdgeFilter{WorkspaceID: workspaceID, ToPath: file, Limit: 1000})
+	importers, _ := s.importerEdges(ctx, workspaceID, file, 1000)
+	sum.ImporterCount = len(importers)
 	filePaths, _ := s.filePathSet(ctx, workspaceID)
 	for _, o := range ownerTests(ctx, s.store, workspaceID, file, filePaths) {
 		sum.Tests = append(sum.Tests, o.Path)
@@ -216,7 +217,7 @@ func (s *Service) ContextPack(ctx context.Context, req ContextRequest) (*Context
 		return nil, err
 	}
 	git := newGitRunner(req.Root, s.logger)
-	stale := contextStale(ctx, git, build)
+	stale := contextStale(ctx, git, build, s.store, req.WorkspaceID, req.Root)
 	if stale {
 		if _, berr := s.Build(ctx, BuildRequest{WorkspaceID: req.WorkspaceID, Root: req.Root}); berr == nil {
 			if refreshed, gerr := s.store.GetCodeIndexBuild(ctx, req.WorkspaceID); gerr == nil {
@@ -234,17 +235,6 @@ func (s *Service) ContextPack(ctx context.Context, req ContextRequest) (*Context
 		pack.Files = []ContextFile{}
 	}
 	return pack, nil
-}
-
-// contextStale reports whether the working tree moved past the indexed build
-// (HEAD or dirty-file count differs). Unknown (no git) is treated as fresh.
-func contextStale(ctx context.Context, git *gitRunner, build *store.CodeIndexBuild) bool {
-	if !git.available() {
-		return false
-	}
-	head, _ := git.head(ctx)
-	dirty, _ := git.dirtyCount(ctx)
-	return head != build.GitHead || dirty != build.DirtyCount
 }
 
 // Status reports the freshness verdict. A never-built workspace returns
@@ -268,7 +258,7 @@ func (s *Service) Status(ctx context.Context, workspaceID, root string) (*Status
 		BuiltAt:     build.BuiltAt,
 		GitHead:     build.GitHead,
 		CurrentHead: head,
-		Stale:       head != build.GitHead || dirty != build.DirtyCount,
+		Stale:       contextStale(ctx, git, build, s.store, workspaceID, root),
 		DirtyFiles:  dirty,
 		FileCount:   build.FileCount,
 		SymbolCount: build.SymbolCount,

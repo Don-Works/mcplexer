@@ -9,6 +9,25 @@ import (
 	"github.com/don-works/mcplexer/internal/store"
 )
 
+func TestCodeIndexCountSymbols(t *testing.T) {
+	ctx := context.Background()
+	db := newCodeIndexTestDB(t)
+	payload := testIndexedFile("internal/kv/handler.go", "HandleKVSet", time.Now().UTC())
+	payload.Symbols = append(payload.Symbols, store.CodeIndexSymbol{
+		Name: "HandleKVGet", NameTokens: "handle kv get", Kind: "func", StartLine: 20,
+	})
+	if err := db.UpsertCodeIndexedFiles(ctx, "ws-1", []store.IndexedFile{payload}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	n, err := db.CountCodeIndexSymbols(ctx, "ws-1")
+	if err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if n != 2 {
+		t.Fatalf("symbol count = %d, want 2", n)
+	}
+}
+
 func TestCodeIndexRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	db := newCodeIndexTestDB(t)

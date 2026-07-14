@@ -94,6 +94,30 @@ func TestMapFailureDedupesRepeatedFailLines(t *testing.T) {
 	}
 }
 
+func TestSummaryGoImporterCountUsesPackageDir(t *testing.T) {
+	ms := newMemStore()
+	svc, _ := testService(t)
+	svc.store = ms
+	seedContextFile(t, ms, "ws", "internal/downstream/manager.go", "Downstream manager.",
+		[]store.CodeIndexSymbol{{Name: "StartAll", Kind: "func", Exported: true, StartLine: 3}}, nil)
+	seedContextFile(t, ms, "ws", "cmd/mcplexer/main.go", "Entry point.",
+		[]store.CodeIndexSymbol{{Name: "main", Kind: "func", StartLine: 5}},
+		[]store.CodeIndexEdge{{Kind: "import", ToPath: "internal/downstream"}})
+	if err := ms.PutCodeIndexBuild(context.Background(), &store.CodeIndexBuild{
+		WorkspaceID: "ws", BuiltAt: time.Now(), FileCount: 2, SymbolCount: 2,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	sum, err := svc.Summary(context.Background(), "ws", t.TempDir(), "internal/downstream/manager.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sum.ImporterCount != 1 {
+		t.Fatalf("ImporterCount = %d, want 1 via package-dir edge", sum.ImporterCount)
+	}
+}
+
 func TestContextPackNeverEmitsDirectories(t *testing.T) {
 	ms := newMemStore()
 	svc, _ := testService(t)

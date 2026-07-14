@@ -4,23 +4,28 @@ import (
 	"context"
 	"encoding/json"
 	"math"
+	"path"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/don-works/mcplexer/internal/store"
 )
 
 const (
-	ctxSymbolLimit  = 40
-	ctxFileLimit    = 20
-	ctxAssembleCap  = 15
-	ctxChurnDays    = 30
-	ctxCommitDays   = 90
-	ctxMaxSymbols   = 5
-	ctxMaxExported  = 3
-	ctxMaxCommits   = 2
-	ctxFileFTSCoeff = 0.3
-	ctxChurnCoeff   = 0.15
-	ctxGraphCoeff   = 0.3
+	ctxSymbolLimit       = 40
+	ctxFileLimit         = 20
+	ctxAssembleCap       = 15
+	ctxChurnDays         = 30
+	ctxCommitDays        = 90
+	ctxMaxSymbols        = 5
+	ctxMaxExported       = 3
+	ctxMaxCommits        = 2
+	ctxFileFTSCoeff      = 0.3
+	ctxChurnCoeff        = 0.15
+	ctxGraphCoeff        = 0.3
+	ctxMaxPkgDirFiles    = 8
+	ctxMaxGraphNeighbors = 50
 )
 
 // ctxCand is an in-progress context-pack candidate before assembly.
@@ -124,7 +129,7 @@ func (s *Service) applyGraphProximity(ctx context.Context, ws string, cands map[
 		top = top[:3]
 	}
 	for _, parent := range top {
-		for _, nb := range s.neighbors(ctx, ws, parent.path) {
+		for _, nb := range s.neighbors(ctx, ws, parent.path, filePaths) {
 			if !filePaths[nb] {
 				continue
 			}
@@ -138,22 +143,56 @@ func (s *Service) applyGraphProximity(ctx context.Context, ws string, cands map[
 	}
 }
 
-// neighbors returns the 1-hop import + importer file paths of a file.
-func (s *Service) neighbors(ctx context.Context, ws, file string) []string {
+// neighbors returns the 1-hop import + importer file paths of a file. Go import
+// edges that target a package directory expand to indexed .go files in that
+// package (bounded, sorted) instead of leaking the directory path.
+func (s *Service) neighbors(ctx context.Context, ws, file string, filePaths map[string]bool) []string {
+	seen := map[string]bool{}
 	var out []string
+	add := func(paths ...string) {
+		for _, p := range paths {
+			if p == "" || !filePaths[p] || seen[p] {
+				continue
+			}
+			seen[p] = true
+			out = append(out, p)
+			if len(out) >= ctxMaxGraphNeighbors {
+				return
+			}
+		}
+	}
 	imports, _ := s.store.ListCodeIndexEdges(ctx, store.CodeIndexEdgeFilter{WorkspaceID: ws, FromPath: file, Limit: 50})
 	for _, e := range imports {
-		if e.ToPath != "" {
-			out = append(out, e.ToPath)
+		if e.ToPath == "" {
+			continue
 		}
+		if filePaths[e.ToPath] {
+			add(e.ToPath)
+			continue
+		}
+		add(expandGoPackageDir(filePaths, e.ToPath)...)
 	}
-	importers, _ := s.store.ListCodeIndexEdges(ctx, store.CodeIndexEdgeFilter{WorkspaceID: ws, ToPath: file, Limit: 50})
+	importers, _ := s.importerEdges(ctx, ws, file, 50)
 	for _, e := range importers {
-		if e.FromPath != "" {
-			out = append(out, e.FromPath)
-		}
+		add(e.FromPath)
 	}
 	return out
+}
+
+// expandGoPackageDir returns indexed .go files declared directly in pkgDir.
+func expandGoPackageDir(filePaths map[string]bool, pkgDir string) []string {
+	var matches []string
+	for p := range filePaths {
+		if !strings.HasSuffix(p, ".go") || path.Dir(p) != pkgDir {
+			continue
+		}
+		matches = append(matches, p)
+	}
+	sort.Strings(matches)
+	if len(matches) > ctxMaxPkgDirFiles {
+		matches = matches[:ctxMaxPkgDirFiles]
+	}
+	return matches
 }
 
 // fillBudget greedily includes candidates by score until budget_tokens is hit,

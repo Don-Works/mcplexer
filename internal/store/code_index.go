@@ -55,6 +55,9 @@ type CodeIndexStore interface {
 
 	// GetCodeIndexBuild returns the build row. ErrNotFound when never built.
 	GetCodeIndexBuild(ctx context.Context, workspaceID string) (*CodeIndexBuild, error)
+
+	// CountCodeIndexSymbols returns how many symbols are indexed for a workspace.
+	CountCodeIndexSymbols(ctx context.Context, workspaceID string) (int, error)
 }
 
 // CodeIndexFile is one indexed source file, root-relative to the workspace.

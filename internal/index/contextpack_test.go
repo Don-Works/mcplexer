@@ -89,6 +89,30 @@ func TestContextPackBudget(t *testing.T) {
 	}
 }
 
+func TestContextPackGoPackageDirProximity(t *testing.T) {
+	ms := newMemStore()
+	svc, _ := testService(t)
+	svc.store = ms
+	seedContextFile(t, ms, "ws", "internal/kv/handler.go", "KV handler.",
+		[]store.CodeIndexSymbol{{Name: "HandleKVSet", Kind: "func", Exported: true, StartLine: 3}},
+		[]store.CodeIndexEdge{{Kind: "import", ToPath: "internal/downstream"}})
+	seedContextFile(t, ms, "ws", "internal/downstream/manager.go", "Downstream manager.",
+		[]store.CodeIndexSymbol{{Name: "StartAll", Kind: "func", Exported: true, StartLine: 5}}, nil)
+	seedContextFile(t, ms, "ws", "internal/downstream/helper.go", "Downstream helper.",
+		[]store.CodeIndexSymbol{{Name: "helper", Kind: "func", StartLine: 2}}, nil)
+
+	git := newGitRunner(t.TempDir(), svc.logger)
+	pack, err := svc.contextPack(context.Background(),
+		ContextRequest{WorkspaceID: "ws", Query: "HandleKVSet", BudgetTokens: 16000}, git, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := paths(pack.Files)
+	if !contains(got, "internal/downstream/manager.go") {
+		t.Fatalf("package-dir import should expand to indexed files; got %v", got)
+	}
+}
+
 func TestContextPackEndToEnd(t *testing.T) {
 	ms := newMemStore()
 	svc, _ := testService(t)

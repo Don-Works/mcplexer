@@ -50,3 +50,7 @@ func (m *mockStore) PutCodeIndexBuild(_ context.Context, _ *store.CodeIndexBuild
 func (m *mockStore) GetCodeIndexBuild(_ context.Context, _ string) (*store.CodeIndexBuild, error) {
 	return nil, store.ErrNotFound
 }
+
+func (m *mockStore) CountCodeIndexSymbols(_ context.Context, _ string) (int, error) {
+	return 0, nil
+}

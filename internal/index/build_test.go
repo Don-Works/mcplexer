@@ -179,6 +179,30 @@ func TestBuildScopedPreservesOutOfScope(t *testing.T) {
 	}
 }
 
+func TestBuildScopedForceReportsWholeSymbolCount(t *testing.T) {
+	svc, ms := testService(t)
+	dir := newWorkspace(t)
+	ctx := context.Background()
+	if _, err := svc.Build(ctx, BuildRequest{WorkspaceID: "ws", Root: dir}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Build(ctx, BuildRequest{
+		WorkspaceID: "ws", Root: dir, Paths: []string{"web"}, Force: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	build, err := ms.GetCodeIndexBuild(ctx, "ws")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if build.SymbolCount != 3 {
+		t.Errorf("scoped force SymbolCount = %d, want whole-index 3", build.SymbolCount)
+	}
+	if build.FileCount != 2 {
+		t.Errorf("scoped force FileCount = %d, want whole-index 2", build.FileCount)
+	}
+}
+
 func TestBuildForce(t *testing.T) {
 	svc, _ := testService(t)
 	dir := newWorkspace(t)

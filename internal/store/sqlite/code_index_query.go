@@ -192,6 +192,17 @@ func (d *DB) ListCodeIndexEdges(
 	return out, rows.Err()
 }
 
+// CountCodeIndexSymbols returns the total symbol rows for a workspace.
+func (d *DB) CountCodeIndexSymbols(ctx context.Context, workspaceID string) (int, error) {
+	var n int
+	err := d.q.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM code_index_symbols WHERE workspace_id = ?`, workspaceID).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("count code index symbols: %w", err)
+	}
+	return n, nil
+}
+
 // GetCodeIndexBuild returns the workspace build row.
 func (d *DB) GetCodeIndexBuild(
 	ctx context.Context, workspaceID string,

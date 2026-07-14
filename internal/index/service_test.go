@@ -55,6 +55,10 @@ func (fakeCodeIndexStore) GetCodeIndexBuild(ctx context.Context, workspaceID str
 	return nil, store.ErrNotFound
 }
 
+func (fakeCodeIndexStore) CountCodeIndexSymbols(ctx context.Context, workspaceID string) (int, error) {
+	return 0, nil
+}
+
 // Compile-time proof the fake satisfies the frozen interface.
 var _ store.CodeIndexStore = fakeCodeIndexStore{}
 

@@ -49,3 +49,7 @@ func (m *mockRouteStore) PutCodeIndexBuild(_ context.Context, _ *store.CodeIndex
 func (m *mockRouteStore) GetCodeIndexBuild(_ context.Context, _ string) (*store.CodeIndexBuild, error) {
 	return nil, store.ErrNotFound
 }
+
+func (m *mockRouteStore) CountCodeIndexSymbols(_ context.Context, _ string) (int, error) {
+	return 0, nil
+}

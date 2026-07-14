@@ -41,6 +41,15 @@ func newGitRunner(dir string, log *slog.Logger) *gitRunner {
 
 func (g *gitRunner) available() bool { return g != nil && g.bin != "" }
 
+// isRepo reports whether dir is inside a git work tree.
+func (g *gitRunner) isRepo(ctx context.Context) bool {
+	if !g.available() {
+		return false
+	}
+	out, err := g.run(ctx, "rev-parse", "--is-inside-work-tree")
+	return err == nil && strings.TrimSpace(out) == "true"
+}
+
 // run executes a git subcommand in the repo dir, capturing combined output.
 func (g *gitRunner) run(ctx context.Context, args ...string) (string, error) {
 	if !g.available() {
@@ -98,15 +107,25 @@ func (g *gitRunner) head(ctx context.Context) (string, error) {
 	return strings.TrimSpace(out), nil
 }
 
-// dirtyCount returns the number of changed (staged/unstaged/untracked-visible)
-// entries via `git status --porcelain`. 0 (no error) when git is unavailable.
-func (g *gitRunner) dirtyCount(ctx context.Context) (int, error) {
+// statusPorcelain returns the raw `git status --porcelain` output. Empty (no
+// error) when git is unavailable or the tree is clean.
+func (g *gitRunner) statusPorcelain(ctx context.Context) (string, error) {
 	if !g.available() {
-		return 0, nil
+		return "", nil
 	}
 	out, err := g.run(ctx, "status", "--porcelain")
 	if err != nil {
-		return 0, nil
+		return "", nil
+	}
+	return out, nil
+}
+
+// dirtyCount returns the number of changed (staged/unstaged/untracked-visible)
+// entries via `git status --porcelain`. 0 (no error) when git is unavailable.
+func (g *gitRunner) dirtyCount(ctx context.Context) (int, error) {
+	out, err := g.statusPorcelain(ctx)
+	if err != nil || out == "" {
+		return 0, err
 	}
 	n := 0
 	for _, line := range strings.Split(out, "\n") {
