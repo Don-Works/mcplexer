@@ -76,25 +76,35 @@ func (s *Service) searchChunks(
 		} else if returnedModel != "" && returnedModel != model {
 			status.State = "error"
 			status.LastError = fmt.Sprintf("embedding provider returned model %q, configured %q", returnedModel, model)
-		} else if len(vectors) != 1 || len(vectors[0]) != embedVectorDim {
+		} else if len(vectors) != 1 {
 			status.State = "error"
 			status.LastError = "embedding provider returned an invalid query vector"
 		} else {
-			semantic, embedErr = s.store.VectorSearchCodeIndexChunks(
-				ctx, indexID, model, codeEmbeddingVersion, vectors[0], candidateLimit,
-			)
-			if embedErr != nil {
+			queryVector, normErr := normalizeCodeVector(vectors[0])
+			if normErr != nil {
 				status.State = "error"
-				status.LastError = embedErr.Error()
+				status.LastError = "embedding provider returned an invalid query vector: " + normErr.Error()
+				vectors = nil
+			}
+			if queryVector == nil {
 				semantic = nil
-			} else if strings.TrimSpace(kind) != "" {
-				filtered := semantic[:0]
-				for _, hit := range semantic {
-					if hit.Chunk.Kind == strings.TrimSpace(kind) {
-						filtered = append(filtered, hit)
+			} else {
+				semantic, embedErr = s.store.VectorSearchCodeIndexChunks(
+					ctx, indexID, model, codeEmbeddingVersion, queryVector, candidateLimit,
+				)
+				if embedErr != nil {
+					status.State = "error"
+					status.LastError = embedErr.Error()
+					semantic = nil
+				} else if strings.TrimSpace(kind) != "" {
+					filtered := semantic[:0]
+					for _, hit := range semantic {
+						if hit.Chunk.Kind == strings.TrimSpace(kind) {
+							filtered = append(filtered, hit)
+						}
 					}
+					semantic = filtered
 				}
-				semantic = filtered
 			}
 		}
 	}
@@ -175,6 +185,7 @@ func chunkKey(c store.CodeIndexChunk) string {
 func applyExactBoosts(cands map[string]*fusedChunk, query string) {
 	phrase := strings.ToLower(strings.TrimSpace(query))
 	tokens := meaningfulQueryTokens(query)
+	testIntent := hasAnyToken(tokens, "test", "tests", "spec", "assert", "fixture")
 	for _, cand := range cands {
 		pathLower := strings.ToLower(cand.chunk.Path)
 		symbolLower := strings.ToLower(cand.chunk.SymbolName)
@@ -199,7 +210,27 @@ func applyExactBoosts(cands map[string]*fusedChunk, query string) {
 		if len(tokens) > 0 {
 			cand.score += 0.004 * float64(matched) / float64(len(tokens))
 		}
+		// Natural-language implementation queries otherwise tend to rank the
+		// corresponding *_test file first because tests repeat identifiers and
+		// prose. Keep tests fully competitive when the query asks for them, but
+		// give production source a small deterministic prior for other intents.
+		if !testIntent && !isTestPath(cand.chunk.Path) {
+			cand.score += 0.007
+		}
 	}
+}
+
+func hasAnyToken(tokens []string, wanted ...string) bool {
+	set := make(map[string]bool, len(tokens))
+	for _, token := range tokens {
+		set[token] = true
+	}
+	for _, token := range wanted {
+		if set[token] {
+			return true
+		}
+	}
+	return false
 }
 
 var queryStopwords = map[string]bool{

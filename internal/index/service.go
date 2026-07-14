@@ -119,6 +119,9 @@ func (s *Service) ensureBuilt(ctx context.Context, workspaceID, root string) err
 	if err := validateRoot(root); err != nil {
 		return err
 	}
+	if err := requireDir(root); err != nil {
+		return err
+	}
 	indexID := indexIDForRoot(root)
 	if _, err := s.store.GetCodeIndexBuild(ctx, indexID); err == nil {
 		return nil

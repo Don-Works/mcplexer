@@ -2,12 +2,15 @@ package index
 
 import (
 	"context"
+	"math"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/don-works/mcplexer/internal/store"
+	storesqlite "github.com/don-works/mcplexer/internal/store/sqlite"
 )
 
 type deterministicCodeEmbedder struct {
@@ -187,5 +190,65 @@ func FuseSemanticAndLexicalRanks() {}
 	}
 	if pack.Files[0].Snippets[0].Path != "internal/index/search.go" {
 		t.Fatalf("snippet path = %q", pack.Files[0].Snippets[0].Path)
+	}
+}
+
+func TestNormalizeCodeVectorRejectsInvalidAndNormalizes(t *testing.T) {
+	zero := make([]float32, embedVectorDim)
+	if _, err := normalizeCodeVector(zero); err == nil {
+		t.Fatal("zero vector accepted")
+	}
+	nonFinite := make([]float32, embedVectorDim)
+	nonFinite[0] = float32(math.Inf(1))
+	if _, err := normalizeCodeVector(nonFinite); err == nil {
+		t.Fatal("non-finite vector accepted")
+	}
+	vector := make([]float32, embedVectorDim)
+	vector[0], vector[1] = 3, 4
+	got, err := normalizeCodeVector(vector)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if math.Abs(float64(got[0]-0.6)) > 1e-6 || math.Abs(float64(got[1]-0.8)) > 1e-6 {
+		t.Fatalf("normalized head = [%f %f], want [0.6 0.8]", got[0], got[1])
+	}
+}
+
+func TestSQLiteBuildSearchSharedRootRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	db, err := storesqlite.New(ctx, filepath.Join(t.TempDir(), "index.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	svc := NewService(db, nil)
+	root := t.TempDir()
+	writeWorkspaceFile(t, root, "internal/jobs/runner.go", `package jobs
+
+// RetryFailedJob reschedules a failed background task with exponential backoff.
+func RetryFailedJob() {}
+`)
+	build, err := svc.Build(ctx, BuildRequest{WorkspaceID: "shared-a", Root: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := svc.Search(ctx, SearchRequest{
+		WorkspaceID: "shared-b", Root: root, Query: "reschedule failed background job", Limit: 3,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.IndexID != build.IndexID || len(result.Hits) != 1 {
+		t.Fatalf("shared sqlite search = %+v, build=%+v", result, build)
+	}
+	if result.Hits[0].Path != "internal/jobs/runner.go" || result.Hits[0].Citation == "" {
+		t.Fatalf("bad sqlite source hit: %+v", result.Hits[0])
+	}
+	status, err := svc.Status(ctx, "shared-b", root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.ChunkCount != 1 || status.IndexID != build.IndexID {
+		t.Fatalf("shared status = %+v", status)
 	}
 }

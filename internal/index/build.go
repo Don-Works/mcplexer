@@ -70,9 +70,9 @@ func (s *Service) runBuild(ctx context.Context, req BuildRequest) (*BuildResult,
 	return br.finish(ctx, start)
 }
 
-// loadState loads the prior build row (for the mtime grace window + symbol
-// carry-forward) and the per-file freshness stats. Force discards the stats so
-// every file is re-extracted.
+// loadState loads the prior build row (for the mtime grace window + running
+// totals) and per-file freshness stats. Force still retains those stats so
+// replacement can subtract old symbol/chunk counts before re-extracting.
 func (br *buildRun) loadState(ctx context.Context) error {
 	if prev, err := br.svc.store.GetCodeIndexBuild(ctx, br.req.WorkspaceID); err == nil {
 		br.lastIndexed = prev.BuiltAt.Unix()
@@ -173,15 +173,27 @@ func (br *buildRun) addIndexed(ctx context.Context, rel string, size int, mtime 
 	br.res.SymbolCount += len(ex.Symbols)
 	assembled := br.assemble(rel, size, mtime, hash, data, ex)
 	remaining := maxWorkspaceChunks - br.chunkTotal
-	if remaining < len(assembled.Chunks) {
-		if remaining < 0 {
-			remaining = 0
-		}
-		assembled.Chunks = assembled.Chunks[:remaining]
+	var workspaceTruncated bool
+	assembled.Chunks, workspaceTruncated = fitWorkspaceChunkBudget(assembled.Chunks, remaining)
+	if workspaceTruncated {
+		// Version 0 is deliberately stale: if another file is later removed,
+		// an ordinary incremental build retries this file and fills the newly
+		// available capacity instead of leaving a permanent search blind spot.
+		assembled.File.ChunkVersion = 0
 		br.warn(fmt.Sprintf("%s: source chunks truncated at workspace cap %d", rel, maxWorkspaceChunks))
 	}
 	br.chunkTotal += len(assembled.Chunks)
 	br.batch = append(br.batch, assembled)
+}
+
+func fitWorkspaceChunkBudget(chunks []store.CodeIndexChunk, remaining int) ([]store.CodeIndexChunk, bool) {
+	if remaining < 0 {
+		remaining = 0
+	}
+	if len(chunks) <= remaining {
+		return chunks, false
+	}
+	return chunks[:remaining], true
 }
 
 // addSkipped records a file row for a too-large or binary file with no parse.

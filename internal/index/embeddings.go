@@ -3,6 +3,7 @@ package index
 import (
 	"context"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -185,12 +186,12 @@ func (s *Service) runEmbeddingBackfill(
 		}
 		rows := make([]store.CodeIndexChunkEmbedding, len(targets))
 		for i, vector := range vectors {
-			if len(vector) != embedVectorDim {
-				s.recordEmbeddingError(indexID, generation,
-					fmt.Errorf("embedding vector %d has dimension %d, want %d", i, len(vector), embedVectorDim))
+			normalized, normErr := normalizeCodeVector(vector)
+			if normErr != nil {
+				s.recordEmbeddingError(indexID, generation, fmt.Errorf("embedding vector %d: %w", i, normErr))
 				return
 			}
-			rows[i] = store.CodeIndexChunkEmbedding{ChunkID: targets[i].ChunkID, Vector: vector}
+			rows[i] = store.CodeIndexChunkEmbedding{ChunkID: targets[i].ChunkID, Vector: normalized}
 		}
 		if !s.embeddingGenerationCurrent(generation, model) {
 			return
@@ -202,6 +203,31 @@ func (s *Service) runEmbeddingBackfill(
 			return
 		}
 	}
+}
+
+// normalizeCodeVector makes sqlite-vec's L2 distance equivalent to cosine
+// ordering for providers that do not already unit-normalize their output.
+func normalizeCodeVector(vector []float32) ([]float32, error) {
+	if len(vector) != embedVectorDim {
+		return nil, fmt.Errorf("dimension %d, want %d", len(vector), embedVectorDim)
+	}
+	var sum float64
+	for _, value := range vector {
+		f := float64(value)
+		if math.IsNaN(f) || math.IsInf(f, 0) {
+			return nil, fmt.Errorf("contains non-finite values")
+		}
+		sum += f * f
+	}
+	if sum == 0 {
+		return nil, fmt.Errorf("has zero magnitude")
+	}
+	scale := float32(1 / math.Sqrt(sum))
+	out := make([]float32, len(vector))
+	for i, value := range vector {
+		out[i] = value * scale
+	}
+	return out, nil
 }
 
 func embedWithRetry(ctx context.Context, emb Embedder, inputs []string) ([][]float32, string, error) {

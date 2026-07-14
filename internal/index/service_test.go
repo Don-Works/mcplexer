@@ -86,7 +86,7 @@ func TestServiceStatusNotBuilt(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	svc := NewService(fakeCodeIndexStore{}, logger)
 
-	_, err := svc.Status(context.Background(), "ws1", "/tmp/x")
+	_, err := svc.Status(context.Background(), "ws1", t.TempDir())
 	if !errors.Is(err, ErrNotBuilt) {
 		t.Fatalf("Status on never-built workspace: got %v, want ErrNotBuilt", err)
 	}

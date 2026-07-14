@@ -175,6 +175,9 @@ func (s *Service) RecentChanges(ctx context.Context, req RecentChangesRequest) (
 	if err := validateRoot(req.Root); err != nil {
 		return nil, err
 	}
+	if err := requireDir(req.Root); err != nil {
+		return nil, err
+	}
 	days := clampLimit(req.Days, 14, 3650)
 	limit := clampLimit(req.Limit, 20, 100)
 	git := newGitRunner(req.Root, s.logger)
@@ -249,6 +252,9 @@ func (s *Service) ContextPack(ctx context.Context, req ContextRequest) (*Context
 // ErrNotBuilt (the handler surfaces a "run index__build" hint).
 func (s *Service) Status(ctx context.Context, workspaceID, root string) (*Status, error) {
 	if err := validateRoot(root); err != nil {
+		return nil, err
+	}
+	if err := requireDir(root); err != nil {
 		return nil, err
 	}
 	workspaceID = indexIDForRoot(root)
