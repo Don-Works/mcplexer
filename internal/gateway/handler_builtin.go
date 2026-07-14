@@ -231,7 +231,7 @@ func (h *handler) handleBuiltinCall(
 
 	case "index__build", "index__status", "index__symbols", "index__deps",
 		"index__tests_for", "index__summary", "index__recent_changes",
-		"index__map_failure", "index__context":
+		"index__map_failure", "index__context", "index__search":
 		resp, rpcErr, _ := h.dispatchIndexTool(ctx, req.Name, req.Arguments)
 		return resp, rpcErr
 

@@ -123,3 +123,54 @@ func TestIndexUnknownToolNotHandled(t *testing.T) {
 		t.Fatalf("unknown index tool should not be handled")
 	}
 }
+
+// TestIndexSearchAdvertised proves index__search reaches the discoverable
+// definition surface (so it is listed and callable), not just the dispatch
+// switch.
+func TestIndexSearchAdvertised(t *testing.T) {
+	found := false
+	for _, tool := range indexToolDefinitions() {
+		if tool.Name == "index__search" {
+			found = true
+			if strings.TrimSpace(string(tool.InputSchema)) == "" {
+				t.Fatalf("index__search has no input schema")
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("index__search missing from indexToolDefinitions()")
+	}
+}
+
+// TestIndexSearchRequiresQuery proves handler-side param validation fires before
+// the service is touched, mirroring index__symbols.
+func TestIndexSearchRequiresQuery(t *testing.T) {
+	h := newHandlerWithIndex(t)
+	if msg := indexErrText(t, h, "index__search", `{}`); !strings.Contains(msg, "query is required") {
+		t.Fatalf("expected query-required error, got %q", msg)
+	}
+}
+
+// TestIndexSearchAutoBuilds proves index__search dispatches, auto-builds on a
+// never-built workspace, and returns a well-formed lexical-mode result (FTS5
+// always available, no embeddings) rather than erroring.
+func TestIndexSearchAutoBuilds(t *testing.T) {
+	h := newHandlerWithIndex(t)
+	out := indexOK(t, h, "index__search", `{"query":"dispatch"}`)
+	if !strings.Contains(out, `"mode":"lexical"`) {
+		t.Fatalf("expected lexical mode on an empty index, got %q", out)
+	}
+	if !strings.Contains(out, `"hits":[]`) {
+		t.Fatalf("expected empty hits on an empty index, got %q", out)
+	}
+}
+
+// TestIndexSearchWorkspaceAccessDenied proves the root is resolved from workspace
+// authorization: a workspace_id override outside the session's readable scope is
+// rejected before any search runs.
+func TestIndexSearchWorkspaceAccessDenied(t *testing.T) {
+	h := newHandlerWithIndex(t)
+	if msg := indexErrText(t, h, "index__search", `{"query":"x","workspace_id":"ws-denied"}`); !strings.Contains(msg, "outside") {
+		t.Fatalf("expected out-of-scope error, got %q", msg)
+	}
+}

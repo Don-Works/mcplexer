@@ -3,8 +3,8 @@ package gateway
 import "encoding/json"
 
 // indexQueryToolDefinitions returns the read-side half of the index__* surface:
-// tests_for, summary, recent_changes, map_failure, context. Concatenated into
-// the full set by indexToolDefinitions.
+// tests_for, summary, recent_changes, map_failure, context, search. Concatenated
+// into the full set by indexToolDefinitions.
 func indexQueryToolDefinitions() []Tool {
 	return []Tool{
 		{
@@ -99,6 +99,27 @@ func indexQueryToolDefinitions() []Tool {
 			}`),
 			Extras: withAnnotations(ToolAnnotations{
 				Title:           "Task Context Pack",
+				ReadOnlyHint:    boolPtr(true),
+				DestructiveHint: boolPtr(false),
+				IdempotentHint:  boolPtr(true),
+				OpenWorldHint:   boolPtr(false),
+			}),
+		},
+		{
+			Name:        "index__search",
+			Description: "Hybrid source-code search: retrieve citation-ready code snippets for a natural-language or keyword query. Lexical FTS5 always runs; when an opt-in local embedding model has embedded chunks, vector KNN is fused in and the result's `mode` reads \"hybrid\" instead of \"lexical\". Each hit carries a file:line `citation` you can hand straight to a file reader, a fused score, and its source (lexical/semantic), alongside an `embeddings` status block. Use this to find the code that IMPLEMENTS a behavior; for whole-task orientation use index__context, for a plain declaration lookup use index__symbols. Vendored/generated/minified/credential paths are excluded from the index, and embeddings (when enabled) are computed locally and never leave the machine.",
+			InputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"query": {"type": "string", "description": "Natural-language or keyword query to retrieve source for. Required."},
+					"kind": {"type": "string", "description": "Restrict to the declaration kind recorded on a chunk (e.g. func, method, type, class, source)."},
+					"limit": {"type": "integer", "description": "Max hits. Default 12, max 50."},
+					"workspace_id": {"type": "string", "description": "Override current workspace."}
+				},
+				"required": ["query"]
+			}`),
+			Extras: withAnnotations(ToolAnnotations{
+				Title:           "Hybrid Code Search",
 				ReadOnlyHint:    boolPtr(true),
 				DestructiveHint: boolPtr(false),
 				IdempotentHint:  boolPtr(true),

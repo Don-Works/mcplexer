@@ -11,7 +11,7 @@ import (
 	"github.com/don-works/mcplexer/internal/index"
 )
 
-// dispatchIndexTool routes the nine builtin index__* tools to their handlers.
+// dispatchIndexTool routes the ten builtin index__* tools to their handlers.
 // It returns handled=false for any non-index name so handleBuiltinCall can fall
 // through. A nil index service (indexer not wired into this build) short-circuits
 // every index tool with a clean, agent-readable "unavailable" result instead of
@@ -39,6 +39,8 @@ func (h *handler) dispatchIndexTool(
 		fn = h.handleIndexMapFailure
 	case "index__context":
 		fn = h.handleIndexContext
+	case "index__search":
+		fn = h.handleIndexSearch
 	default:
 		return nil, nil, false
 	}

@@ -24,16 +24,17 @@ Tool results consumed inside `mcpx__execute_code` are never pruned or reshaped: 
 
 ## Code index — ask the index BEFORE reading the repo (load-bearing)
 
-The gateway ships a built-in per-workspace codebase indexer (the `index` namespace: symbol map, import graph, test ownership, git churn). Bad context selection is the top failure mode for agents — so ask the index first, read files second:
+The gateway ships a built-in per-workspace codebase indexer (the `index` namespace: symbol map, import graph, test ownership, git churn, hybrid source search). Bad context selection is the top failure mode for agents — so ask the index first, read files second. The three you reach for most, in order of a typical task:
 
-- `index.context({query, budget_tokens})` — THE opening move for any "what's relevant to this task / where do I look" question: a ranked, token-budgeted pack of the right files (summaries, key symbols with line numbers, owning tests, recent commits).
-- `index.symbols({query})` — find where a function/method/type/class/component is defined; camelCase is word-split ("kv set" finds HandleKVSet). Use instead of grepping the repo.
+- `index.context({query, budget_tokens})` — ORIENT. THE opening move for any "what's relevant to this task / where do I look" question: a ranked, token-budgeted pack of the right files (summaries, key symbols with line numbers, owning tests, recent commits, and source snippets).
+- `index.search({query, kind})` — the SOURCE that implements a behavior. Hybrid retrieval: lexical FTS5 always runs, and an opt-in local embedding model adds semantic recall (the result's `mode` reads "hybrid" vs "lexical"). Hits are citation-ready (`file:line`) — read the cited slice instead of grepping. Reach for it when you need the actual implementation/behavior, not just a name.
+- `index.symbols({query})` — the DECLARATION of a function/method/type/class/component; camelCase is word-split ("kv set" finds HandleKVSet). Use instead of grepping for a definition.
 - `index.deps({file, direction:"importers"})` — blast radius before you edit a file; `"imports"` for what it pulls in.
 - `index.tests_for({file})` — which tests own a file; run those before and after changing it.
 - `index.map_failure({text})` — paste a failing test / panic / stack trace, get ranked candidate files with reasons. Start debugging here, not with grep.
 - `index.summary({file})`, `index.recent_changes({path, days})`, `index.status({})`, `index.build({paths, force})`.
 
-Queries auto-build the index on first use. Run `index.build` after big edits or branch switches; `index.status` tells you whether results are trustworthy.
+Queries auto-build the index on first use. The physical index is keyed by the repo's canonical root, so worktrees and multiple logical workspaces that resolve to the same checkout share one index (authorization is still enforced per query, and semantic embeddings stay local — never uploaded). Run `index.build` after big edits or branch switches; `index.status` reports freshness and whether results are trustworthy.
 
 ## Memory contract — RECALL first, CAPTURE last (load-bearing)
 

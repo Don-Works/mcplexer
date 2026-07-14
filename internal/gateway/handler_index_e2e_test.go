@@ -57,6 +57,17 @@ func TestIndexE2ESmoke(t *testing.T) {
 	if pack.UsedTokens > pack.BudgetTokens {
 		t.Fatalf("context pack over budget: used=%d budget=%d", pack.UsedTokens, pack.BudgetTokens)
 	}
+
+	// Hybrid search retrieves citation-ready source: FTS5 always runs (no
+	// embeddings wired here, so mode stays lexical) and the top snippet for the
+	// dispatch query must cite the gateway source that implements it.
+	searchOut := indexOK(t, h, "index__search", `{"query":"dispatch kv tool"}`)
+	if !strings.Contains(searchOut, `"mode":"lexical"`) {
+		t.Fatalf("expected lexical mode without embeddings, got %s", searchOut)
+	}
+	if !strings.Contains(searchOut, "dispatchKVTool") || !strings.Contains(searchOut, "handler_kv.go") {
+		t.Fatalf("search did not cite the dispatchKVTool source: %s", searchOut)
+	}
 }
 
 // indexOK dispatches an index tool expecting a non-error tool result and returns

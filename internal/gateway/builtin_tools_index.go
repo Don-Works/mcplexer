@@ -2,9 +2,9 @@ package gateway
 
 import "encoding/json"
 
-// indexToolDefinitions returns the full 9-tool `index__*` surface for the
+// indexToolDefinitions returns the full 10-tool `index__*` surface for the
 // local codebase indexer: build/status/symbols/deps here, plus the query
-// tools (tests_for/summary/recent_changes/map_failure/context) from
+// tools (tests_for/summary/recent_changes/map_failure/context/search) from
 // indexQueryToolDefinitions. Registered (gated on h.store != nil) in both
 // codeModeBuiltinTools and buildAllBuiltinTools so the tools dispatch and are
 // slim-surface discoverable.
