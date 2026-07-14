@@ -12,7 +12,7 @@ import (
 
 const codeIndexFileCols = `id, workspace_id, path, path_tokens, language, package,
 	size_bytes, line_count, mtime_unix, content_hash, doc_summary,
-	is_test, skipped_reason, indexed_at`
+	is_test, skipped_reason, chunk_version, indexed_at`
 
 func codeIndexSymbolColsPrefixed(alias string) string {
 	return alias + `.id, ` + alias + `.file_id, ` + alias + `.workspace_id, ` +
@@ -21,11 +21,20 @@ func codeIndexSymbolColsPrefixed(alias string) string {
 		alias + `.start_line, ` + alias + `.end_line, ` + alias + `.exported`
 }
 
+func codeIndexChunkColsPrefixed(alias string) string {
+	return alias + `.id, ` + alias + `.workspace_id, ` + alias + `.file_id, ` +
+		alias + `.path, ` + alias + `.path_tokens, ` + alias + `.ordinal, ` +
+		alias + `.kind, ` + alias + `.symbol_name, ` + alias + `.symbol_tokens, ` +
+		alias + `.code_tokens, ` + alias + `.start_line, ` + alias + `.end_line, ` +
+		alias + `.content, ` + alias + `.content_hash, ` + alias + `.embed_model, ` +
+		alias + `.embed_version, ` + alias + `.indexed_at`
+}
+
 const codeIndexBuildCols = `workspace_id, root_path, git_head, dirty_count,
-	built_at, duration_ms, file_count, symbol_count, warnings_json`
+	built_at, duration_ms, file_count, symbol_count, chunk_count, warnings_json`
 
 // UpsertCodeIndexedFiles upserts each file (preserving row id on conflict) and
-// fully replaces its symbols and edges inside one transaction.
+// fully replaces its symbols, edges, and chunks inside one transaction.
 func (d *DB) UpsertCodeIndexedFiles(
 	ctx context.Context, workspaceID string, files []store.IndexedFile,
 ) error {
@@ -70,8 +79,8 @@ func (d *DB) upsertCodeIndexFileRow(
 		INSERT INTO code_index_files (
 			workspace_id, path, path_tokens, language, package,
 			size_bytes, line_count, mtime_unix, content_hash, doc_summary,
-			is_test, skipped_reason, indexed_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			is_test, skipped_reason, chunk_version, indexed_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(workspace_id, path) DO UPDATE SET
 			path_tokens = excluded.path_tokens,
 			language = excluded.language,
@@ -83,11 +92,12 @@ func (d *DB) upsertCodeIndexFileRow(
 			doc_summary = excluded.doc_summary,
 			is_test = excluded.is_test,
 			skipped_reason = excluded.skipped_reason,
+			chunk_version = excluded.chunk_version,
 			indexed_at = excluded.indexed_at`,
 		workspaceID, file.Path, file.PathTokens, file.Language, file.Package,
 		file.SizeBytes, file.LineCount, file.MtimeUnix, file.ContentHash,
 		file.DocSummary, boolToInt(file.IsTest), file.SkippedReason,
-		formatTime(file.IndexedAt))
+		file.ChunkVersion, formatTime(file.IndexedAt))
 	if err != nil {
 		return 0, fmt.Errorf("upsert code index file %q: %w", file.Path, err)
 	}
@@ -105,6 +115,9 @@ func (d *DB) upsertCodeIndexFileRow(
 func (d *DB) replaceCodeIndexFileChildren(
 	ctx context.Context, workspaceID string, fileID int64, f store.IndexedFile,
 ) error {
+	if err := d.deleteCodeIndexChunksForFile(ctx, fileID); err != nil {
+		return err
+	}
 	if _, err := d.q.ExecContext(ctx,
 		`DELETE FROM code_index_symbols WHERE file_id = ?`, fileID); err != nil {
 		return fmt.Errorf("delete symbols: %w", err)
@@ -122,6 +135,42 @@ func (d *DB) replaceCodeIndexFileChildren(
 		if err := d.insertCodeIndexEdge(ctx, workspaceID, fileID, edge); err != nil {
 			return err
 		}
+	}
+	for _, chunk := range f.Chunks {
+		if err := d.insertCodeIndexChunk(ctx, workspaceID, fileID, f.File.Path, chunk); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (d *DB) deleteCodeIndexChunksForFile(ctx context.Context, fileID int64) error {
+	rows, err := d.q.QueryContext(ctx,
+		`SELECT id FROM code_index_chunks WHERE file_id = ?`, fileID)
+	if err != nil {
+		return fmt.Errorf("list chunk ids: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var chunkIDs []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return err
+		}
+		chunkIDs = append(chunkIDs, id)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, id := range chunkIDs {
+		if _, err := d.q.ExecContext(ctx,
+			`DELETE FROM code_index_chunks_vec WHERE chunk_id = ?`, id); err != nil {
+			return fmt.Errorf("delete chunk vec %d: %w", id, err)
+		}
+	}
+	if _, err := d.q.ExecContext(ctx,
+		`DELETE FROM code_index_chunks WHERE file_id = ?`, fileID); err != nil {
+		return fmt.Errorf("delete chunks: %w", err)
 	}
 	return nil
 }
@@ -156,7 +205,32 @@ func (d *DB) insertCodeIndexEdge(
 	return nil
 }
 
-// DeleteCodeIndexFiles removes files and their child symbols/edges for a workspace.
+func (d *DB) insertCodeIndexChunk(
+	ctx context.Context, workspaceID string, fileID int64, path string, chunk store.CodeIndexChunk,
+) error {
+	if chunk.IndexedAt.IsZero() {
+		chunk.IndexedAt = time.Now().UTC()
+	}
+	if chunk.Path == "" {
+		chunk.Path = path
+	}
+	_, err := d.q.ExecContext(ctx, `
+		INSERT INTO code_index_chunks (
+			workspace_id, file_id, path, path_tokens, ordinal, kind,
+			symbol_name, symbol_tokens, code_tokens, start_line, end_line,
+			content, content_hash, embed_model, embed_version, indexed_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		workspaceID, fileID, chunk.Path, chunk.PathTokens, chunk.Ordinal, chunk.Kind,
+		chunk.SymbolName, chunk.SymbolTokens, chunk.CodeTokens, chunk.StartLine, chunk.EndLine,
+		chunk.Content, chunk.ContentHash, chunk.EmbedModel, chunk.EmbedVersion,
+		formatTime(chunk.IndexedAt))
+	if err != nil {
+		return fmt.Errorf("insert code index chunk ord=%d: %w", chunk.Ordinal, err)
+	}
+	return nil
+}
+
+// DeleteCodeIndexFiles removes files and their child symbols/edges/chunks for a workspace.
 func (d *DB) DeleteCodeIndexFiles(
 	ctx context.Context, workspaceID string, paths []string,
 ) error {
@@ -189,6 +263,9 @@ func (d *DB) deleteOneCodeIndexFile(ctx context.Context, workspaceID, path strin
 	if err != nil {
 		return fmt.Errorf("lookup code index file %q: %w", path, err)
 	}
+	if err := d.deleteCodeIndexChunksForFile(ctx, fileID); err != nil {
+		return fmt.Errorf("delete chunks for %q: %w", path, err)
+	}
 	if _, err := d.q.ExecContext(ctx,
 		`DELETE FROM code_index_symbols WHERE file_id = ?`, fileID); err != nil {
 		return fmt.Errorf("delete symbols for %q: %w", path, err)
@@ -217,7 +294,7 @@ func (d *DB) PutCodeIndexBuild(ctx context.Context, b *store.CodeIndexBuild) err
 	}
 	_, err := d.q.ExecContext(ctx, `
 		INSERT INTO code_index_builds (`+codeIndexBuildCols+`)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(workspace_id) DO UPDATE SET
 			root_path = excluded.root_path,
 			git_head = excluded.git_head,
@@ -226,10 +303,11 @@ func (d *DB) PutCodeIndexBuild(ctx context.Context, b *store.CodeIndexBuild) err
 			duration_ms = excluded.duration_ms,
 			file_count = excluded.file_count,
 			symbol_count = excluded.symbol_count,
+			chunk_count = excluded.chunk_count,
 			warnings_json = excluded.warnings_json`,
 		b.WorkspaceID, b.RootPath, b.GitHead, b.DirtyCount,
 		formatTime(b.BuiltAt), b.DurationMS, b.FileCount, b.SymbolCount,
-		b.WarningsJSON)
+		b.ChunkCount, b.WarningsJSON)
 	if err != nil {
 		return fmt.Errorf("put code index build: %w", err)
 	}

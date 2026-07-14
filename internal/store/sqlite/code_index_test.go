@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -34,6 +35,8 @@ func TestCodeIndexRoundTrip(t *testing.T) {
 
 	indexedAt := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
 	payload := testIndexedFile("internal/kv/handler.go", "HandleKVSet", indexedAt)
+	payload.File.ChunkVersion = 2
+	payload.Chunks = []store.CodeIndexChunk{testChunk(0, "HandleKVSet", "func Set(key string)")}
 
 	if err := db.UpsertCodeIndexedFiles(ctx, "ws-1", []store.IndexedFile{payload}); err != nil {
 		t.Fatalf("upsert: %v", err)
@@ -43,7 +46,7 @@ func TestCodeIndexRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get file: %v", err)
 	}
-	if got.Path != payload.File.Path || got.ContentHash != "abc123" {
+	if got.Path != payload.File.Path || got.ContentHash != "abc123" || got.ChunkVersion != 2 {
 		t.Fatalf("file mismatch: %+v", got)
 	}
 
@@ -59,8 +62,16 @@ func TestCodeIndexRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stats: %v", err)
 	}
-	if len(stats) != 1 || stats[0].ContentHash != "abc123" {
+	if len(stats) != 1 || stats[0].ContentHash != "abc123" || stats[0].ChunkVersion != 2 {
 		t.Fatalf("stats: %+v", stats)
+	}
+
+	n, err := db.CountCodeIndexChunks(ctx, "ws-1")
+	if err != nil {
+		t.Fatalf("count chunks: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("chunk count = %d, want 1", n)
 	}
 }
 
@@ -71,6 +82,7 @@ func TestCodeIndexUpsertPreservesFileIDAndReplacesChildren(t *testing.T) {
 	at := time.Now().UTC()
 
 	first := testIndexedFile(path, "OldSym", at)
+	first.Chunks = []store.CodeIndexChunk{testChunk(0, "OldSym", "zzxqobsolete99001")}
 	if err := db.UpsertCodeIndexedFiles(ctx, "ws-1", []store.IndexedFile{first}); err != nil {
 		t.Fatalf("first upsert: %v", err)
 	}
@@ -81,9 +93,8 @@ func TestCodeIndexUpsertPreservesFileIDAndReplacesChildren(t *testing.T) {
 
 	second := testIndexedFile(path, "NewSym", at)
 	second.File.ContentHash = "def456"
-	second.Edges = []store.CodeIndexEdge{{
-		Kind: "import", ToPath: "pkg/b.go",
-	}}
+	second.Edges = []store.CodeIndexEdge{{Kind: "import", ToPath: "pkg/b.go"}}
+	second.Chunks = []store.CodeIndexChunk{testChunk(0, "NewSym", "new body")}
 	if err := db.UpsertCodeIndexedFiles(ctx, "ws-1", []store.IndexedFile{second}); err != nil {
 		t.Fatalf("second upsert: %v", err)
 	}
@@ -105,10 +116,24 @@ func TestCodeIndexUpsertPreservesFileIDAndReplacesChildren(t *testing.T) {
 	if len(syms) != 1 || syms[0].Name != "NewSym" {
 		t.Fatalf("want NewSym only, got %+v", syms)
 	}
-	for _, s := range syms {
-		if s.Name == "OldSym" {
-			t.Fatalf("stale symbol OldSym still present")
-		}
+
+	hits, err := db.SearchCodeIndexChunks(ctx, store.CodeIndexChunkQuery{
+		WorkspaceID: "ws-1", Query: "zzxqobsolete99001",
+	})
+	if err != nil {
+		t.Fatalf("search old chunk: %v", err)
+	}
+	if len(hits) != 0 {
+		t.Fatalf("stale FTS chunk should be gone, got %+v", hits)
+	}
+	newHits, err := db.SearchCodeIndexChunks(ctx, store.CodeIndexChunkQuery{
+		WorkspaceID: "ws-1", Query: "new body",
+	})
+	if err != nil {
+		t.Fatalf("search new chunk: %v", err)
+	}
+	if len(newHits) != 1 || newHits[0].Chunk.SymbolName != "NewSym" {
+		t.Fatalf("new chunk hit: %+v", newHits)
 	}
 
 	edges, err := db.ListCodeIndexEdges(ctx, store.CodeIndexEdgeFilter{
@@ -119,6 +144,220 @@ func TestCodeIndexUpsertPreservesFileIDAndReplacesChildren(t *testing.T) {
 	}
 	if len(edges) != 1 || edges[0].ToPath != "pkg/b.go" {
 		t.Fatalf("edges: %+v", edges)
+	}
+}
+
+func TestCodeIndexChunkFTSRankingAndCitation(t *testing.T) {
+	ctx := context.Background()
+	db := newCodeIndexTestDB(t)
+	at := time.Now().UTC()
+
+	symbolHit := testIndexedFile("pkg/auth.go", "Authenticate", at)
+	symbolHit.Chunks = []store.CodeIndexChunk{{
+		Ordinal: 0, Kind: "func", SymbolName: "Authenticate",
+		SymbolTokens: "authenticate user login", CodeTokens: "token verify",
+		Content: "misc unrelated prose about databases",
+	}}
+
+	contentHit := testIndexedFile("pkg/db.go", "Query", at)
+	contentHit.Chunks = []store.CodeIndexChunk{{
+		Ordinal: 0, Kind: "func", SymbolName: "Query",
+		SymbolTokens: "query rows", CodeTokens: "select from",
+		Content: "authenticate user login flow details here",
+	}}
+
+	if err := db.UpsertCodeIndexedFiles(ctx, "ws-1", []store.IndexedFile{symbolHit, contentHit}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+
+	hits, err := db.SearchCodeIndexChunks(ctx, store.CodeIndexChunkQuery{
+		WorkspaceID: "ws-1", Query: "authenticate user login", Limit: 10,
+	})
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(hits) < 2 {
+		t.Fatalf("want at least 2 hits, got %+v", hits)
+	}
+	if hits[0].Chunk.SymbolName != "Authenticate" {
+		t.Fatalf("symbol-token match should rank first, got %+v", hits)
+	}
+	if hits[0].Score <= 0 {
+		t.Fatalf("expected positive negated-bm25 score, got %v", hits[0].Score)
+	}
+	if !strings.Contains(hits[0].Source, "pkg/auth.go") || !strings.Contains(hits[0].Source, "Authenticate") {
+		t.Fatalf("citation source missing path/symbol: %q", hits[0].Source)
+	}
+}
+
+func TestCodeIndexChunkVectorModelVersionIsolation(t *testing.T) {
+	ctx := context.Background()
+	db := newCodeIndexTestDB(t)
+	at := time.Now().UTC()
+
+	payload := testIndexedFile("pkg/a.go", "Alpha", at)
+	payload.Chunks = []store.CodeIndexChunk{testChunk(0, "Alpha", "alpha chunk")}
+	if err := db.UpsertCodeIndexedFiles(ctx, "ws-1", []store.IndexedFile{payload}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	targets, err := db.ListCodeIndexChunksNeedingEmbedding(ctx, "ws-1", "model-a", 1, 10)
+	if err != nil || len(targets) != 1 {
+		t.Fatalf("need embedding: targets=%+v err=%v", targets, err)
+	}
+	if !strings.Contains(targets[0].EmbedText, "pkg/a.go") || !strings.Contains(targets[0].EmbedText, "Alpha") {
+		t.Fatalf("embed text: %q", targets[0].EmbedText)
+	}
+
+	vNear := makeVec(memoryVecDim, 0.1)
+	vFar := makeVec(memoryVecDim, 0.9)
+	if err := db.UpsertCodeIndexChunkEmbeddings(ctx, "ws-1", "model-a", 1, []store.CodeIndexChunkEmbedding{
+		{ChunkID: targets[0].ChunkID, Vector: vNear},
+	}); err != nil {
+		t.Fatalf("upsert embedding: %v", err)
+	}
+
+	pending, total, err := db.CountCodeIndexEmbeddingProgress(ctx, "ws-1", "model-a", 1)
+	if err != nil {
+		t.Fatalf("progress: %v", err)
+	}
+	if pending != 0 || total != 1 {
+		t.Fatalf("progress pending=%d total=%d, want 0/1", pending, total)
+	}
+
+	wrongModel, err := db.VectorSearchCodeIndexChunks(ctx, "ws-1", "model-b", 1, vNear, 5)
+	if err != nil {
+		t.Fatalf("wrong model search: %v", err)
+	}
+	if len(wrongModel) != 0 {
+		t.Fatalf("model-b should find nothing, got %+v", wrongModel)
+	}
+
+	wrongVersion, err := db.VectorSearchCodeIndexChunks(ctx, "ws-1", "model-a", 2, vNear, 5)
+	if err != nil {
+		t.Fatalf("wrong version search: %v", err)
+	}
+	if len(wrongVersion) != 0 {
+		t.Fatalf("version 2 should find nothing, got %+v", wrongVersion)
+	}
+
+	query := makeVec(memoryVecDim, 0.09)
+	hits, err := db.VectorSearchCodeIndexChunks(ctx, "ws-1", "model-a", 1, query, 5)
+	if err != nil {
+		t.Fatalf("vector search: %v", err)
+	}
+	if len(hits) != 1 || hits[0].Chunk.SymbolName != "Alpha" {
+		t.Fatalf("vector hits: %+v", hits)
+	}
+	if !strings.Contains(hits[0].Source, "alpha chunk") {
+		t.Fatalf("vector citation: %q", hits[0].Source)
+	}
+
+	// Stale when version bumps — chunk should re-enter backfill queue.
+	if err := db.UpsertCodeIndexChunkEmbeddings(ctx, "ws-1", "model-a", 2, []store.CodeIndexChunkEmbedding{
+		{ChunkID: targets[0].ChunkID, Vector: vFar},
+	}); err != nil {
+		t.Fatalf("re-embed v2: %v", err)
+	}
+	stale, err := db.ListCodeIndexChunksNeedingEmbedding(ctx, "ws-1", "model-a", 3, 10)
+	if err != nil || len(stale) != 1 {
+		t.Fatalf("version mismatch backfill: %+v err=%v", stale, err)
+	}
+}
+
+func TestCodeIndexChunkEmbeddingBatchValidation(t *testing.T) {
+	ctx := context.Background()
+	db := newCodeIndexTestDB(t)
+	payload := testIndexedFile("pkg/a.go", "A", time.Now().UTC())
+	payload.Chunks = []store.CodeIndexChunk{testChunk(0, "A", "body")}
+	if err := db.UpsertCodeIndexedFiles(ctx, "ws-1", []store.IndexedFile{payload}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	targets, _ := db.ListCodeIndexChunksNeedingEmbedding(ctx, "ws-1", "m", 1, 1)
+	badVec := makeVec(4, 0.5)
+
+	cases := []struct {
+		name string
+		err  error
+		call func() error
+	}{
+		{
+			name: "empty model",
+			call: func() error {
+				return db.UpsertCodeIndexChunkEmbeddings(ctx, "ws-1", "", 1, nil)
+			},
+		},
+		{
+			name: "bad vector dim",
+			call: func() error {
+				return db.UpsertCodeIndexChunkEmbeddings(ctx, "ws-1", "m", 1, []store.CodeIndexChunkEmbedding{
+					{ChunkID: targets[0].ChunkID, Vector: badVec},
+				})
+			},
+		},
+		{
+			name: "missing chunk",
+			call: func() error {
+				return db.UpsertCodeIndexChunkEmbeddings(ctx, "ws-1", "m", 1, []store.CodeIndexChunkEmbedding{
+					{ChunkID: 99999, Vector: makeVec(memoryVecDim, 0.5)},
+				})
+			},
+		},
+		{
+			name: "workspace mismatch",
+			call: func() error {
+				return db.UpsertCodeIndexChunkEmbeddings(ctx, "ws-other", "m", 1, []store.CodeIndexChunkEmbedding{
+					{ChunkID: targets[0].ChunkID, Vector: makeVec(memoryVecDim, 0.5)},
+				})
+			},
+		},
+		{
+			name: "vector search bad dim",
+			call: func() error {
+				_, err := db.VectorSearchCodeIndexChunks(ctx, "ws-1", "m", 1, badVec, 5)
+				return err
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := tc.call(); err == nil {
+				t.Fatal("expected error")
+			}
+		})
+	}
+}
+
+func TestCodeIndexReplacementRemovesOldVectorRows(t *testing.T) {
+	ctx := context.Background()
+	db := newCodeIndexTestDB(t)
+	path := "pkg/a.go"
+	at := time.Now().UTC()
+
+	first := testIndexedFile(path, "Old", at)
+	first.Chunks = []store.CodeIndexChunk{testChunk(0, "Old", "old")}
+	if err := db.UpsertCodeIndexedFiles(ctx, "ws-1", []store.IndexedFile{first}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	targets, _ := db.ListCodeIndexChunksNeedingEmbedding(ctx, "ws-1", "m", 1, 1)
+	oldID := targets[0].ChunkID
+	if err := db.UpsertCodeIndexChunkEmbeddings(ctx, "ws-1", "m", 1, []store.CodeIndexChunkEmbedding{
+		{ChunkID: oldID, Vector: makeVec(memoryVecDim, 0.5)},
+	}); err != nil {
+		t.Fatalf("embed: %v", err)
+	}
+
+	second := testIndexedFile(path, "New", at)
+	second.Chunks = []store.CodeIndexChunk{testChunk(0, "New", "new")}
+	if err := db.UpsertCodeIndexedFiles(ctx, "ws-1", []store.IndexedFile{second}); err != nil {
+		t.Fatalf("reindex: %v", err)
+	}
+
+	hits, err := db.VectorSearchCodeIndexChunks(ctx, "ws-1", "m", 1, makeVec(memoryVecDim, 0.5), 5)
+	if err != nil {
+		t.Fatalf("vector search: %v", err)
+	}
+	if len(hits) != 0 {
+		t.Fatalf("old vector row should be gone, got %+v", hits)
 	}
 }
 
@@ -146,15 +385,22 @@ func TestCodeIndexFTSSymbolSearch(t *testing.T) {
 	}
 }
 
-func TestCodeIndexDeleteRemovesFTSRows(t *testing.T) {
+func TestCodeIndexDeleteRemovesFTSAndVectorRows(t *testing.T) {
 	ctx := context.Background()
 	db := newCodeIndexTestDB(t)
 	path := "internal/kv/handler.go"
 
 	file := testIndexedFile(path, "HandleKVSet", time.Now().UTC())
 	file.Symbols[0].NameTokens = "handle kv set"
+	file.Chunks = []store.CodeIndexChunk{testChunk(0, "HandleKVSet", "kv set body")}
 	if err := db.UpsertCodeIndexedFiles(ctx, "ws-1", []store.IndexedFile{file}); err != nil {
 		t.Fatalf("upsert: %v", err)
+	}
+	targets, _ := db.ListCodeIndexChunksNeedingEmbedding(ctx, "ws-1", "m", 1, 1)
+	if err := db.UpsertCodeIndexChunkEmbeddings(ctx, "ws-1", "m", 1, []store.CodeIndexChunkEmbedding{
+		{ChunkID: targets[0].ChunkID, Vector: makeVec(memoryVecDim, 0.5)},
+	}); err != nil {
+		t.Fatalf("embed: %v", err)
 	}
 
 	if err := db.DeleteCodeIndexFiles(ctx, "ws-1", []string{path}); err != nil {
@@ -164,14 +410,40 @@ func TestCodeIndexDeleteRemovesFTSRows(t *testing.T) {
 		t.Fatalf("file should be gone: %v", err)
 	}
 
-	hits, err := db.SearchCodeIndexSymbols(ctx, store.CodeIndexSymbolQuery{
+	symHits, err := db.SearchCodeIndexSymbols(ctx, store.CodeIndexSymbolQuery{
 		WorkspaceID: "ws-1", Query: "kv set",
 	})
 	if err != nil {
-		t.Fatalf("search after delete: %v", err)
+		t.Fatalf("symbol search after delete: %v", err)
 	}
-	if len(hits) != 0 {
-		t.Fatalf("FTS rows should be gone, got %+v", hits)
+	if len(symHits) != 0 {
+		t.Fatalf("symbol FTS rows should be gone, got %+v", symHits)
+	}
+
+	chunkHits, err := db.SearchCodeIndexChunks(ctx, store.CodeIndexChunkQuery{
+		WorkspaceID: "ws-1", Query: "kv set",
+	})
+	if err != nil {
+		t.Fatalf("chunk search after delete: %v", err)
+	}
+	if len(chunkHits) != 0 {
+		t.Fatalf("chunk FTS rows should be gone, got %+v", chunkHits)
+	}
+
+	vecHits, err := db.VectorSearchCodeIndexChunks(ctx, "ws-1", "m", 1, makeVec(memoryVecDim, 0.5), 5)
+	if err != nil {
+		t.Fatalf("vector search after delete: %v", err)
+	}
+	if len(vecHits) != 0 {
+		t.Fatalf("vector rows should be gone, got %+v", vecHits)
+	}
+
+	n, err := db.CountCodeIndexChunks(ctx, "ws-1")
+	if err != nil {
+		t.Fatalf("count chunks: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("chunk count = %d, want 0", n)
 	}
 }
 
@@ -217,7 +489,7 @@ func TestCodeIndexBuildUpsert(t *testing.T) {
 	first := &store.CodeIndexBuild{
 		WorkspaceID: "ws-1", RootPath: "/proj", GitHead: "aaa",
 		DirtyCount: 2, BuiltAt: builtAt, DurationMS: 100,
-		FileCount: 3, SymbolCount: 10, WarningsJSON: `["w1"]`,
+		FileCount: 3, SymbolCount: 10, ChunkCount: 25, WarningsJSON: `["w1"]`,
 	}
 	if err := db.PutCodeIndexBuild(ctx, first); err != nil {
 		t.Fatalf("put first: %v", err)
@@ -227,14 +499,14 @@ func TestCodeIndexBuildUpsert(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	if got.DirtyCount != 2 || got.FileCount != 3 {
+	if got.DirtyCount != 2 || got.FileCount != 3 || got.ChunkCount != 25 {
 		t.Fatalf("build row: %+v", got)
 	}
 
 	second := &store.CodeIndexBuild{
 		WorkspaceID: "ws-1", RootPath: "/proj", GitHead: "bbb",
 		DirtyCount: 0, BuiltAt: builtAt.Add(time.Hour), DurationMS: 50,
-		FileCount: 4, SymbolCount: 12, WarningsJSON: `[]`,
+		FileCount: 4, SymbolCount: 12, ChunkCount: 30, WarningsJSON: `[]`,
 	}
 	if err := db.PutCodeIndexBuild(ctx, second); err != nil {
 		t.Fatalf("put second: %v", err)
@@ -243,7 +515,7 @@ func TestCodeIndexBuildUpsert(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get after upsert: %v", err)
 	}
-	if got2.GitHead != "bbb" || got2.DirtyCount != 0 || got2.FileCount != 4 {
+	if got2.GitHead != "bbb" || got2.DirtyCount != 0 || got2.FileCount != 4 || got2.ChunkCount != 30 {
 		t.Fatalf("upserted build: %+v", got2)
 	}
 }
@@ -254,6 +526,7 @@ func TestCodeIndexMaliciousFTSQueries(t *testing.T) {
 
 	file := testIndexedFile("pkg/a.go", "Foo", time.Now().UTC())
 	file.Symbols[0].NameTokens = "foo bar"
+	file.Chunks = []store.CodeIndexChunk{testChunk(0, "Foo", "foo bar content")}
 	if err := db.UpsertCodeIndexedFiles(ctx, "ws-1", []store.IndexedFile{file}); err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
@@ -267,6 +540,11 @@ func TestCodeIndexMaliciousFTSQueries(t *testing.T) {
 		}
 		if _, err := db.SearchCodeIndexFiles(ctx, "ws-1", q, 10); err != nil {
 			t.Fatalf("file search %q errored: %v", q, err)
+		}
+		if _, err := db.SearchCodeIndexChunks(ctx, store.CodeIndexChunkQuery{
+			WorkspaceID: "ws-1", Query: q,
+		}); err != nil {
+			t.Fatalf("chunk search %q errored: %v", q, err)
 		}
 	}
 }
@@ -306,5 +584,13 @@ func testIndexedFile(path, symName string, indexedAt time.Time) store.IndexedFil
 			Name: symName, NameTokens: symName, Kind: "func",
 			Signature: "func() error", StartLine: 10, Exported: true,
 		}},
+	}
+}
+
+func testChunk(ordinal int, symbolName, content string) store.CodeIndexChunk {
+	return store.CodeIndexChunk{
+		Ordinal: ordinal, Kind: "func", SymbolName: symbolName,
+		SymbolTokens: strings.ToLower(symbolName), CodeTokens: "code tokens",
+		StartLine: 10, EndLine: 20, Content: content, ContentHash: "hash",
 	}
 }
