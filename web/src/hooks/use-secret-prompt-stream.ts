@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
-import { subscribeEvent } from '@/hooks/use-event-stream'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { subscribeEvent, useEventStreamStatus } from '@/hooks/use-event-stream'
 
 export interface SecretPrompt {
   id: string
@@ -16,6 +16,7 @@ interface SecretPromptEvent {
   id: string
   reason?: string
   label?: string
+  requester?: string
   status?: string
   expires_at?: string
   created_at?: string
@@ -27,60 +28,94 @@ interface SecretPromptEvent {
 // never received here — the SSE channel is metadata-only by design.
 export function useSecretPromptStream() {
   const [pending, setPending] = useState<SecretPrompt[]>([])
-  const [connected, setConnected] = useState(false)
+  const streamStatus = useEventStreamStatus()
+  const mountedRef = useRef(false)
+  const resolvedIdsRef = useRef(new Set<string>())
+  const eventVersionsRef = useRef(new Map<string, number>())
+  const eventVersionRef = useRef(0)
+  const reconcileVersionRef = useRef(0)
+  const previousStreamStatusRef = useRef(streamStatus)
 
-  useEffect(() => {
-    let cancelled = false
+  const applyEvent = useCallback((evt: SecretPromptEvent) => {
+    const eventVersion = ++eventVersionRef.current
+    eventVersionsRef.current.set(evt.id, eventVersion)
 
-    async function loadInitial() {
-      try {
-        const apiBase =
-          import.meta.env.VITE_API_BASE_URL?.replace(/\/api\/v1$/, '') || ''
-        const res = await fetch(`${apiBase}/api/v1/secrets/prompts/pending`, {
-          signal: AbortSignal.timeout(30_000),
-        })
-        if (!res.ok) return
-        const rows = (await res.json()) as SecretPrompt[]
-        if (!cancelled) setPending(rows)
-      } catch {
-        // best-effort initial fetch
+    if (evt.type === 'pending') {
+      if (resolvedIdsRef.current.has(evt.id)) return
+      const next: SecretPrompt = {
+        id: evt.id,
+        reason: evt.reason ?? '',
+        label: evt.label ?? '',
+        requester: evt.requester ?? '',
+        status: evt.status ?? 'pending',
+        expires_at: evt.expires_at ?? '',
+        created_at: evt.created_at ?? '',
       }
+      setPending((prev) => [...prev.filter((p) => p.id !== next.id), next])
+      return
     }
 
-    function applyEvent(evt: SecretPromptEvent) {
-      if (evt.type === 'pending') {
-        const next: SecretPrompt = {
-          id: evt.id,
-          reason: evt.reason ?? '',
-          label: evt.label ?? '',
-          requester: '',
-          status: evt.status ?? 'pending',
-          expires_at: evt.expires_at ?? '',
-          created_at: evt.created_at ?? '',
+    resolvedIdsRef.current.add(evt.id)
+    setPending((prev) => prev.filter((p) => p.id !== evt.id))
+  }, [])
+
+  const reconcilePending = useCallback(async () => {
+    const reconcileVersion = ++reconcileVersionRef.current
+    const startedAtEventVersion = eventVersionRef.current
+    try {
+      const apiBase = import.meta.env.VITE_API_BASE_URL?.replace(/\/api\/v1$/, '') || ''
+      const res = await fetch(`${apiBase}/api/v1/secrets/prompts/pending`, {
+        signal: AbortSignal.timeout(30_000),
+      })
+      if (!res.ok) return
+      const rows = (await res.json()) as SecretPrompt[]
+      if (!mountedRef.current || reconcileVersion !== reconcileVersionRef.current) return
+
+      setPending((prev) => {
+        const next = new Map<string, SecretPrompt>()
+        for (const row of rows) {
+          if (row.status !== 'pending') {
+            resolvedIdsRef.current.add(row.id)
+          } else if (!resolvedIdsRef.current.has(row.id)) {
+            next.set(row.id, row)
+          }
         }
-        setPending((prev) => {
-          if (prev.some((p) => p.id === next.id)) return prev
-          return [...prev, next]
-        })
-        return
-      }
-      if (evt.type === 'resolved') {
-        setPending((prev) => prev.filter((p) => p.id !== evt.id))
-      }
-    }
-
-    void loadInitial()
-    const unsub = subscribeEvent('secrets', (data) => {
-      applyEvent(data as SecretPromptEvent)
-    })
-    setConnected(true)
-
-    return () => {
-      cancelled = true
-      unsub()
-      setConnected(false)
+        for (const prompt of prev) {
+          const eventVersion = eventVersionsRef.current.get(prompt.id) ?? 0
+          if (
+            eventVersion > startedAtEventVersion &&
+            !resolvedIdsRef.current.has(prompt.id)
+          ) {
+            next.set(prompt.id, prompt)
+          }
+        }
+        return [...next.values()]
+      })
+    } catch {
+      return
     }
   }, [])
 
-  return { pending, connected }
+  useEffect(() => {
+    mountedRef.current = true
+    const unsub = subscribeEvent('secrets', (data) => {
+      applyEvent(data as SecretPromptEvent)
+    })
+    void reconcilePending()
+
+    return () => {
+      mountedRef.current = false
+      unsub()
+    }
+  }, [applyEvent, reconcilePending])
+
+  useEffect(() => {
+    const previous = previousStreamStatusRef.current
+    previousStreamStatusRef.current = streamStatus
+    if (streamStatus === 'open' && previous !== 'open' && previous !== 'idle') {
+      void reconcilePending()
+    }
+  }, [reconcilePending, streamStatus])
+
+  return { pending, connected: streamStatus === 'open' }
 }
