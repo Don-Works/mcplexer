@@ -379,17 +379,16 @@ costs ~nothing.
 2. **Host key pinning**: first successful dial records the pin (TOFU) on the
    `remote_hosts` row; any subsequent mismatch hard-fails the source and
    raises a `critical` mesh alert. No `InsecureIgnoreHostKey`, ever.
-3. **No shell**: remote commands are fixed per-kind argv templates
-  (`docker`, `logs`, `--since`, `<cursor>`, `<selector>`), including the
-  stable read-only `docker service logs` shape for Swarm; selectors are
-   validated against `^[A-Za-z0-9._/-]+$` at CRUD time *and* dial time.
-   `internal/gateway/cmdguard.go` rules extend to remote argv (no
-   `~/.mcplexer` references, no metacharacters).
+3. **Fixed shell command**: SSH exec carries one command string interpreted by
+   the remote login shell (there is no protocol-level argv exec). Commands use
+   fixed per-kind templates, and selectors are validated against
+   `^[A-Za-z0-9._/][A-Za-z0-9._/-]*$` then single-quoted at CRUD and dial time.
 4. **Bounded reads**: byte + wall-clock caps per pull; the SSH session is
    killed past deadline.
-5. **Least privilege guidance** (docs): dedicated `logwatch` user on the box,
-   in the `docker` group or with a sudoers line scoped to `docker logs`;
-   README snippet provided.
+5. **Box-side privilege boundary**: Docker-group access is root-equivalent,
+   not least privilege. Production should use a dedicated non-login account
+   with a forced-command, root-owned exact-grammar wrapper (and forwarding/PTY
+   disabled), or a dedicated rootless Docker daemon. See ADR 0007 §7.
 6. **Redaction before persistence** (§5.2) — digest/model layers only ever
    see scrubbed text.
 
