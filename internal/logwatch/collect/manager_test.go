@@ -102,6 +102,7 @@ type darkAlert struct {
 	sourceID  string
 	episodeID string
 	failures  int
+	reason    FailureReason
 }
 
 func (s *syncSink) Ingest(_ context.Context, _ *store.LogSource, _ *store.RemoteHost, lines []Line) error {
@@ -119,11 +120,13 @@ func (s *syncSink) lineCount() int {
 
 func (s *syncSink) NotifyCollectionFailure(
 	_ context.Context, source *store.LogSource, _ *store.RemoteHost,
-	failures int, episodeID string,
+	failures int, episodeID string, reason FailureReason,
 ) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.dark = append(s.dark, darkAlert{sourceID: source.ID, episodeID: episodeID, failures: failures})
+	s.dark = append(s.dark, darkAlert{
+		sourceID: source.ID, episodeID: episodeID, failures: failures, reason: reason,
+	})
 	return s.healthErr
 }
 

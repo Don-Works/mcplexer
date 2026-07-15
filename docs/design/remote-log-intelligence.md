@@ -130,9 +130,12 @@ clean — digests can't leak what was never stored.
 5. **Anomaly rules** (deterministic, cheap, run at pull time):
    - new error/critical-class template
    - rate spike: error-class count in window > K× trailing baseline (default 5×, min 10)
-   - source went dark (0 lines for N× its cadence when historically chatty)
-   Each fires ONE mesh message (`kind:alert`, `tags:logwatch,<severity>`,
-   content = mini-digest) — mesh-trigger throttling dedupes the rest.
+   - collector/source went dark: three consecutive failed scheduled pulls.
+     A successful pull with zero lines is healthy, so genuinely quiet services
+     do not page. Failed delivery is retried under one episode id; a successful
+     pull re-arms the next outage.
+   Each enters the deterministic dispatcher once; configured channels receive
+   it by severity, and a mesh channel can wake the AI worker for triage.
 6. **Digest renderer** — `logs.digest({source_ids?, window, budget_tokens})`
    fills the budget in priority order: new critical/error templates → rate
    spikes → new info templates → top count deltas → steady-state summary
@@ -181,10 +184,12 @@ Exactly the `memory-consolidator` pattern (`cmd/mcplexer/consolidator_autoinstal
 - **`pre_execute_script` zero-spend gate**:
   ```js
   const s = monitoring.stats({window: "10m"});
-  if (s.new_templates === 0 && s.error_delta === 0 && !hook.params.forced)
-    abort("quiet");
+  const forced = hook.run.trigger_kind === "mesh" || hook.run.trigger_kind === "manual";
+  if (s.new_templates === 0 && !forced) abort("quiet");
   ```
-  Quiet tick ⇒ status=blocked, zero model spend.
+  Quiet tick ⇒ status=blocked, zero model spend. Chronic known errors no longer
+  wake the model every sweep; deterministic anomaly mesh triggers still force
+  triage immediately.
 - Prompt: triage skill + `monitoring.digest({budget_tokens: 2000})`. The
   worker classifies severity (can raise/lower the deterministic floor),
   writes a one-paragraph incident summary, then calls `monitoring.notify`
@@ -197,7 +202,9 @@ Exactly the `memory-consolidator` pattern (`cmd/mcplexer/consolidator_autoinstal
   responsibility entirely — see Non-goals; the filed task with its
   drill-down pointers is this feature's terminal output.
 - Budgets: `max_wall_clock 300s`, `max_tool_calls 12`,
-  `max_monthly_cost_usd` set at install, `max_consecutive_failures 5`.
+  `max_monthly_cost_usd 5` by default, `max_consecutive_failures 5`.
+  Autoinstall converges these safety limits on existing workers while preserving
+  an explicit positive operator-set monthly cap, schedule, model, and enabled state.
 
 ### 5.6 Escalation — channels + deterministic dispatcher
 
@@ -280,7 +287,8 @@ Channel kinds (v1):
   worker and feeds googlechat space bindings).
 - **PWA/Web Push human escalation** is daemon-wide rather than a channel row.
   A newly discovered `critical` incident publishes one durable Signal event
-  to every active browser/PWA subscription. Evidence updates do not push
+  before synchronously waiting for an enabled browser/PWA subscription to
+  accept the push. Evidence updates do not push
   again; a post-remediation regression may alert when it creates a different
   canonical task. Lock-screen text contains only system/source context, never
   a raw log sample, and clicking opens the canonical task (or Monitoring while
@@ -291,8 +299,19 @@ Channel kinds (v1):
   instead of filing a duplicate).
 
 **Storm-proofing is layered**: mesh-trigger `throttle_seconds` (per-source),
-dispatcher `per_template_cooldown`, and `max_notifies_per_hour` global cap —
-an error storm becomes one task with a rising count, not 500 pings.
+severity-aware per-template cooldown, and independent hourly budgets. A higher
+severity bypasses the existing template cooldown; lower-severity traffic gets
+6 channel notifications/hour and cannot consume the separate critical budget
+(12/hour). Durable Signal history records every new critical incident, while
+lock-screen interruptions are capped at 6/hour. Transient channel and Web Push
+failures receive three bounded attempts.
+
+The current delivery contract is **accepted by at least one route**, not human
+acknowledgement. Signal persistence survives reloads and push/channel failure is
+observable, but there is not yet a durable channel outbox with acknowledgement,
+re-page, and failover scheduling. Production operators should configure at least
+two independent critical routes and run a synthetic end-to-end notification
+drill; do not describe this as pager-grade until outbox/ack/re-page lands.
 
 ## 6. Data model (SQLite, migration NNN)
 
@@ -326,6 +345,7 @@ CREATE TABLE log_sources (
   enabled        INTEGER NOT NULL DEFAULT 1,
   cursor_ts      TEXT, cursor_hash TEXT,
   consecutive_failures INTEGER NOT NULL DEFAULT 0,
+  error_spike_active INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
   UNIQUE (workspace_id, name)
 );
@@ -342,13 +362,16 @@ CREATE TABLE log_templates (
   acked        INTEGER NOT NULL DEFAULT 0, ack_note TEXT
 );
 CREATE INDEX idx_templates_source_seen ON log_templates(source_id, last_seen);
+CREATE UNIQUE INDEX idx_templates_source_id ON log_templates(source_id, id);
 
 -- raw ring buffer, bounded by retention_mb/days, redacted before insert
 CREATE TABLE log_lines (
-  source_id   TEXT NOT NULL,
+  source_id   TEXT NOT NULL REFERENCES log_sources(id) ON DELETE CASCADE,
   template_id TEXT NOT NULL,
   ts          TEXT NOT NULL,
-  line        TEXT NOT NULL
+  line        TEXT NOT NULL,
+  FOREIGN KEY (source_id, template_id)
+    REFERENCES log_templates(source_id, id) ON DELETE CASCADE
 );
 CREATE INDEX idx_lines_source_ts ON log_lines(source_id, ts);
 
@@ -358,7 +381,7 @@ CREATE TABLE monitoring_channels (
   name         TEXT NOT NULL,
   kind         TEXT NOT NULL,               -- gchat_webhook | telegram | whatsapp | mesh
   config_json  TEXT NOT NULL DEFAULT '{}',  -- secret refs only, never plaintext creds
-  min_severity TEXT NOT NULL DEFAULT 'high',-- info|warn|error|critical floor
+  min_severity TEXT NOT NULL DEFAULT 'error',-- info|warn|error|critical floor
   enabled      INTEGER NOT NULL DEFAULT 1,
   created_at   TEXT NOT NULL, updated_at TEXT NOT NULL,
   UNIQUE (workspace_id, name)

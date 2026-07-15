@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/don-works/mcplexer/internal/logwatch/collect"
 	"github.com/don-works/mcplexer/internal/store"
 )
 
@@ -17,7 +18,7 @@ func TestNotifyCollectionFailureIsCriticalAndPropagatesDeliveryFailure(t *testin
 	}
 	host := &store.RemoteHost{ID: "host-1", Name: "production", SSHHost: "10.0.0.1"}
 	if err := distiller.NotifyCollectionFailure(
-		context.Background(), source, host, 3, "episode-a",
+		context.Background(), source, host, 3, "episode-a", collect.FailureReasonUnavailable,
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -35,8 +36,24 @@ func TestNotifyCollectionFailureIsCriticalAndPropagatesDeliveryFailure(t *testin
 
 	notifier.err = errors.New("no route")
 	if err := distiller.NotifyCollectionFailure(
-		context.Background(), source, host, 4, "episode-a",
+		context.Background(), source, host, 4, "episode-a", collect.FailureReasonUnavailable,
 	); err == nil {
 		t.Fatal("delivery failure was swallowed")
+	}
+}
+
+func TestNotifyCollectionFailureDescribesHostKeyMismatchWithoutFingerprints(t *testing.T) {
+	notifier := &captureNotifier{}
+	distiller := NewDistiller(&fakeDistillStore{}, notifier)
+	source := &store.LogSource{ID: "source-1", WorkspaceID: "ws", Name: "api"}
+	host := &store.RemoteHost{Name: "production"}
+	if err := distiller.NotifyCollectionFailure(
+		context.Background(), source, host, 1, "episode-key", collect.FailureReasonHostKeyMismatch,
+	); err != nil {
+		t.Fatal(err)
+	}
+	note := notifier.notes[0]
+	if !strings.Contains(note.Title, "host identity changed") || strings.Contains(note.Body, "SHA256:") {
+		t.Fatalf("host-key notification: %+v", note)
 	}
 }

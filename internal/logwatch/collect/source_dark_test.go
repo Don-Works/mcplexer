@@ -5,6 +5,8 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"github.com/don-works/mcplexer/internal/logwatch/sshx"
 )
 
 func TestPullOne_SourceDarkAlertsOnThirdFailureAndRearmsAfterRecovery(t *testing.T) {
@@ -44,6 +46,24 @@ func TestPullOne_SourceDarkAlertsOnThirdFailureAndRearmsAfterRecovery(t *testing
 	alerts = sink.darkAlerts()
 	if len(alerts) != 2 || alerts[0].episodeID == alerts[1].episodeID {
 		t.Fatalf("recovered source did not create a fresh dark episode: %+v", alerts)
+	}
+}
+
+func TestPullOne_HostKeyMismatchAlertsImmediately(t *testing.T) {
+	host, scope := testHostAndScope()
+	storeFake := newConcurrencyStore(host, scope)
+	runner := &concurrencyRunner{}
+	sink := &syncSink{}
+	manager := NewManager(storeFake, fakeSecrets{}, sink, runner)
+	source := manySources(1)[0]
+	source.ID = "s1"
+	manager.runner = &fakeRunner{err: &sshx.HostKeyMismatchError{
+		Host: "prod:22", Pinned: "SHA256:old", Presented: "SHA256:new",
+	}}
+	manager.pullOne(context.Background(), source)
+	alerts := sink.darkAlerts()
+	if len(alerts) != 1 || alerts[0].failures != 1 || alerts[0].reason != FailureReasonHostKeyMismatch {
+		t.Fatalf("host-key mismatch alert: %+v", alerts)
 	}
 }
 

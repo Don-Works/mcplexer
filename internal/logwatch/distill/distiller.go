@@ -221,7 +221,7 @@ func (d *Distiller) evaluateRateSpike(ctx context.Context, src *store.LogSource,
 
 	switch {
 	case isSpike && !active:
-		if err := d.fireRateSpike(ctx, src, host, current, currentRate, baselineRate); err != nil {
+		if err := d.fireRateSpike(ctx, src, host, now, current, currentRate, baselineRate); err != nil {
 			slog.Warn("distill: notify rate spike", "source", src.Name, "error", err)
 			return
 		}
@@ -240,12 +240,14 @@ func (d *Distiller) evaluateRateSpike(ctx context.Context, src *store.LogSource,
 // fireAnomaly (a never-seen-before shape), this fires on ordinary,
 // previously-acked templates too — a chronic-but-known error type
 // that suddenly accelerates is exactly what per-template novelty
-// misses. The spike key is stable per source (not per template, since
-// this is a source-wide rate signal), which both dedupes this
-// notification against itself downstream and documents the shape
-// callers can rely on.
-func (d *Distiller) fireRateSpike(ctx context.Context, src *store.LogSource, host *store.RemoteHost, current int64, currentRate, baselineRate float64) error {
-	spikeKey := "ratespike:" + src.ID
+// misses. The key is stable within one hysteresis episode and changes after
+// recovery, so a genuine re-offence is not swallowed by the dispatcher's
+// per-template cooldown.
+func (d *Distiller) fireRateSpike(
+	ctx context.Context, src *store.LogSource, host *store.RemoteHost, episodeAt time.Time,
+	current int64, currentRate, baselineRate float64,
+) error {
+	spikeKey := fmt.Sprintf("ratespike:%s:%x", src.ID, episodeAt.UnixNano())
 	if d.notifier == nil {
 		slog.Info("distill: rate spike (no dispatcher wired)",
 			"source", src.Name, "current", current, "current_rate", currentRate, "baseline_rate", baselineRate)

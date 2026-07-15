@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -64,8 +65,8 @@ func TestDistiller_RateSpike(t *testing.T) {
 	clock = t0.Add(time.Minute)
 	mustIngest(t, d, src, host, errorLinesAt(clock, 15))
 	assertNotifyCount(t, notifier, 1, "24 lines against a zero baseline must spike")
-	if got := notifier.notes[0].TemplateID; got != "ratespike:s1" {
-		t.Fatalf("spike key: got %q, want ratespike:s1", got)
+	if got := notifier.notes[0].TemplateID; !strings.HasPrefix(got, "ratespike:s1:") {
+		t.Fatalf("spike key: got %q, want ratespike:s1:<episode>", got)
 	}
 
 	clock = t0.Add(2 * time.Minute)
@@ -87,6 +88,9 @@ func TestDistiller_RateSpike(t *testing.T) {
 	clock = t0.Add(31 * time.Minute)
 	mustIngest(t, d, src, host, errorLinesAt(clock, 15))
 	assertNotifyCount(t, notifier, 2, "re-armed latch must spike again")
+	if notifier.notes[0].TemplateID == notifier.notes[1].TemplateID {
+		t.Fatal("re-armed spike reused its prior incident key and would be cooldown-suppressed")
+	}
 }
 
 func TestDistiller_RateSpikeFailedDeliveryDoesNotArmLatch(t *testing.T) {
