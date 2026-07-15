@@ -1435,7 +1435,7 @@ func (m *mockRouteStore) GetLogTemplate(context.Context, string) (*store.LogTemp
 func (m *mockRouteStore) ListLogTemplates(context.Context, []string, time.Time, int) ([]*store.LogTemplate, error) {
 	return nil, nil
 }
-func (m *mockRouteStore) AckLogTemplate(context.Context, string, string) error { return nil }
+func (m *mockRouteStore) AckLogTemplate(context.Context, string, string) error  { return nil }
 func (m *mockRouteStore) InsertLogLines(context.Context, []store.LogLine) error { return nil }
 func (m *mockRouteStore) PruneLogLines(context.Context, string, time.Time, int64) (int64, error) {
 	return 0, nil
@@ -1448,4 +1448,13 @@ func (m *mockRouteStore) SearchLogLines(context.Context, string, string, int) ([
 }
 func (m *mockRouteStore) ListLogLinesByTemplate(context.Context, string, int) ([]*store.LogLine, error) {
 	return nil, nil
+}
+func (m *mockRouteStore) CountErrorLinesInWindows(context.Context, string, time.Time, time.Time) (int64, int64, error) {
+	return 0, 0, nil
+}
+func (m *mockRouteStore) GetLogSourceErrorSpikeActive(context.Context, string) (bool, error) {
+	return false, nil
+}
+func (m *mockRouteStore) SetLogSourceErrorSpikeActive(context.Context, string, bool) error {
+	return nil
 }
