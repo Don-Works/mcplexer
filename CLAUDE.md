@@ -2,6 +2,30 @@
 
 MCP Gateway (Multiplexer) — single Go binary with an installable web UI (PWA) for managing MCP tool servers.
 
+## ⛔ THIS IS A PUBLIC REPO — NEVER commit customer/staff/infra PII (P0)
+
+`github.com/Don-Works/mcplexer` is **public**. Anything committed — including in a
+branch, a tag, or later "deleted" — is permanently exposed and must be scrubbed
+by rewriting history. Do NOT put any of the following in tracked files, commit
+messages, test fixtures, docs, runbooks, or scripts:
+
+- **Real people**: staff/customer names or email addresses (any real company-domain email), phone numbers, MSISDNs.
+- **Customer identity**: customer/company names, project code-names, per-customer slugs.
+- **Real infrastructure**: Tailscale/tailnet IPs (`100.64.0.0/10`), tailnet names (`*.ts.net`), real hostnames (internal monitoring nodes, machine names), Proxmox/CTIDs, SSH targets, webhook URLs, API keys, private keys.
+- **Operational runbooks** that embed the above (customer provisioning, LXC/host setup, alert-space membership).
+
+Where this content belongs instead: the **mcplexer skills registry / memory / local DB**
+(`skill.*`, `memory.*`, `mcpx.skill_*`) — cross-machine and mesh-shared to *internal
+peers only*, never the public repo. Use neutral placeholders in tests/docs:
+`example.com`, `acme`, `example-system`, RFC-5737 IPs (`203.0.113.x`), CGNAT test
+IPs (`100.64.0.x`).
+
+**Before any commit/push:** if the change touches docs, scripts, runbooks, seeds,
+or test fixtures, grep the staged diff for the patterns above. When in doubt, keep
+it out of the repo. A skill/runbook that names a real customer or host is a
+registry artifact, not a repo file — an untracked `skills/*` dir in this tree is a
+smell, not a commit candidate.
+
 ## Stack
 - **Core**: Go, SQLite (modernc.org/sqlite, no CGO), net/http
 - **UI**: React, TypeScript, Vite, shadcn/ui, Tailwind CSS — installable as a PWA
