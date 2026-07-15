@@ -35,6 +35,10 @@ function cursorAge(ts?: string): string {
   return `${Math.round(ms / 3_600_000)}h behind`
 }
 
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
 export function SourcesSection({ workspaceId, sources, hosts, refetch }: Props) {
   const [adding, setAdding] = useState(false)
   const [draft, setDraft] = useState(emptyDraft)
@@ -49,7 +53,32 @@ export function SourcesSection({ workspaceId, sources, hosts, refetch }: Props) 
       setAdding(false)
       refetch()
     } catch (e) {
-      toast.error(String(e))
+      toast.error(errorMessage(e))
+    }
+  }
+
+  async function toggleSource(source: LogSource) {
+    try {
+      await updateLogSource(source.id, { enabled: !source.enabled })
+      toast.success(`source ${source.name} ${source.enabled ? 'disabled' : 'enabled'}`)
+    } catch (e) {
+      toast.error(errorMessage(e))
+    } finally {
+      refetch()
+    }
+  }
+
+  async function confirmDelete() {
+    const target = deleteTarget
+    if (!target) return
+    try {
+      await deleteLogSource(target.id)
+      toast.success(`source ${target.name} deleted`)
+    } catch (e) {
+      toast.error(errorMessage(e))
+    } finally {
+      setDeleteTarget(null)
+      refetch()
     }
   }
 
@@ -88,11 +117,10 @@ export function SourcesSection({ workspaceId, sources, hosts, refetch }: Props) 
                 </Badge>
               )}
               <Badge tone={s.enabled ? 'info' : 'muted'}>{s.enabled ? 'enabled' : 'disabled'}</Badge>
-              <Button size="sm" variant="ghost"
-                onClick={async () => { await updateLogSource(s.id, { enabled: !s.enabled }); refetch() }}>
+              <Button size="sm" variant="ghost" onClick={() => toggleSource(s)}>
                 {s.enabled ? 'disable' : 'enable'}
               </Button>
-              <Button size="sm" variant="ghost" onClick={() => setDeleteTarget(s)}>
+              <Button size="sm" variant="ghost" aria-label={`Delete source ${s.name}`} onClick={() => setDeleteTarget(s)}>
                 <Trash2 className="h-4 w-4" />
               </Button>
             </div>
@@ -105,12 +133,14 @@ export function SourcesSection({ workspaceId, sources, hosts, refetch }: Props) 
           <Input placeholder="name (e.g. api)" value={draft.name}
             onChange={e => setDraft({ ...draft, name: e.target.value })} />
           <select className="border border-border bg-background px-2 text-sm"
+            aria-label="Log source host"
             value={draft.remote_host_id}
             onChange={e => setDraft({ ...draft, remote_host_id: e.target.value })}>
             <option value="">host…</option>
             {hosts.map(h => <option key={h.id} value={h.id}>{h.name}</option>)}
           </select>
           <select className="border border-border bg-background px-2 text-sm"
+            aria-label="Log source kind"
             value={draft.kind}
             onChange={e => setDraft({ ...draft, kind: e.target.value as SourceKind })}>
             <option value="docker">docker</option>
@@ -138,12 +168,7 @@ export function SourcesSection({ workspaceId, sources, hosts, refetch }: Props) 
         title={`Delete source ${deleteTarget?.name}?`}
         description="Its templates and buffered lines cascade-delete."
         confirmLabel="Delete"
-        onConfirm={async () => {
-          if (!deleteTarget) return
-          await deleteLogSource(deleteTarget.id)
-          setDeleteTarget(null)
-          refetch()
-        }}
+        onConfirm={confirmDelete}
       />
     </section>
   )

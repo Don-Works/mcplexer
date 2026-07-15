@@ -7,12 +7,12 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { Badge } from '@/components/ui/badge'
 import { useApi } from '@/hooks/use-api'
-import { listAuthScopes, listWorkspaces } from '@/api/client'
+import { listAuthScopes, listWorkspaces, request } from '@/api/client'
 import { listWorkers } from '@/api/workers'
 import {
   listChannels, listLogSources, listRemoteHosts, listTemplates, monitoringStatus,
 } from '@/api/monitoring'
-import type { MonitoringStatus } from '@/api/monitoring'
+import type { MonitoringStatus, RemoteHost } from '@/api/monitoring'
 import { RunnerStrip } from './RunnerStrip'
 import { HostsSection } from './HostsSection'
 import { SourcesSection } from './SourcesSection'
@@ -20,29 +20,56 @@ import { ChannelsSection } from './ChannelsSection'
 import { TemplatesSection } from './TemplatesSection'
 import { DigestPanel } from './DigestPanel'
 
+const WORKSPACE_PROBE_TIMEOUT_MS = 10_000
+
+function probeWorkspaceHosts(workspaceId: string, signal: AbortSignal) {
+  return request<RemoteHost[]>(
+    `/remote-hosts?workspace_id=${encodeURIComponent(workspaceId)}`,
+    { signal },
+    { timeoutMs: WORKSPACE_PROBE_TIMEOUT_MS },
+  )
+}
+
 export function MonitoringPage() {
   const [searchParams, setSearchParams] = useSearchParams()
   const [workspaceId, setWorkspaceId] = useState(() => searchParams.get('workspace') ?? '')
+  const [workspaceResolved, setWorkspaceResolved] = useState(false)
   const [status, setStatus] = useState<MonitoringStatus | null>(null)
 
-  const { data: workspaces } = useApi(useCallback(() => listWorkspaces(), []))
+  const { data: workspaces, loading: workspacesLoading } = useApi(useCallback(() => listWorkspaces(), []))
   const { data: authScopes } = useApi(useCallback(() => listAuthScopes(), []))
 
   useEffect(() => {
     monitoringStatus().then(setStatus).catch(() => setStatus(null))
   }, [])
   useEffect(() => {
-    if (!workspaces || workspaces.length === 0 || workspaces.some(w => w.id === workspaceId)) return
+    const requestedWorkspaceId = searchParams.get('workspace') ?? ''
+    if (requestedWorkspaceId !== workspaceId) {
+      setWorkspaceId(requestedWorkspaceId)
+      setWorkspaceResolved(false)
+    }
+  }, [searchParams, workspaceId])
+  useEffect(() => {
+    if (workspacesLoading) {
+      setWorkspaceResolved(false)
+      return
+    }
+    if (!workspaces || workspaces.length === 0) {
+      setWorkspaceResolved(true)
+      return
+    }
+    if (workspaces.some(w => w.id === workspaceId)) {
+      setWorkspaceResolved(true)
+      return
+    }
 
-    // The global workspace is often first alphabetically but intentionally has
-    // no hosts. Landing there made a healthy watcher look completely empty.
-    // Probe the small workspace list and open the first real monitoring
-    // workspace instead; explicit ?workspace= deep links still win above.
+    setWorkspaceResolved(false)
+    const controller = new AbortController()
     let cancelled = false
     const candidates = workspaces.filter(w => w.name.trim().toLowerCase() !== 'global')
     void Promise.all(candidates.map(async workspace => ({
       workspace,
-      hosts: await listRemoteHosts(workspace.id).catch(() => []),
+      hosts: await probeWorkspaceHosts(workspace.id, controller.signal).catch(() => []),
     }))).then(rows => {
       if (cancelled) return
       const preferred = rows.find(row => row.hosts.length > 0)?.workspace
@@ -52,24 +79,32 @@ export function MonitoringPage() {
       const next = new URLSearchParams(searchParams)
       next.set('workspace', preferred.id)
       setSearchParams(next, { replace: true })
+    }).catch(() => {
+      if (!cancelled) setWorkspaceResolved(true)
     })
-    return () => { cancelled = true }
-  }, [searchParams, setSearchParams, workspaces, workspaceId])
+    return () => {
+      cancelled = true
+      controller.abort()
+    }
+  }, [searchParams, setSearchParams, workspaceId, workspaces, workspacesLoading])
 
+  const activeWorkspaceId = workspaceResolved && workspaces?.some(w => w.id === workspaceId)
+    ? workspaceId
+    : ''
   const hostsFetcher = useCallback(
-    () => (workspaceId ? listRemoteHosts(workspaceId) : Promise.resolve([])), [workspaceId])
+    () => (activeWorkspaceId ? listRemoteHosts(activeWorkspaceId) : Promise.resolve([])), [activeWorkspaceId])
   const sourcesFetcher = useCallback(
-    () => (workspaceId ? listLogSources(workspaceId) : Promise.resolve([])), [workspaceId])
+    () => (activeWorkspaceId ? listLogSources(activeWorkspaceId) : Promise.resolve([])), [activeWorkspaceId])
   const channelsFetcher = useCallback(
-    () => (workspaceId ? listChannels(workspaceId) : Promise.resolve([])), [workspaceId])
+    () => (activeWorkspaceId ? listChannels(activeWorkspaceId) : Promise.resolve([])), [activeWorkspaceId])
   const templatesFetcher = useCallback(
-    () => (workspaceId
-      ? listTemplates(workspaceId)
-      : Promise.resolve({ templates: [], window: '24h' })), [workspaceId])
+    () => (activeWorkspaceId
+      ? listTemplates(activeWorkspaceId)
+      : Promise.resolve({ templates: [], window: '24h' })), [activeWorkspaceId])
   const workerFetcher = useCallback(
-    () => (workspaceId
-      ? listWorkers({ workspaceId, namePattern: 'log-watch' })
-      : Promise.resolve([])), [workspaceId])
+    () => (activeWorkspaceId
+      ? listWorkers({ workspaceId: activeWorkspaceId, namePattern: 'log-watch' })
+      : Promise.resolve([])), [activeWorkspaceId])
 
   const { data: hosts, refetch: refetchHosts } = useApi(hostsFetcher)
   const { data: sources, refetch: refetchSources } = useApi(sourcesFetcher)
@@ -144,18 +179,18 @@ export function MonitoringPage() {
         )}
       </div>
 
-      {workspaceId && (
+      {activeWorkspaceId && (
         <>
-          <HostsSection workspaceId={workspaceId} hosts={hosts ?? []}
+          <HostsSection workspaceId={activeWorkspaceId} hosts={hosts ?? []}
             authScopes={authScopes ?? []} refetch={refetchHosts} />
-          <SourcesSection workspaceId={workspaceId} sources={sources ?? []}
+          <SourcesSection workspaceId={activeWorkspaceId} sources={sources ?? []}
             hosts={hosts ?? []} refetch={refetchSources} />
-          <ChannelsSection workspaceId={workspaceId} channels={channels ?? []}
+          <ChannelsSection workspaceId={activeWorkspaceId} channels={channels ?? []}
             hosts={hosts ?? []} notifyEnabled={status?.notify_enabled ?? false}
             refetch={refetchChannels} />
           <TemplatesSection templates={templatesRes?.templates ?? []}
             refetch={refetchTemplates} />
-          <DigestPanel workspaceId={workspaceId} />
+          <DigestPanel workspaceId={activeWorkspaceId} />
         </>
       )}
     </div>
