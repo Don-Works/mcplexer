@@ -98,6 +98,12 @@ func (m *Manager) ListPendingForTest() ([]store.SecretPrompt, error) {
 	return m.store.ListPendingSecretPrompts(context.Background())
 }
 
+// defaultPromptTimeout bounds how long a secret__prompt waits on the human
+// before auto-expiring to status=timeout. Kept short so a blocked agent does
+// not hang indefinitely and the dashboard "waiting on secrets" surface stays
+// current; callers needing longer may pass an explicit req.Timeout.
+const defaultPromptTimeout = 2 * time.Minute
+
 // RequestPrompt creates a pending row, fires the user notification, and
 // returns immediately with the prompt id and absolute expires_at. The caller
 // must then call Wait(ctx, id) to block until the user resolves it.
@@ -105,7 +111,7 @@ func (m *Manager) RequestPrompt(
 	ctx context.Context, req PromptRequest,
 ) (PromptCreated, error) {
 	if req.Timeout <= 0 {
-		req.Timeout = 5 * time.Minute
+		req.Timeout = defaultPromptTimeout
 	}
 	id := uuid.NewString()
 	now := time.Now().UTC()

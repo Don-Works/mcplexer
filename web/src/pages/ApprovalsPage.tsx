@@ -3,12 +3,14 @@ import { useSearchParams } from 'react-router-dom'
 import { ShieldCheck } from 'lucide-react'
 import { EmptyState } from '@/components/ui/empty-state'
 import { useApprovalStream } from '@/hooks/use-approval-stream'
+import { useSecretPromptStream } from '@/hooks/use-secret-prompt-stream'
 import { useApi } from '@/hooks/use-api'
 import { listApprovals } from '@/api/client'
 import type { ToolApproval } from '@/api/types'
 import { PendingCard } from '@/pages/approvals/PendingCard'
 import { HistoryList } from '@/pages/approvals/HistoryList'
 import { ApprovalDetailSheet } from '@/pages/approvals/ApprovalDetailSheet'
+import { WaitingSecretsSection } from '@/pages/approvals/WaitingSecretsSection'
 
 // Tick once per second so pending countdowns stay live without re-fetching.
 function useNowTick(): number {
@@ -22,6 +24,7 @@ function useNowTick(): number {
 
 export function ApprovalsPage() {
   const { pending, connected } = useApprovalStream()
+  const { pending: secretPrompts } = useSecretPromptStream()
   const now = useNowTick()
 
   const pendingFetcher = useCallback(() => listApprovals('pending'), [])
@@ -109,6 +112,8 @@ export function ApprovalsPage() {
           <span className="text-xs text-muted-foreground">Connecting...</span>
         )}
       </div>
+
+      <WaitingSecretsSection prompts={secretPrompts} now={now} />
 
       {allPending.length > 0 ? (
         <section className="space-y-3">
