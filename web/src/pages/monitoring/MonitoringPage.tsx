@@ -188,7 +188,8 @@ export function MonitoringPage() {
           <ChannelsSection workspaceId={activeWorkspaceId} channels={channels ?? []}
             hosts={hosts ?? []} notifyEnabled={status?.notify_enabled ?? false}
             refetch={refetchChannels} />
-          <TemplatesSection templates={templatesRes?.templates ?? []}
+          <TemplatesSection workspaceId={activeWorkspaceId}
+            templates={templatesRes?.templates ?? []}
             refetch={refetchTemplates} />
           <DigestPanel workspaceId={activeWorkspaceId} />
         </>

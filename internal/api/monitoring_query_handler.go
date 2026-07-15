@@ -14,6 +14,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"os"
 	"time"
@@ -150,7 +151,12 @@ func (h *monitoringQueryHandler) ack(w http.ResponseWriter, r *http.Request) {
 		Note string `json:"note"`
 	}
 	_ = decodeJSON(r, &in)
-	if !templateInWorkspace(r.Context(), h.store, r.PathValue("id"), wsID) {
+	owned, err := templateInWorkspace(r.Context(), h.store, r.PathValue("id"), wsID)
+	if err != nil {
+		writeMonitoringErr(w, err, "resolve template workspace")
+		return
+	}
+	if !owned {
 		// Conflate not-found with cross-workspace so the UI cannot use
 		// the response shape to enumerate template IDs from a foreign
 		// workspace. Mirrors handler_tasks.go:946.
@@ -200,6 +206,10 @@ func (h *monitoringQueryHandler) notify(w http.ResponseWriter, r *http.Request) 
 	}
 	if in.RemoteHostID != "" {
 		host, err := h.store.GetRemoteHost(r.Context(), in.RemoteHostID)
+		if err != nil && !errors.Is(err, store.ErrRemoteHostNotFound) {
+			writeMonitoringErr(w, err, "resolve remote host")
+			return
+		}
 		if err != nil || host.WorkspaceID != in.WorkspaceID {
 			// Conflate not-found with cross-workspace so the UI cannot
 			// enumerate remote host IDs in a foreign workspace.
@@ -216,23 +226,27 @@ func (h *monitoringQueryHandler) notify(w http.ResponseWriter, r *http.Request) 
 }
 
 // templateInWorkspace resolves a template's owning workspace via its
-// parent log_source (templates don't carry workspace_id directly). Any
-// lookup failure is treated as "not in workspace" so callers can
-// conflate it with the truly-absent case.
-func templateInWorkspace(ctx context.Context, s store.Store, templateID, wsID string) bool {
+// parent log_source (templates don't carry workspace_id directly). Missing
+// and foreign rows share one response; genuine store failures propagate.
+func templateInWorkspace(
+	ctx context.Context, s store.Store, templateID, wsID string,
+) (bool, error) {
 	if templateID == "" || wsID == "" {
-		return false
+		return false, nil
 	}
 	tpl, err := s.GetLogTemplate(ctx, templateID)
+	if errors.Is(err, store.ErrLogTemplateNotFound) {
+		return false, nil
+	}
 	if err != nil {
-		return false
+		return false, err
 	}
 	src, err := s.GetLogSource(ctx, tpl.SourceID)
+	if errors.Is(err, store.ErrLogSourceNotFound) {
+		return false, nil
+	}
 	if err != nil {
-		return false
+		return false, err
 	}
-	if src.WorkspaceID != wsID {
-		return false
-	}
-	return true
+	return src.WorkspaceID == wsID, nil
 }

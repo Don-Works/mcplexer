@@ -69,7 +69,8 @@ func monitoringNamespaceToolDefinitions() []Tool {
 			InputSchema: json.RawMessage(`{"type": "object", "properties": {
 				"source_id": {"type": "string"},
 				"q": {"type": "string", "description": "Substring to match."},
-				"limit": {"type": "integer", "description": "Default 100, max 500."}
+				"limit": {"type": "integer", "description": "Default 100, max 500."},
+				"workspace_id": {"type": "string"}
 			}, "required": ["source_id", "q"]}`),
 			Extras: ro("Search Log Lines"),
 		},
@@ -78,7 +79,8 @@ func monitoringNamespaceToolDefinitions() []Tool {
 			Description: "Recent redacted raw lines for one template id — the drill-down behind every digest entry and filed task.",
 			InputSchema: json.RawMessage(`{"type": "object", "properties": {
 				"template_id": {"type": "string"},
-				"limit": {"type": "integer", "description": "Default 50, max 500."}
+				"limit": {"type": "integer", "description": "Default 50, max 500."},
+				"workspace_id": {"type": "string"}
 			}, "required": ["template_id"]}`),
 			Extras: ro("Raw Lines For Template"),
 		},
@@ -87,7 +89,8 @@ func monitoringNamespaceToolDefinitions() []Tool {
 			Description: "Mark a template known/expected: it stops counting toward novelty wake-ups (still appears in digests). Use for noisy-but-harmless shapes; add a note for teammates.",
 			InputSchema: json.RawMessage(`{"type": "object", "properties": {
 				"template_id": {"type": "string"},
-				"note": {"type": "string"}
+				"note": {"type": "string"},
+				"workspace_id": {"type": "string"}
 			}, "required": ["template_id"]}`),
 			Extras: withAnnotations(ToolAnnotations{
 				Title: "Ack Template", ReadOnlyHint: boolPtr(false),

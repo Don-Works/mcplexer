@@ -120,10 +120,13 @@ export const deleteChannel = (id: string) =>
 export const listTemplates = (workspaceId: string, window = '24h') =>
   request<{ templates: MonitoringTemplate[]; window: string }>(
     `/monitoring/templates${ws(workspaceId)}&window=${encodeURIComponent(window)}`)
-export const ackTemplate = (id: string, note?: string) =>
-  request<{ acked: boolean }>(`/monitoring/templates/${encodeURIComponent(id)}/ack`, {
-    method: 'POST', body: JSON.stringify({ note: note ?? '' }),
-  })
+export const ackTemplate = (id: string, workspaceId: string, note?: string) =>
+  request<{ acked: boolean }>(
+    `/monitoring/templates/${encodeURIComponent(id)}/ack${ws(workspaceId)}`,
+    {
+      method: 'POST', body: JSON.stringify({ note: note ?? '' }),
+    },
+  )
 export const fetchDigest = (workspaceId: string, window: string, budgetTokens: number) =>
   request<{ digest: string; approx_tokens: number }>(
     `/monitoring/digest${ws(workspaceId)}&window=${encodeURIComponent(window)}&budget_tokens=${budgetTokens}`)

@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useReducer, useRef } from 'react'
+import type { Dispatch } from 'react'
 import { subscribeEvent, useEventStreamStatus } from '@/hooks/use-event-stream'
 
 export interface SecretPrompt {
@@ -22,100 +23,124 @@ interface SecretPromptEvent {
   created_at?: string
 }
 
-// useSecretPromptStream merges the initial /pending fetch with live events
-// from the 'secrets' channel of the multiplexed event hub
-// (hooks/use-event-stream.ts) so the modal queue stays in sync. file_path is
-// never received here — the SSE channel is metadata-only by design.
-export function useSecretPromptStream() {
-  const [pending, setPending] = useState<SecretPrompt[]>([])
-  const streamStatus = useEventStreamStatus()
-  const mountedRef = useRef(false)
-  const resolvedIdsRef = useRef(new Set<string>())
-  const eventVersionsRef = useRef(new Map<string, number>())
-  const eventVersionRef = useRef(0)
-  const reconcileVersionRef = useRef(0)
-  const previousStreamStatusRef = useRef(streamStatus)
+interface VersionedEvent {
+  event: SecretPromptEvent
+  version: number
+}
 
-  const applyEvent = useCallback((evt: SecretPromptEvent) => {
-    const eventVersion = ++eventVersionRef.current
-    eventVersionsRef.current.set(evt.id, eventVersion)
+interface PromptState {
+  pending: SecretPrompt[]
+  journal: Map<string, VersionedEvent>
+}
 
-    if (evt.type === 'pending') {
-      if (resolvedIdsRef.current.has(evt.id)) return
-      const next: SecretPrompt = {
-        id: evt.id,
-        reason: evt.reason ?? '',
-        label: evt.label ?? '',
-        requester: evt.requester ?? '',
-        status: evt.status ?? 'pending',
-        expires_at: evt.expires_at ?? '',
-        created_at: evt.created_at ?? '',
-      }
-      setPending((prev) => [...prev.filter((p) => p.id !== next.id), next])
-      return
-    }
+type PromptAction =
+  | { type: 'event'; item: VersionedEvent; record: boolean }
+  | { type: 'snapshot'; rows: SecretPrompt[]; startedAt: number }
+  | { type: 'clear-journal' }
 
-    resolvedIdsRef.current.add(evt.id)
-    setPending((prev) => prev.filter((p) => p.id !== evt.id))
-  }, [])
+function promptFromEvent(event: SecretPromptEvent): SecretPrompt {
+  return {
+    id: event.id,
+    reason: event.reason ?? '',
+    label: event.label ?? '',
+    requester: event.requester ?? '',
+    status: event.status ?? 'pending',
+    expires_at: event.expires_at ?? '',
+    created_at: event.created_at ?? '',
+  }
+}
 
-  const reconcilePending = useCallback(async () => {
-    const reconcileVersion = ++reconcileVersionRef.current
-    const startedAtEventVersion = eventVersionRef.current
+function applyPromptEvent(
+  pending: SecretPrompt[],
+  event: SecretPromptEvent,
+): SecretPrompt[] {
+  if (event.type === 'resolved') return pending.filter((item) => item.id !== event.id)
+  const next = promptFromEvent(event)
+  return [...pending.filter((item) => item.id !== next.id), next]
+}
+
+function promptReducer(state: PromptState, action: PromptAction): PromptState {
+  if (action.type === 'clear-journal') return { ...state, journal: new Map() }
+  if (action.type === 'event') {
+    const journal = action.record ? new Map(state.journal) : state.journal
+    if (action.record) journal.set(action.item.event.id, action.item)
+    return { pending: applyPromptEvent(state.pending, action.item.event), journal }
+  }
+  let pending = action.rows.filter((row) => row.status === 'pending')
+  const replay = [...state.journal.values()]
+    .filter((item) => item.version > action.startedAt)
+    .sort((a, b) => a.version - b.version)
+  for (const item of replay) pending = applyPromptEvent(pending, item.event)
+  return { pending, journal: new Map() }
+}
+
+async function fetchPendingPrompts(): Promise<SecretPrompt[] | null> {
+  const apiBase = import.meta.env.VITE_API_BASE_URL?.replace(/\/api\/v1$/, '') || ''
+  const response = await fetch(`${apiBase}/api/v1/secrets/prompts/pending`, {
+    signal: AbortSignal.timeout(30_000),
+  })
+  return response.ok ? (response.json() as Promise<SecretPrompt[]>) : null
+}
+
+function usePromptReconciler(dispatch: Dispatch<PromptAction>) {
+  const mounted = useRef(false)
+  const eventVersion = useRef(0)
+  const requestVersion = useRef(0)
+  const reconciling = useRef(false)
+
+  const applyEvent = useCallback((event: SecretPromptEvent) => {
+    const item = { event, version: ++eventVersion.current }
+    dispatch({ type: 'event', item, record: reconciling.current })
+  }, [dispatch])
+
+  const reconcile = useCallback(async () => {
+    const request = ++requestVersion.current
+    const startedAt = eventVersion.current
+    reconciling.current = true
     try {
-      const apiBase = import.meta.env.VITE_API_BASE_URL?.replace(/\/api\/v1$/, '') || ''
-      const res = await fetch(`${apiBase}/api/v1/secrets/prompts/pending`, {
-        signal: AbortSignal.timeout(30_000),
-      })
-      if (!res.ok) return
-      const rows = (await res.json()) as SecretPrompt[]
-      if (!mountedRef.current || reconcileVersion !== reconcileVersionRef.current) return
-
-      setPending((prev) => {
-        const next = new Map<string, SecretPrompt>()
-        for (const row of rows) {
-          if (row.status !== 'pending') {
-            resolvedIdsRef.current.add(row.id)
-          } else if (!resolvedIdsRef.current.has(row.id)) {
-            next.set(row.id, row)
-          }
-        }
-        for (const prompt of prev) {
-          const eventVersion = eventVersionsRef.current.get(prompt.id) ?? 0
-          if (
-            eventVersion > startedAtEventVersion &&
-            !resolvedIdsRef.current.has(prompt.id)
-          ) {
-            next.set(prompt.id, prompt)
-          }
-        }
-        return [...next.values()]
-      })
+      const rows = await fetchPendingPrompts()
+      if (rows && mounted.current && request === requestVersion.current) {
+        dispatch({ type: 'snapshot', rows, startedAt })
+      }
     } catch {
-      return
+      // Best effort: live events still keep the panel current.
+    } finally {
+      if (request === requestVersion.current) {
+        reconciling.current = false
+        if (mounted.current) dispatch({ type: 'clear-journal' })
+      }
     }
-  }, [])
+  }, [dispatch])
+
+  return { applyEvent, reconcile, mounted }
+}
+
+// Merges the initial pending snapshot with live SSE events. Only events that
+// race an in-flight snapshot are journalled, so a long-lived page cannot retain
+// metadata for every prompt it has ever observed.
+export function useSecretPromptStream() {
+  const [state, dispatch] = useReducer(promptReducer, { pending: [], journal: new Map() })
+  const streamStatus = useEventStreamStatus()
+  const previousStatus = useRef(streamStatus)
+  const { applyEvent, reconcile, mounted } = usePromptReconciler(dispatch)
 
   useEffect(() => {
-    mountedRef.current = true
-    const unsub = subscribeEvent('secrets', (data) => {
-      applyEvent(data as SecretPromptEvent)
-    })
-    void reconcilePending()
-
+    mounted.current = true
+    const unsubscribe = subscribeEvent('secrets', (data) => applyEvent(data as SecretPromptEvent))
+    void reconcile()
     return () => {
-      mountedRef.current = false
-      unsub()
+      mounted.current = false
+      unsubscribe()
     }
-  }, [applyEvent, reconcilePending])
+  }, [applyEvent, mounted, reconcile])
 
   useEffect(() => {
-    const previous = previousStreamStatusRef.current
-    previousStreamStatusRef.current = streamStatus
+    const previous = previousStatus.current
+    previousStatus.current = streamStatus
     if (streamStatus === 'open' && previous !== 'open' && previous !== 'idle') {
-      void reconcilePending()
+      void reconcile()
     }
-  }, [reconcilePending, streamStatus])
+  }, [reconcile, streamStatus])
 
-  return { pending, connected: streamStatus === 'open' }
+  return { pending: state.pending, connected: streamStatus === 'open' }
 }
