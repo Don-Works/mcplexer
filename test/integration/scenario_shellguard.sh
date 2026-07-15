@@ -797,12 +797,12 @@ scenario_shellguard_audit() {
 }
 
 # ============================================================
-# Scenario 27.5 — Workspace tagging (BUG: Elliot's report)
+# Scenario 27.5 — Workspace tagging (BUG: Morgan's report)
 # ============================================================
 #
 # Field report: the Audit page rendered "-" in the workspace column for
 # every shell-guard row, and per-workspace allowlist rules with a
-# directory like "/Users/elliot/project/" (trailing slash) never matched.
+# directory like "/Users/morgan/project/" (trailing slash) never matched.
 #
 # Root causes (both fixed in this branch):
 #  1. hooks_handler.go::recordPretoolAudit + buildShellApproval did NOT
@@ -811,7 +811,7 @@ scenario_shellguard_audit() {
 #     a rule directory with a trailing slash never matched the cwd.
 #
 # This scenario locks in BOTH fixes through the running daemon so a
-# regression to either one shows up on CI rather than on Elliot's screen.
+# regression to either one shows up on CI rather than on Morgan's screen.
 
 scenario_shellguard_workspace_tagging() {
     step 27.5 "shell guard — audit row carries workspace_id from cwd lookup"
@@ -879,7 +879,7 @@ scenario_shellguard_workspace_tagging() {
     fi
 
     # 27.5.3 — RULE with trailing slash on directory MUST match a
-    # cwd without the trailing slash. Reproduces Elliot's "rules don't
+    # cwd without the trailing slash. Reproduces Morgan's "rules don't
     # match" symptom — paste path from `pwd` (yields a trailing slash
     # in some shells), match silently fails. Post-fix this matches.
     local slash_rule

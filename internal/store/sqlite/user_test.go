@@ -168,7 +168,7 @@ func TestPeerUserLinkReplacesExistingOwner(t *testing.T) {
 	if err := db.UpsertUser(ctx, "u-synthetic", "peer-1"); err != nil {
 		t.Fatalf("upsert synthetic: %v", err)
 	}
-	if err := db.UpsertUser(ctx, "u-real", "Elliot"); err != nil {
+	if err := db.UpsertUser(ctx, "u-real", "Morgan"); err != nil {
 		t.Fatalf("upsert real: %v", err)
 	}
 	if err := db.LinkPeerToUser(ctx, "peer-1", "u-synthetic"); err != nil {

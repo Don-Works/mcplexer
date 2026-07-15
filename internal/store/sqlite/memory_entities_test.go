@@ -333,14 +333,14 @@ func TestLinkCascadeOnMemoryDelete(t *testing.T) {
 // handler side, then the SQL layer just honours the flag.
 
 // Memory saved in workspace-A about a person — queried from workspace-B
-// with the flag set — MUST surface. This is the "Elliot has blue eyes"
+// with the flag set — MUST surface. This is the "Morgan has blue eyes"
 // worked example from the design doc.
 func TestRecallEntityDrivenIgnoresScopeFindsCrossWorkspace(t *testing.T) {
 	ctx := context.Background()
 	d := newMemDB(t)
 	wsA, wsB := "ws-A", "ws-B"
-	idAboutElliot := mustWrite(t, d, "elliot-eyes", wsA)
-	_ = d.LinkMemoryEntity(ctx, idAboutElliot,
+	idAboutMorgan := mustWrite(t, d, "morgan-eyes", wsA)
+	_ = d.LinkMemoryEntity(ctx, idAboutMorgan,
 		store.EntityRef{Kind: "person", ID: "bob@x"}, "")
 
 	// A red-herring memory in wsB about a different person — to confirm
@@ -372,16 +372,16 @@ func TestRecallEntityDrivenIgnoresScopeFindsCrossWorkspace(t *testing.T) {
 	if err != nil {
 		t.Fatalf("escaped list: %v", err)
 	}
-	if len(hitsEscape) != 1 || hitsEscape[0].ID != idAboutElliot {
+	if len(hitsEscape) != 1 || hitsEscape[0].ID != idAboutMorgan {
 		t.Fatalf("escape: want only %s, got %d rows: %+v",
-			idAboutElliot, len(hitsEscape), hitsEscape)
+			idAboutMorgan, len(hitsEscape), hitsEscape)
 	}
 
 	// The flag should NOT widen results when the entity filter doesn't
-	// match — Alice's memory must NOT leak into an Elliot query.
+	// match — Alice's memory must NOT leak into an Morgan query.
 	for _, h := range hitsEscape {
 		if h.ID == idAboutAlice {
-			t.Fatalf("entity narrowing broke: alice memory leaked into elliot query")
+			t.Fatalf("entity narrowing broke: alice memory leaked into morgan query")
 		}
 	}
 }
@@ -421,7 +421,7 @@ func TestRecallEntityDrivenIgnoresScopeMultiLinkSurfaces(t *testing.T) {
 	ctx := context.Background()
 	d := newMemDB(t)
 	wsA, wsB := "ws-A", "ws-B"
-	id := mustWrite(t, d, "deploy-fix-elliot", wsA)
+	id := mustWrite(t, d, "deploy-fix-morgan", wsA)
 	_ = d.LinkMemoryEntity(ctx, id,
 		store.EntityRef{Kind: "person", ID: "bob@x"}, "")
 	_ = d.LinkMemoryEntity(ctx, id,

@@ -663,7 +663,7 @@ func (r *wsTestRig) findApprovalByCmd(cmdSub string) *store.ToolApproval {
 	return nil
 }
 
-// TestPretoolHook_PopulatesWorkspaceFromCWD reproduces the bug Elliot
+// TestPretoolHook_PopulatesWorkspaceFromCWD reproduces the bug Morgan
 // reported: even when workspaces exist and the agent's cwd is inside
 // one of them, the approval row and audit row both surface
 // workspace_id="" / workspace_name="" — so the Audit page renders "-"
@@ -702,7 +702,7 @@ func TestPretoolHook_PopulatesWorkspaceFromCWD(t *testing.T) {
 	// Audit row: workspace_id + workspace_name MUST be populated.
 	// This is the load-bearing assertion — the AuditPage reads
 	// `record.workspace_name || workspace_id || "-"` and renders the
-	// dash when both are empty (Elliot's user-visible symptom).
+	// dash when both are empty (Morgan's user-visible symptom).
 	rec := rig.lastAudit()
 	if rec == nil {
 		t.Fatal("no audit row captured")
@@ -803,8 +803,8 @@ func TestPretoolHook_WorkspaceLookupNoMatchLeavesEmpty(t *testing.T) {
 }
 
 // TestPretoolHook_RuleDirectoryTolerantToTrailingSlash reproduces the
-// second leg of Elliot's complaint: rules created via the dashboard
-// with a directory like "/Users/elliot/project/" (operator habit of
+// second leg of Morgan's complaint: rules created via the dashboard
+// with a directory like "/Users/morgan/project/" (operator habit of
 // trailing slash) never match because directoryMatches() does an
 // exact-string comparison + a prefix check that REQUIRES the rule
 // directory to lack a trailing slash. The fix is to canonicalise

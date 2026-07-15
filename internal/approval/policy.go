@@ -266,7 +266,7 @@ func ruleMatches(
 // "/srv/wsA/" (operator habit of pasting paths from `pwd` or copying
 // trailing-slash forms out of file managers) still matches the
 // canonical "/srv/wsA". Without this normalisation the rule would
-// silently fail to match every legitimate cwd — the symptom Elliot
+// silently fail to match every legitimate cwd — the symptom Morgan
 // hit in the field where every Bash invocation required approval
 // despite having per-project rules set up.
 //

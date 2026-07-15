@@ -54,7 +54,7 @@ describe('AgentOriginBadge', () => {
     const { container } = render(
       <AgentOriginBadge
         origin="peer:12D3KooWAbcdefghij"
-        peerNames={{ '12D3KooWAbcdefghij': 'elliot' }}
+        peerNames={{ '12D3KooWAbcdefghij': 'morgan' }}
       />,
     )
     expect(container.firstChild).toMatchInlineSnapshot(`
@@ -63,7 +63,7 @@ describe('AgentOriginBadge', () => {
         data-testid="agent-origin-peer"
         title="peer:12D3KooWAbcdefghij"
       >
-        peer:elliot
+        peer:morgan
       </span>
     `)
   })

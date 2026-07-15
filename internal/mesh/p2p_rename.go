@@ -37,7 +37,7 @@ type DisplayNameUpdater interface {
 }
 
 // PeerLister is the narrow read surface used to resolve a friendly device
-// name (e.g. "elliot") to a libp2p peer ID for to_peer routing, and to back
+// name (e.g. "morgan") to a libp2p peer ID for to_peer routing, and to back
 // the mesh__list_peers MCP tool. Wires to P2PPeerStore in production; tests
 // pass an in-memory fake.
 type PeerLister interface {
@@ -97,7 +97,7 @@ func (m *Manager) LocalDisplayName() string {
 // production caller is mesh.Manager.SelfPeerID() in p2p_bridge.go.
 // (Intentionally empty when no transport is wired.)
 
-// ResolveDeviceName maps a friendly name (e.g. "elliot") to a libp2p peer
+// ResolveDeviceName maps a friendly name (e.g. "morgan") to a libp2p peer
 // ID by consulting the paired-peers directory. If the input already looks
 // like a peer ID (starts with "12D" or "Qm"), it is returned unchanged.
 // Empty/unknown inputs return "" — caller decides whether that's an error
@@ -141,7 +141,7 @@ func (m *Manager) ResolveDeviceName(ctx context.Context, nameOrPeerID string) st
 // looksLikePeerID is a cheap shape check for libp2p peer IDs: base58btc
 // strings starting with "12D" (Ed25519) or "Qm" (RSA legacy), at least 40
 // chars. Not a strict validator — just enough to distinguish a peer ID
-// from a friendly name like "elliot" without doing a full multihash decode.
+// from a friendly name like "morgan" without doing a full multihash decode.
 func looksLikePeerID(s string) bool {
 	if len(s) < 40 {
 		return false

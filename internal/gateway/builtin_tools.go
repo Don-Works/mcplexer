@@ -483,7 +483,7 @@ func meshToolDefinitions() []Tool {
 		},
 		{
 			Name:        "mesh__set_device_name",
-			Description: "Set this device's friendly name on the mesh (e.g. 'elliot', 'peer-laptop'). The new name is broadcast to all paired peers and shows up in their mesh__receive output and as a routable target — agents can then 'tell elliot' by setting to_peer:'elliot'. Idempotent. Names are alphanumeric with . _ - (1–50 chars). NOT auth-bearing — the cryptographic identity is still the libp2p peer ID; this is a UX label only.",
+			Description: "Set this device's friendly name on the mesh (e.g. 'morgan', 'peer-laptop'). The new name is broadcast to all paired peers and shows up in their mesh__receive output and as a routable target — agents can then 'tell morgan' by setting to_peer:'morgan'. Idempotent. Names are alphanumeric with . _ - (1–50 chars). NOT auth-bearing — the cryptographic identity is still the libp2p peer ID; this is a UX label only.",
 			InputSchema: json.RawMessage(`{
 				"type": "object",
 				"properties": {
@@ -525,7 +525,7 @@ func meshToolDefinitions() []Tool {
 		},
 		{
 			Name:        "mesh__list_peers",
-			Description: "List all paired libp2p peers (other machines you've completed pairing with). Returns each peer's friendly device name and short peer ID. Use this to discover who you can route to_peer messages to — e.g. before saying 'tell elliot', call this to confirm 'elliot' is paired and online.",
+			Description: "List all paired libp2p peers (other machines you've completed pairing with). Returns each peer's friendly device name and short peer ID. Use this to discover who you can route to_peer messages to — e.g. before saying 'tell morgan', call this to confirm 'morgan' is paired and online.",
 			InputSchema: json.RawMessage(`{"type":"object","properties":{}}`),
 			Extras: withAnnotations(ToolAnnotations{
 				Title:           "List Mesh Peers",

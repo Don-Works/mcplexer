@@ -949,7 +949,7 @@ func IsGlobalEntityKind(kind string) bool {
 // Rule: ALL refs must be global-kind AND have a role that implies the
 // memory is genuinely ABOUT the entity (subject or derived_from). Empty
 // role is treated as subject (matches the save-side default).
-// `mentioned` is deliberately excluded: a passing reference to Elliot
+// `mentioned` is deliberately excluded: a passing reference to Morgan
 // in a meeting note doesn't make the meeting note universally relevant.
 //
 // Empty input returns false — without entity narrowing, dropping the

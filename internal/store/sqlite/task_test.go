@@ -111,7 +111,7 @@ func TestListTasksFiltersByAssignee(t *testing.T) {
 	for i, title := range []string{"a", "b", "c"} {
 		assignee := "agent-a"
 		if i == 1 {
-			assignee = "elliot"
+			assignee = "morgan"
 		}
 		_ = d.CreateTask(ctx, &store.Task{
 			WorkspaceID:       wsID,
@@ -543,7 +543,7 @@ func TestTaskNoteAppendOnly(t *testing.T) {
 	task := &store.Task{WorkspaceID: wsID, Title: "Multi-author task"}
 	_ = d.CreateTask(ctx, task)
 
-	for _, author := range []string{"agent-a", "elliot", "agent-a"} {
+	for _, author := range []string{"agent-a", "morgan", "agent-a"} {
 		_ = d.AppendTaskNote(ctx, &store.TaskNote{
 			TaskID: task.ID, AuthorSessionID: author, Body: "comment from " + author,
 		})

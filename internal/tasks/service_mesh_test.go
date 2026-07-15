@@ -86,7 +86,7 @@ func TestServiceCreate_WithAssigneeFiresBothCreatedAndAssigned(t *testing.T) {
 		WorkspaceID:        wsID,
 		Title:              "Hand-off",
 		CreatedBySessionID: "agent-a",
-		Assignee:           &tasks.Assignee{SessionID: "elliot"},
+		Assignee:           &tasks.Assignee{SessionID: "morgan"},
 	})
 	if err != nil {
 		t.Fatalf("Create: %v", err)

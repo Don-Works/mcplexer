@@ -2,7 +2,7 @@
 // mesh-trigger form needs as a dropdown source:
 //
 //   - peers       paired libp2p peers with their display names (so the
-//                 user sees "elliot" not "12D3KooW…"), plus a synthetic
+//                 user sees "morgan" not "12D3KooW…"), plus a synthetic
 //                 "self" entry for local-origin messages
 //   - agents      active mesh agents by Name (deduped — multiple
 //                 sessions of the same agent collapse to one entry)

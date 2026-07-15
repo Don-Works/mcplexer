@@ -29,7 +29,7 @@ func TestResolveDeviceName_TrimsStoredDisplayName(t *testing.T) {
 	peers := []store.P2PPeer{
 		{PeerID: "12D3KooWClean", DisplayName: "workstation"},
 		{PeerID: "12D3KooWLegacy", DisplayName: "example-host.invalid  "}, // trailing whitespace
-		{PeerID: "12D3KooWUpper", DisplayName: "Elliot"},
+		{PeerID: "12D3KooWUpper", DisplayName: "Morgan"},
 	}
 	mgr := NewManager(nil)
 	mgr.SetPeerLister(&fakePeerLister{peers: peers})
@@ -42,7 +42,7 @@ func TestResolveDeviceName_TrimsStoredDisplayName(t *testing.T) {
 		{"clean exact match", "workstation", "12D3KooWClean"},
 		{"legacy stored has trailing whitespace, input clean", "example-host.invalid", "12D3KooWLegacy"},
 		{"input has surrounding whitespace", "  workstation  ", "12D3KooWClean"},
-		{"case-insensitive", "ELLIOT", "12D3KooWUpper"},
+		{"case-insensitive", "MORGAN", "12D3KooWUpper"},
 		{"unknown name returns empty", "ghost", ""},
 		{"empty input returns empty", "", ""},
 		{"peer-ID shape passes through unchanged",

@@ -329,7 +329,7 @@ func (m *Manager) Send(ctx context.Context, meta SessionMeta, req SendRequest) (
 
 	// Resolve to_peer when the caller passed a friendly device name or the
 	// 10-char short id rendered by mesh__list_peers. Lets agents say
-	// `to_peer: "elliot"` or `to_peer: "rpynr8M1cr"` and have it land on
+	// `to_peer: "morgan"` or `to_peer: "rpynr8M1cr"` and have it land on
 	// the right paired machine. Full-shape peer IDs pass through unchanged
 	// so cross-machine sends to an as-yet-unpaired peer still work the
 	// same way (some flows rely on that — e.g. responding to a pairing

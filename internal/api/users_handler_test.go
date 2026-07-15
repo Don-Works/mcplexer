@@ -190,11 +190,11 @@ func TestUsersListHidesSyntheticDeviceIdentities(t *testing.T) {
 	syntheticID := config.SyntheticUserIDForPeer("peer-legacy")
 	st.users["u-self"] = store.User{UserID: "u-self", DisplayName: "Max", IsSelf: true}
 	st.users[syntheticID] = store.User{UserID: syntheticID, DisplayName: "peer-legacy"}
-	st.users["u-elliot"] = store.User{UserID: "u-elliot", DisplayName: "Elliot"}
+	st.users["u-morgan"] = store.User{UserID: "u-morgan", DisplayName: "Morgan"}
 	st.peers["peer-legacy"] = store.P2PPeer{PeerID: "peer-legacy", DisplayName: "my-air"}
-	st.peers["peer-elliot"] = store.P2PPeer{PeerID: "peer-elliot", DisplayName: "elliot-mbp"}
+	st.peers["peer-morgan"] = store.P2PPeer{PeerID: "peer-morgan", DisplayName: "morgan-mbp"}
 	st.peerUsers[syntheticID] = []string{"peer-legacy"}
-	st.peerUsers["u-elliot"] = []string{"peer-elliot"}
+	st.peerUsers["u-morgan"] = []string{"peer-morgan"}
 
 	h := &usersHandler{store: st}
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/users", nil)
@@ -210,7 +210,7 @@ func TestUsersListHidesSyntheticDeviceIdentities(t *testing.T) {
 		t.Fatalf("decode: %v", err)
 	}
 	if len(got.Users) != 2 {
-		t.Fatalf("users = %+v, want self + elliot only", got.Users)
+		t.Fatalf("users = %+v, want self + morgan only", got.Users)
 	}
 	for _, u := range got.Users {
 		if u.UserID == syntheticID {
@@ -225,10 +225,10 @@ func TestUsersListHidesLegacyDeviceNamedIdentities(t *testing.T) {
 	st.users["u-self"] = store.User{UserID: "u-self", DisplayName: "Max", IsSelf: true}
 	st.users["u-device-name"] = store.User{UserID: "u-device-name", DisplayName: "my-air"}
 	st.users["u-peer-label"] = store.User{UserID: "u-peer-label", DisplayName: "peer-abcdef12"}
-	st.users["u-person"] = store.User{UserID: "u-person", DisplayName: "Elliot"}
+	st.users["u-person"] = store.User{UserID: "u-person", DisplayName: "Morgan"}
 	st.peers["peer-device"] = store.P2PPeer{PeerID: "peer-device", DisplayName: "my-air"}
 	st.peers["12D3KooWabcdef12"] = store.P2PPeer{PeerID: "12D3KooWabcdef12"}
-	st.peers["peer-person"] = store.P2PPeer{PeerID: "peer-person", DisplayName: "elliot-mbp"}
+	st.peers["peer-person"] = store.P2PPeer{PeerID: "peer-person", DisplayName: "morgan-mbp"}
 	st.peerUsers["u-device-name"] = []string{"peer-device"}
 	st.peerUsers["u-peer-label"] = []string{"12D3KooWabcdef12"}
 	st.peerUsers["u-person"] = []string{"peer-person"}
@@ -263,7 +263,7 @@ func TestUsersCreatePerson(t *testing.T) {
 	st := newFakeUserStore()
 	h := &usersHandler{store: st}
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/users",
-		strings.NewReader(`{"display_name":"  Elliot  "}`))
+		strings.NewReader(`{"display_name":"  Morgan  "}`))
 	rr := httptest.NewRecorder()
 	h.create(rr, req)
 	if rr.Code != http.StatusCreated {
@@ -273,7 +273,7 @@ func TestUsersCreatePerson(t *testing.T) {
 	if err := json.NewDecoder(rr.Body).Decode(&got); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if got.UserID == "" || got.DisplayName != "Elliot" || got.IsSelf {
+	if got.UserID == "" || got.DisplayName != "Morgan" || got.IsSelf {
 		t.Fatalf("created user = %+v", got)
 	}
 	if _, ok := st.users[got.UserID]; !ok {

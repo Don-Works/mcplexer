@@ -10,7 +10,7 @@ import (
 )
 
 // handleMeshSetDeviceName updates Settings.DisplayName and broadcasts the
-// rename to every paired peer so they show "elliot" instead of "peer:xyz".
+// rename to every paired peer so they show "morgan" instead of "peer:xyz".
 // Idempotent — re-running with the same name still re-broadcasts (cheap
 // nudge for peers that may have just paired).
 func (h *handler) handleMeshSetDeviceName(ctx context.Context, args json.RawMessage) (json.RawMessage, *RPCError) {
