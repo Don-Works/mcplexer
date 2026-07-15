@@ -2,9 +2,18 @@
 // Monitoring page: runner status (peer responsibilities), template
 // explorer, digest preview, ack, and test notifications. CRUD lives in
 // monitoring_handler.go.
+//
+// The ID-addressed endpoints (POST /monitoring/templates/{id}/ack and
+// POST /monitoring/notify with remote_host_id) verify that the named
+// object belongs to the workspace the caller is acting in before
+// touching it. A cross-workspace lookup is reported with the same
+// not-found sentinel the store would emit for a truly absent row, so
+// the UI cannot use the error shape to enumerate IDs from a foreign
+// workspace.
 package api
 
 import (
+	"context"
 	"net/http"
 	"os"
 	"time"
@@ -132,10 +141,22 @@ func (h *monitoringQueryHandler) digest(w http.ResponseWriter, r *http.Request) 
 }
 
 func (h *monitoringQueryHandler) ack(w http.ResponseWriter, r *http.Request) {
+	wsID := workspaceIDParam(r)
+	if wsID == "" {
+		writeError(w, http.StatusBadRequest, "workspace_id query param required")
+		return
+	}
 	var in struct {
 		Note string `json:"note"`
 	}
 	_ = decodeJSON(r, &in)
+	if !templateInWorkspace(r.Context(), h.store, r.PathValue("id"), wsID) {
+		// Conflate not-found with cross-workspace so the UI cannot use
+		// the response shape to enumerate template IDs from a foreign
+		// workspace. Mirrors handler_tasks.go:946.
+		writeError(w, http.StatusNotFound, store.ErrLogTemplateNotFound.Error())
+		return
+	}
 	if err := h.store.AckLogTemplate(r.Context(), r.PathValue("id"), in.Note); err != nil {
 		writeMonitoringErr(w, err, "ack template")
 		return
@@ -179,8 +200,10 @@ func (h *monitoringQueryHandler) notify(w http.ResponseWriter, r *http.Request) 
 	}
 	if in.RemoteHostID != "" {
 		host, err := h.store.GetRemoteHost(r.Context(), in.RemoteHostID)
-		if err != nil {
-			writeMonitoringErr(w, err, "resolve remote host")
+		if err != nil || host.WorkspaceID != in.WorkspaceID {
+			// Conflate not-found with cross-workspace so the UI cannot
+			// enumerate remote host IDs in a foreign workspace.
+			writeError(w, http.StatusNotFound, store.ErrRemoteHostNotFound.Error())
 			return
 		}
 		n.RemoteHostName, n.RemoteHostAddr = host.Name, host.SSHHost
@@ -190,4 +213,26 @@ func (h *monitoringQueryHandler) notify(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"dispatched": true})
+}
+
+// templateInWorkspace resolves a template's owning workspace via its
+// parent log_source (templates don't carry workspace_id directly). Any
+// lookup failure is treated as "not in workspace" so callers can
+// conflate it with the truly-absent case.
+func templateInWorkspace(ctx context.Context, s store.Store, templateID, wsID string) bool {
+	if templateID == "" || wsID == "" {
+		return false
+	}
+	tpl, err := s.GetLogTemplate(ctx, templateID)
+	if err != nil {
+		return false
+	}
+	src, err := s.GetLogSource(ctx, tpl.SourceID)
+	if err != nil {
+		return false
+	}
+	if src.WorkspaceID != wsID {
+		return false
+	}
+	return true
 }

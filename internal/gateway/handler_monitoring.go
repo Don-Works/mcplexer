@@ -2,6 +2,14 @@
 // monitoring.* namespace. Reads go through distill.Query / the store;
 // monitoring__notify goes through the escalate dispatcher (envelope +
 // secret resolution + throttles all daemon-side).
+//
+// All ID-addressed operations (monitoring__search/source_id,
+// monitoring__raw/template_id, monitoring__ack/template_id,
+// monitoring__notify/remote_host_id) verify that the named object
+// belongs to the caller/resolved workspace before touching it. A
+// cross-workspace lookup is reported with the same not-found sentinel
+// the store would emit for a truly absent row, so an agent cannot use
+// the error shape to enumerate IDs from a foreign workspace.
 package gateway
 
 import (
@@ -156,15 +164,26 @@ func (h *handler) handleMonitoringDigest(ctx context.Context, raw json.RawMessag
 
 func (h *handler) handleMonitoringSearch(ctx context.Context, raw json.RawMessage) json.RawMessage {
 	var args struct {
-		SourceID string `json:"source_id"`
-		Q        string `json:"q"`
-		Limit    int    `json:"limit"`
+		SourceID    string `json:"source_id"`
+		Q           string `json:"q"`
+		Limit       int    `json:"limit"`
+		WorkspaceID string `json:"workspace_id"`
 	}
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return marshalErrorResult(err.Error())
 	}
 	if args.SourceID == "" || args.Q == "" {
 		return marshalErrorResult("source_id and q are required")
+	}
+	wsID, rpc := h.dataWorkspace(ctx, args.WorkspaceID, false)
+	if rpc != nil {
+		return rpcResult(rpc)
+	}
+	src, err := h.store.GetLogSource(ctx, args.SourceID)
+	if err != nil || src.WorkspaceID != wsID {
+		// Conflate not-found with cross-workspace so the agent cannot
+		// use the error shape to enumerate IDs in a foreign workspace.
+		return marshalErrorResult(store.ErrLogSourceNotFound.Error())
 	}
 	lines, err := h.store.SearchLogLines(ctx, args.SourceID, args.Q, args.Limit)
 	if err != nil {
@@ -175,14 +194,22 @@ func (h *handler) handleMonitoringSearch(ctx context.Context, raw json.RawMessag
 
 func (h *handler) handleMonitoringRaw(ctx context.Context, raw json.RawMessage) json.RawMessage {
 	var args struct {
-		TemplateID string `json:"template_id"`
-		Limit      int    `json:"limit"`
+		TemplateID  string `json:"template_id"`
+		Limit       int    `json:"limit"`
+		WorkspaceID string `json:"workspace_id"`
 	}
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return marshalErrorResult(err.Error())
 	}
 	if args.TemplateID == "" {
 		return marshalErrorResult("template_id is required")
+	}
+	wsID, rpc := h.dataWorkspace(ctx, args.WorkspaceID, false)
+	if rpc != nil {
+		return rpcResult(rpc)
+	}
+	if !h.templateInWorkspace(ctx, args.TemplateID, wsID) {
+		return marshalErrorResult(store.ErrLogTemplateNotFound.Error())
 	}
 	lines, err := h.store.ListLogLinesByTemplate(ctx, args.TemplateID, args.Limit)
 	if err != nil {
@@ -193,14 +220,22 @@ func (h *handler) handleMonitoringRaw(ctx context.Context, raw json.RawMessage) 
 
 func (h *handler) handleMonitoringAck(ctx context.Context, raw json.RawMessage) json.RawMessage {
 	var args struct {
-		TemplateID string `json:"template_id"`
-		Note       string `json:"note"`
+		TemplateID  string `json:"template_id"`
+		Note        string `json:"note"`
+		WorkspaceID string `json:"workspace_id"`
 	}
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return marshalErrorResult(err.Error())
 	}
 	if args.TemplateID == "" {
 		return marshalErrorResult("template_id is required")
+	}
+	wsID, rpc := h.dataWorkspace(ctx, args.WorkspaceID, true)
+	if rpc != nil {
+		return rpcResult(rpc)
+	}
+	if !h.templateInWorkspace(ctx, args.TemplateID, wsID) {
+		return marshalErrorResult(store.ErrLogTemplateNotFound.Error())
 	}
 	if err := h.store.AckLogTemplate(ctx, args.TemplateID, args.Note); err != nil {
 		return marshalErrorResult(err.Error())
@@ -243,8 +278,8 @@ func (h *handler) handleMonitoringNotify(ctx context.Context, raw json.RawMessag
 	}
 	if args.RemoteHostID != "" {
 		host, err := h.store.GetRemoteHost(ctx, args.RemoteHostID)
-		if err != nil {
-			return marshalErrorResult("remote_host_id: " + err.Error())
+		if err != nil || host.WorkspaceID != wsID {
+			return marshalErrorResult("remote_host_id: " + store.ErrRemoteHostNotFound.Error())
 		}
 		n.RemoteHostName, n.RemoteHostAddr = host.Name, host.SSHHost
 	}
@@ -252,4 +287,25 @@ func (h *handler) handleMonitoringNotify(ctx context.Context, raw json.RawMessag
 		return marshalErrorResult(err.Error())
 	}
 	return marshalToolResult(`{"dispatched": true}`)
+}
+
+// templateInWorkspace returns true when templateID exists and its
+// parent source lives in wsID. Any lookup failure (template or source
+// absent) is treated as "not in workspace" so callers can conflate it
+// with the truly-absent case in their response. Template → source is
+// the only authoritative ownership path; the distiller does not stamp
+// workspace_id onto templates themselves.
+func (h *handler) templateInWorkspace(ctx context.Context, templateID, wsID string) bool {
+	tpl, err := h.store.GetLogTemplate(ctx, templateID)
+	if err != nil {
+		return false
+	}
+	src, err := h.store.GetLogSource(ctx, tpl.SourceID)
+	if err != nil {
+		return false
+	}
+	if src.WorkspaceID != wsID {
+		return false
+	}
+	return true
 }
