@@ -13,6 +13,8 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/sync/errgroup"
+
 	"github.com/don-works/mcplexer/internal/logwatch/sshx"
 	"github.com/don-works/mcplexer/internal/scheduler"
 	"github.com/don-works/mcplexer/internal/store"
@@ -21,6 +23,13 @@ import (
 // tickInterval is how often the manager re-evaluates source due-ness.
 // Source cadence itself comes from each source's schedule_spec.
 const tickInterval = 15 * time.Second
+
+// tickConcurrency bounds how many due sources are pulled in parallel
+// within one tick. Production remotes and DB connections don't need
+// (and shouldn't get) an unbounded fan-out; tick() still waits for
+// the whole batch before returning, so ticks themselves never overlap
+// and a source is never pulled twice concurrently.
+const tickConcurrency = 4
 
 // RunnerEnabled reports whether THIS daemon executes monitoring jobs.
 // Default true; MCPLEXER_MONITORING_RUNNER=0 marks a viewer daemon in
@@ -35,8 +44,11 @@ func RunnerEnabled() bool {
 // pullTimeout is the per-pull wall-clock cap (ADR 0007 §4).
 const pullTimeout = 30 * time.Second
 
-// Store is the narrow slice of store.Store the collector needs —
-// an interface seam so tests run against a small fake.
+// Store is the narrow slice of store.Store the collector needs — an
+// interface seam so tests run against a small fake. tick() pulls up
+// to tickConcurrency sources in parallel, so every method must be
+// safe for concurrent callers (calls for the same source ID never
+// overlap; calls for different sources can).
 type Store interface {
 	ListEnabledLogSources(ctx context.Context) ([]*store.LogSource, error)
 	GetRemoteHost(ctx context.Context, id string) (*store.RemoteHost, error)
@@ -68,7 +80,10 @@ type Line struct {
 // Sink receives each pull's lines. Synthetic collector events
 // (truncation, discontinuity) arrive as ordinary lines prefixed
 // "logwatch:" so they distill into templates like everything else.
-// M3 plugs the distiller in here.
+// M3 plugs the distiller in here. tick() pulls up to tickConcurrency
+// sources in parallel, so Ingest MUST be safe for concurrent callers
+// — never two calls for the same source at once, but calls for
+// different sources can and do overlap.
 type Sink interface {
 	Ingest(ctx context.Context, src *store.LogSource, host *store.RemoteHost, lines []Line) error
 }
@@ -112,26 +127,51 @@ func (m *Manager) Run(ctx context.Context) {
 	}
 }
 
-// tick pulls every source that is due per its schedule_spec.
+// tick pulls every source that is due per its schedule_spec, up to
+// tickConcurrency at once, and waits for the whole batch before
+// returning — so the next tick (from Run's loop) never starts while
+// this one is still mid-flight.
 func (m *Manager) tick(ctx context.Context) {
 	sources, err := m.store.ListEnabledLogSources(ctx)
 	if err != nil {
 		slog.Warn("logwatch: list sources", "error", err)
 		return
 	}
+	var g errgroup.Group
+	g.SetLimit(tickConcurrency)
 	for _, src := range sources {
+		if ctx.Err() != nil {
+			break
+		}
 		if !m.due(src) {
 			continue
 		}
 		m.markRun(src.ID)
-		if err := m.pullSource(ctx, src); err != nil {
-			n := src.ConsecutiveFailures + 1
-			if serr := m.store.SetLogSourceFailures(ctx, src.ID, n); serr != nil {
-				slog.Warn("logwatch: record failure", "source", src.Name, "error", serr)
-			}
-			slog.Warn("logwatch: pull failed", "source", src.Name,
-				"consecutive_failures", n, "error", err)
+		g.Go(func() error {
+			m.pullOne(ctx, src)
+			return nil
+		})
+	}
+	_ = g.Wait()
+}
+
+// pullOne runs one source's pull and records failure accounting. It
+// never returns an error to the errgroup — one source's failure must
+// not cancel or skip its siblings mid-tick.
+func (m *Manager) pullOne(ctx context.Context, src *store.LogSource) {
+	if ctx.Err() != nil {
+		return
+	}
+	if err := m.pullSource(ctx, src); err != nil {
+		if ctx.Err() != nil {
+			return
 		}
+		n := src.ConsecutiveFailures + 1
+		if serr := m.store.SetLogSourceFailures(ctx, src.ID, n); serr != nil {
+			slog.Warn("logwatch: record failure", "source", src.Name, "error", serr)
+		}
+		slog.Warn("logwatch: pull failed", "source", src.Name,
+			"consecutive_failures", n, "error", err)
 	}
 }
 
