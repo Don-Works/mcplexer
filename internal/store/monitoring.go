@@ -150,7 +150,11 @@ type LogLine struct {
 }
 
 var (
-	selectorRe  = regexp.MustCompile(`^[A-Za-z0-9._/-]+$`)
+	// First char may not be '-': a leading dash lets a selector like
+	// "--follow" reach docker/journalctl's flag parser as an option rather
+	// than a positional name (argument injection). Real container/project/
+	// service/unit names never start with '-'.
+	selectorRe  = regexp.MustCompile(`^[A-Za-z0-9._/][A-Za-z0-9._/-]*$`)
 	sshHostRe   = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 	sshUserRe   = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 	secretRefRe = regexp.MustCompile(`^secret://[A-Za-z0-9_.-]+$`)
@@ -162,7 +166,7 @@ func ValidateSelector(selector string) error {
 	if selector == "" || !selectorRe.MatchString(selector) {
 		return &FieldError{
 			Code: "invalid_selector", Field: "selector", Value: selector,
-			Message: "selector must match ^[A-Za-z0-9._/-]+$ (no shell metacharacters)",
+			Message: "selector must match ^[A-Za-z0-9._/][A-Za-z0-9._/-]*$ (no shell metacharacters, no leading dash)",
 			Hint:    "use the plain docker container name, e.g. api or my-app-1",
 		}
 	}
