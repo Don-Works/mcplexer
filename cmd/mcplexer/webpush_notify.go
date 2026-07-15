@@ -3,10 +3,9 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"io"
 	"log/slog"
-	"net/http"
 	"net/url"
 	"regexp"
 	"strings"
@@ -31,83 +30,49 @@ func newWebPushDispatcher(store notify.PushStore, subscriber string) *webPushDis
 	return &webPushDispatcher{store: store, subscriber: normalizeWebPushSubscriber(subscriber)}
 }
 
-func (d *webPushDispatcher) Dispatch(ctx context.Context, evt notify.Event) {
-	if d == nil || d.store == nil || !webPushEligible(evt) {
-		return
+func (d *webPushDispatcher) Dispatch(ctx context.Context, evt notify.Event) error {
+	if d == nil || d.store == nil {
+		return errors.New("web push store is not configured")
+	}
+	if !webPushEligible(evt) {
+		return nil
 	}
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 
 	keys, err := d.store.EnsureVAPIDKeys(ctx)
 	if err != nil {
-		slog.Warn("web push: load vapid keys failed", "error", err)
-		return
+		return fmt.Errorf("load VAPID keys: %w", err)
 	}
 	subs, err := d.store.ListPushSubscriptions(ctx)
 	if err != nil {
-		slog.Warn("web push: list subscriptions failed", "error", err)
-		return
+		return fmt.Errorf("list subscriptions: %w", err)
 	}
 	if len(subs) == 0 {
-		return
+		return errors.New("no enabled Web Push subscriptions")
 	}
 
 	payload, err := json.Marshal(webPushPayload(evt))
 	if err != nil {
-		slog.Warn("web push: encode payload failed", "message_id", evt.MessageID, "error", err)
-		return
+		return fmt.Errorf("encode payload: %w", err)
 	}
+	var failures []error
+	delivered := 0
 	for _, sub := range subs {
-		d.sendOne(ctx, keys, sub, payload, evt)
+		if err := d.sendOne(ctx, keys, sub, payload, evt); err != nil {
+			failures = append(failures, err)
+			continue
+		}
+		delivered++
 	}
-}
-
-func (d *webPushDispatcher) sendOne(
-	ctx context.Context,
-	keys notify.WebPushVAPIDKeys,
-	sub notify.WebPushSubscription,
-	payload []byte,
-	evt notify.Event,
-) {
-	resp, err := webpush.SendNotificationWithContext(
-		ctx,
-		payload,
-		&webpush.Subscription{
-			Endpoint: sub.Endpoint,
-			Keys: webpush.Keys{
-				P256dh: sub.P256DH,
-				Auth:   sub.Auth,
-			},
-		},
-		&webpush.Options{
-			Subscriber:      d.subscriber,
-			TTL:             webPushTTL(evt),
-			Topic:           webPushTopic(evt),
-			Urgency:         webPushUrgency(evt),
-			VAPIDPublicKey:  keys.PublicKey,
-			VAPIDPrivateKey: keys.PrivateKey,
-		},
-	)
-	if err != nil {
-		_ = d.store.MarkPushSubscriptionError(ctx, sub.Endpoint, err.Error(), false)
-		slog.Warn("web push: send failed", "endpoint", endpointHost(sub.Endpoint), "error", err)
-		return
+	if delivered == 0 {
+		return fmt.Errorf("no subscription accepted push: %w", errors.Join(failures...))
 	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		_, _ = io.Copy(io.Discard, resp.Body)
-		_ = d.store.MarkPushSubscriptionSuccess(ctx, sub.Endpoint)
-		return
+	if len(failures) > 0 {
+		slog.Warn("web push: partial delivery", "message_id", evt.MessageID,
+			"delivered", delivered, "failed", len(failures))
 	}
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-	disable := resp.StatusCode == http.StatusGone || resp.StatusCode == http.StatusNotFound
-	msg := fmt.Sprintf("push service status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
-	_ = d.store.MarkPushSubscriptionError(ctx, sub.Endpoint, msg, disable)
-	if disable {
-		slog.Info("web push: disabled expired subscription", "endpoint", endpointHost(sub.Endpoint), "status", resp.StatusCode)
-		return
-	}
-	slog.Warn("web push: send rejected", "endpoint", endpointHost(sub.Endpoint), "status", resp.StatusCode, "error", msg)
+	return nil
 }
 
 func webPushSubscriber(explicit, publicURL string) string {

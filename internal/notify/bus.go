@@ -10,9 +10,20 @@ package notify
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
+)
+
+var (
+	// ErrNoStore means a caller requested durable publication before the
+	// notification store was wired.
+	ErrNoStore = errors.New("notify: durable store is not configured")
+	// ErrNoDispatcher means a caller requested an interrupting delivery but
+	// no out-of-browser dispatcher (for example Web Push) was wired.
+	ErrNoDispatcher = errors.New("notify: push dispatcher is not configured")
 )
 
 // Event is a user-facing notification triggered by an agent.
@@ -64,10 +75,10 @@ func (b *Bus) SetStore(s Store) {
 }
 
 // Dispatcher receives every published notification after the bus has taken
-// its persistence snapshot. Implementations must be non-blocking from the
-// publisher's point of view; Bus invokes it in a goroutine.
+// its persistence snapshot. Regular Publish calls invoke it asynchronously;
+// PublishDurable can wait for an accepted out-of-browser delivery.
 type Dispatcher interface {
-	Dispatch(ctx context.Context, evt Event)
+	Dispatch(ctx context.Context, evt Event) error
 }
 
 // SetDispatcher wires an optional out-of-process notification sender, such as
@@ -95,44 +106,105 @@ func (b *Bus) Unsubscribe(ch <-chan Event) {
 	b.mu.Unlock()
 }
 
-// Publish persists (if a store is wired) then sends an event to all
-// subscribers without blocking. Persistence errors are logged but
-// non-fatal — the live channel still fires.
+// Publish persists (if a store is wired), fans out locally, and starts any
+// out-of-browser delivery asynchronously. Errors remain non-fatal for this
+// best-effort API; critical producers should use PublishDurable.
 func (b *Bus) Publish(evt Event) {
+	if err := b.publish(context.Background(), evt, false, true, false); err != nil {
+		slog.Warn("notify: publish failed", "message_id", evt.MessageID, "error", err)
+	}
+}
+
+// PublishDurable requires local persistence before local fan-out. When
+// interrupt is true it also waits until the configured out-of-browser
+// dispatcher accepts the event, allowing critical producers to observe a
+// broken or missing push path instead of silently claiming delivery.
+func (b *Bus) PublishDurable(ctx context.Context, evt Event, interrupt bool) error {
+	return b.publish(ctx, evt, true, interrupt, interrupt)
+}
+
+func (b *Bus) publish(
+	ctx context.Context, evt Event, requireStore, dispatch, waitDispatch bool,
+) error {
+	snapshot := b.snapshot()
+	if evt.CreatedAt.IsZero() {
+		evt.CreatedAt = time.Now().UTC()
+	}
+	if err := persistEvent(ctx, snapshot.store, evt, requireStore); err != nil {
+		return err
+	}
+	fanOut(snapshot.subs, evt)
+	return dispatchEvent(ctx, snapshot.dispatcher, evt, dispatch, waitDispatch)
+}
+
+type busSnapshot struct {
+	store      Store
+	dispatcher Dispatcher
+	subs       []chan Event
+}
+
+func (b *Bus) snapshot() busSnapshot {
 	b.mu.RLock()
-	store := b.store
-	dispatcher := b.dispatcher
+	defer b.mu.RUnlock()
 	subs := make([]chan Event, 0, len(b.subs))
 	for _, ch := range b.subs {
 		subs = append(subs, ch)
 	}
-	b.mu.RUnlock()
+	return busSnapshot{store: b.store, dispatcher: b.dispatcher, subs: subs}
+}
 
-	if evt.CreatedAt.IsZero() {
-		evt.CreatedAt = time.Now().UTC()
+func persistEvent(ctx context.Context, store Store, evt Event, required bool) error {
+	if store == nil && required {
+		return ErrNoStore
 	}
-
-	if store != nil {
-		// Bounded background write — we don't want a slow DB to back
-		// up publishers. 5s is generous for a single insert.
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		if _, err := store.Insert(ctx, evt); err != nil {
-			slog.Warn("notify: persist failed",
-				"message_id", evt.MessageID,
-				"error", err,
-			)
-		}
-		cancel()
+	if store == nil {
+		return nil
 	}
-
-	if dispatcher != nil {
-		go dispatcher.Dispatch(context.Background(), evt)
+	persistCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	_, err := store.Insert(persistCtx, evt)
+	cancel()
+	if err == nil {
+		return nil
 	}
+	if required {
+		return fmt.Errorf("notify: persist %s: %w", evt.MessageID, err)
+	}
+	slog.Warn("notify: persist failed; continuing live delivery",
+		"message_id", evt.MessageID, "error", err)
+	return nil
+}
 
+func fanOut(subs []chan Event, evt Event) {
 	for _, ch := range subs {
 		select {
 		case ch <- evt:
 		default:
 		}
 	}
+}
+
+func dispatchEvent(
+	ctx context.Context, dispatcher Dispatcher, evt Event, dispatch, wait bool,
+) error {
+	if !dispatch {
+		return nil
+	}
+	if dispatcher == nil {
+		if wait {
+			return ErrNoDispatcher
+		}
+		return nil
+	}
+	if wait {
+		if err := dispatcher.Dispatch(ctx, evt); err != nil {
+			return fmt.Errorf("notify: push %s: %w", evt.MessageID, err)
+		}
+		return nil
+	}
+	go func() {
+		if err := dispatcher.Dispatch(context.Background(), evt); err != nil {
+			slog.Warn("notify: async push failed", "message_id", evt.MessageID, "error", err)
+		}
+	}()
+	return nil
 }

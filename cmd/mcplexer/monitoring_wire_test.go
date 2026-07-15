@@ -59,8 +59,8 @@ func TestBuildMonitoringLateBindsMeshSender(t *testing.T) {
 	// Phase 1 — first build with meshMgr=nil (boot order). The dispatcher
 	// exists but has no mesh sender, so notify delivers nothing to mesh.
 	buildMonitoring(db, nil, nil)
-	if err := monitoringDispatch.Notify(ctx, notif); err != nil {
-		t.Fatalf("notify (nil mesh): %v", err)
+	if err := monitoringDispatch.Notify(ctx, notif); err == nil {
+		t.Fatal("notify (nil mesh) must report that no critical route accepted delivery")
 	}
 	if n := countLiveMeshMessages(ctx, t, db, ws.ID); n != 0 {
 		t.Fatalf("mesh messages before late-bind = %d, want 0", n)

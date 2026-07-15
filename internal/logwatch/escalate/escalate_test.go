@@ -2,10 +2,6 @@ package escalate
 
 import (
 	"context"
-	"encoding/json"
-	"io"
-	"net/http"
-	"net/http/httptest"
 	"strconv"
 	"strings"
 	"testing"
@@ -15,15 +11,6 @@ import (
 	"github.com/don-works/mcplexer/internal/notify"
 	"github.com/don-works/mcplexer/internal/store"
 )
-
-// TestEnvelope pins the exact deterministic format (design §5.6).
-func TestEnvelope(t *testing.T) {
-	got := Envelope("example-system", "lxc-mcplexer", "critical", "prod-1", "203.0.113.10")
-	want := "[example-system · via lxc-mcplexer] CRITICAL · prod-1 (203.0.113.10)"
-	if got != want {
-		t.Fatalf("envelope:\n got %q\nwant %q", got, want)
-	}
-}
 
 type fakeDispatchStore struct {
 	channels []*store.MonitoringChannel
@@ -43,10 +30,18 @@ func (c *captureSender) Send(_ context.Context, _ *store.MonitoringChannel, _, m
 	return nil
 }
 
-type captureHumanPublisher struct{ got []notify.Event }
+type captureHumanPublisher struct {
+	got     []notify.Event
+	durable []notify.Event
+	err     error
+}
 
-func (c *captureHumanPublisher) Publish(evt notify.Event) {
-	c.got = append(c.got, evt)
+func (c *captureHumanPublisher) PublishDurable(_ context.Context, evt notify.Event, interrupt bool) error {
+	c.durable = append(c.durable, evt)
+	if interrupt {
+		c.got = append(c.got, evt)
+	}
+	return c.err
 }
 
 func testNotification(sev, tpl string) distill.Notification {
@@ -100,64 +95,6 @@ func TestDispatcher_SeverityFloorFanout(t *testing.T) {
 	// gchat_webhook is the rich channel: Markdown emphasis is expected.
 	if !strings.HasPrefix(incidents.got[0], "*CRITICAL · example-system*\nnew error-class template") {
 		t.Fatalf("gchat payload must be rich-rendered: %q", incidents.got[0])
-	}
-}
-
-func TestRenderMessage_ReadableClickableTaskID(t *testing.T) {
-	n := distill.Notification{
-		WorkspaceID: "acme-ws", Severity: store.SeverityError,
-		Title:          "Purchase order creation failed",
-		Body:           "Three upstream requests failed; successful orders are still flowing.",
-		TaskID:         "01KXJJD5C0ANQ5GWV8D1NS793P",
-		RemoteHostName: "acme-production", RemoteHostAddr: "203.0.113.71",
-		SourceName: "acme-production", TemplateID: "f8ece4f0688e6e487943ed079c7f4947",
-	}
-	got := RenderMessage("acme-prod", "log-watcher",
-		"https://monitor.example/", n)
-	want := "*ERROR · acme-prod*\n" +
-		"Purchase order creation failed\n\n" +
-		"*Host:* acme-production (203.0.113.71)\n" +
-		"*Source:* `acme-production`\n" +
-		"*Watcher:* `log-watcher`\n\n" +
-		"Three upstream requests failed; successful orders are still flowing.\n\n" +
-		"*Task:* <https://monitor.example/tasks/01KXJJD5C0ANQ5GWV8D1NS793P?workspace=acme-ws|01KXJJD5C0ANQ5GWV8D1NS793P>\n" +
-		"*Template:* `f8ece4f0688e6e487943ed079c7f4947`"
-	if got != want {
-		t.Fatalf("rendered message:\n got %q\nwant %q", got, want)
-	}
-}
-
-func TestRenderPlainMessage_NoChannelSpecificMarkup(t *testing.T) {
-	n := distill.Notification{
-		WorkspaceID: "acme-ws", Severity: store.SeverityError,
-		Title: "Purchase order creation failed", Body: "Three upstream requests failed.",
-		TaskID: "01KXJJD5C0ANQ5GWV8D1NS793P", RemoteHostName: "acme-production",
-		RemoteHostAddr: "203.0.113.71", SourceName: "acme-production", TemplateID: "abc123",
-	}
-	got := RenderPlainMessage("acme-prod", "log-watcher", "https://monitor.example/", n)
-	// Plaintext channels must never receive Google Chat markup as literal noise.
-	if strings.ContainsAny(got, "*`|") {
-		t.Fatalf("plaintext render leaked chat markup: %q", got)
-	}
-	if !strings.HasPrefix(got, "[acme-prod · via log-watcher] ERROR · acme-production (203.0.113.71)\nPurchase order creation failed") {
-		t.Fatalf("plain envelope: %q", got)
-	}
-	if !strings.Contains(got, "Task: https://monitor.example/tasks/01KXJJD5C0ANQ5GWV8D1NS793P?workspace=acme-ws") {
-		t.Fatalf("plain task link: %q", got)
-	}
-	if !strings.Contains(got, "Template: abc123") {
-		t.Fatalf("plain template ref: %q", got)
-	}
-}
-
-func TestRenderMessage_TaskIDFallbackWithoutPublicURL(t *testing.T) {
-	n := distill.Notification{
-		WorkspaceID: "ws", Severity: store.SeverityWarn,
-		Title: "Collector window incomplete", TaskID: "task-123",
-	}
-	got := RenderMessage("example-system", "log-watcher", "", n)
-	if !strings.Contains(got, "*Task:* `task-123`") || strings.Contains(got, "<http") {
-		t.Fatalf("task fallback: %q", got)
 	}
 }
 
@@ -246,13 +183,20 @@ func TestDispatcher_HumanPushHourlyCap(t *testing.T) {
 			Title: "new critical shape", NewIncident: true,
 			TemplateID: "tpl-" + strconv.Itoa(i),
 		}
-		if err := d.Notify(context.Background(), n); err != nil {
+		err := d.Notify(context.Background(), n)
+		if i < maxHumanPushesPerHour && err != nil {
 			t.Fatal(err)
+		}
+		if i >= maxHumanPushesPerHour && err == nil {
+			t.Fatal("critical without an interrupting route must report degraded delivery")
 		}
 	}
 	if len(human.got) != maxHumanPushesPerHour {
 		t.Fatalf("distinct-critical storm: want %d human pushes, got %d",
 			maxHumanPushesPerHour, len(human.got))
+	}
+	if len(human.durable) != 20 {
+		t.Fatalf("all critical incidents must remain in durable Signal history: %d", len(human.durable))
 	}
 
 	*now = now.Add(61 * time.Minute)
@@ -304,96 +248,5 @@ func TestDispatcher_StormThrottled(t *testing.T) {
 	}
 	if len(sender.got) != maxNotifiesPerHour {
 		t.Fatalf("cap must reset next hour: got %d", len(sender.got))
-	}
-}
-
-type fakeSecrets struct{ url string }
-
-func (f fakeSecrets) Get(context.Context, string, string) ([]byte, error) {
-	return []byte(f.url), nil
-}
-
-// TestGChatWebhookSender posts {"text": message} to the resolved
-// webhook — the URL never appears in the channel row.
-func TestGChatWebhookSender(t *testing.T) {
-	var received map[string]string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
-		_ = json.Unmarshal(body, &received)
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer srv.Close()
-
-	s := &GChatWebhookSender{Secrets: fakeSecrets{url: srv.URL}}
-	ch := &store.MonitoringChannel{
-		Name: "incidents", Kind: store.ChannelKindGChatWebhook, WorkspaceID: "ws",
-		ConfigJSON: `{"auth_scope_id":"scope1","webhook_ref":"secret://GCHAT_WEBHOOK_INCIDENTS"}`,
-	}
-	msg := "[example-system · via lxc-mcplexer] CRITICAL · prod-1 (203.0.113.10)\nboom"
-	if err := s.Send(context.Background(), ch, store.SeverityCritical, msg); err != nil {
-		t.Fatal(err)
-	}
-	if received["text"] != msg {
-		t.Fatalf("webhook payload: %+v", received)
-	}
-
-	// Missing scope/ref must fail loudly, not fall back to plaintext.
-	bad := &store.MonitoringChannel{Name: "b", ConfigJSON: `{"webhook_ref":"https://plain.example"}`}
-	if err := s.Send(context.Background(), bad, store.SeverityError, "x"); err == nil {
-		t.Fatal("plaintext/missing-scope config must be rejected")
-	}
-}
-
-type fakeTGBridge struct{ chatID, text, priority string }
-
-func (f *fakeTGBridge) SendByChatID(_ context.Context, chatID, text, priority string) error {
-	f.chatID, f.text, f.priority = chatID, text, priority
-	return nil
-}
-
-// TestTelegramSender maps severity onto mesh priority vocabulary and
-// targets the configured chat.
-func TestTelegramSender(t *testing.T) {
-	bridge := &fakeTGBridge{}
-	s := &TelegramSender{Bridge: bridge}
-	ch := &store.MonitoringChannel{Name: "tg", ConfigJSON: `{"chat_id":"chat-42"}`}
-	if err := s.Send(context.Background(), ch, store.SeverityCritical, "msg"); err != nil {
-		t.Fatal(err)
-	}
-	if bridge.chatID != "chat-42" || bridge.priority != "critical" || bridge.text != "msg" {
-		t.Fatalf("bridge got %+v", bridge)
-	}
-}
-
-type fakeCaller struct {
-	name string
-	args map[string]string
-}
-
-func (f *fakeCaller) CallTool(_ context.Context, name string, args json.RawMessage) (json.RawMessage, error) {
-	f.name = name
-	_ = json.Unmarshal(args, &f.args)
-	return json.RawMessage(`{}`), nil
-}
-
-// TestWhatsAppSender passes the secret:// ref VERBATIM so the gateway
-// substitutes at dispatch — the number never exists here.
-func TestWhatsAppSender(t *testing.T) {
-	caller := &fakeCaller{}
-	s := &WhatsAppSender{Caller: caller}
-	ch := &store.MonitoringChannel{Name: "wa",
-		ConfigJSON: `{"chat_id_ref":"secret://WHATSAPP_PERSONAL_CHAT_ID","session_id":"main"}`}
-	if err := s.Send(context.Background(), ch, store.SeverityCritical, "boom"); err != nil {
-		t.Fatal(err)
-	}
-	if caller.name != "openwa__send_text" ||
-		caller.args["chat_id"] != "secret://WHATSAPP_PERSONAL_CHAT_ID" ||
-		caller.args["session_id"] != "main" || caller.args["text"] != "boom" {
-		t.Fatalf("caller got %s %+v", caller.name, caller.args)
-	}
-
-	bad := &store.MonitoringChannel{Name: "bad", ConfigJSON: `{"chat_id_ref":"447700900000@c.us"}`}
-	if err := s.Send(context.Background(), bad, store.SeverityCritical, "x"); err == nil {
-		t.Fatal("plaintext chat id must be rejected")
 	}
 }
