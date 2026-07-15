@@ -112,7 +112,8 @@ func TestCommandForSource_Kinds(t *testing.T) {
 		kind, selector, want string
 	}{
 		{"docker", "api", "docker logs --timestamps --since '2026-07-08T14:00:00Z' 'api'"},
-		{"compose", "intervals", "docker compose -p 'intervals' logs --no-color --timestamps --since '2026-07-08T14:00:00Z'"},
+		{"compose", "acme", "docker compose -p 'acme' logs --no-color --timestamps --no-log-prefix --since '2026-07-08T14:00:00Z'"},
+		{"swarm", "acme-production_backend", "docker service logs --raw --timestamps --since '2026-07-08T14:00:00Z' 'acme-production_backend'"},
 		{"journald", "nginx.service", "journalctl -u 'nginx.service' -o short-iso-precise --no-pager --utc --since '2026-07-08 14:00:00'"},
 	}
 	for _, c := range cases {
@@ -131,7 +132,7 @@ func TestCommandForSource_Kinds(t *testing.T) {
 		t.Fatal("file kind must have no command template")
 	}
 	// injection stays rejected across all kinds.
-	for _, k := range []string{"docker", "compose", "journald"} {
+	for _, k := range []string{"docker", "compose", "swarm", "journald"} {
 		if _, err := CommandForSource(&store.LogSource{Kind: k, Selector: "x; rm -rf /"}, since); err == nil {
 			t.Errorf("%s: injection selector must be rejected", k)
 		}

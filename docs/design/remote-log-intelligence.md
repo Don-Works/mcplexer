@@ -174,8 +174,10 @@ Exactly the `memory-consolidator` pattern (`cmd/mcplexer/consolidator_autoinstal
   (`publish_worker_as_template` / `install_worker_template`).
 - Autoinstall per workspace behind `MCPLEXER_AUTO_INSTALL_LOG_WATCH=1`,
   idempotent, skips when no api_key scope or no enabled log sources exist.
-- Schedule: `2m` default + a mesh trigger on `kind:alert, tag:logwatch` so
-  anomaly rules wake it immediately between ticks.
+- Schedule: `10m` default + a mesh trigger on `kind:alert, tag:logwatch` so
+  the first error-class anomaly wakes it immediately between ticks. The mesh
+  trigger groups subsequent novel shapes for 5 minutes; the periodic sweep
+  catches the batch without repeatedly paying to analyse the same 10m window.
 - **`pre_execute_script` zero-spend gate**:
   ```js
   const s = monitoring.stats({window: "10m"});
@@ -194,7 +196,7 @@ Exactly the `memory-consolidator` pattern (`cmd/mcplexer/consolidator_autoinstal
   notify-and-file (e.g. restarting a service) is downstream agents'
   responsibility entirely — see Non-goals; the filed task with its
   drill-down pointers is this feature's terminal output.
-- Budgets: `max_wall_clock 120s`, `max_tool_calls 15`,
+- Budgets: `max_wall_clock 300s`, `max_tool_calls 12`,
   `max_monthly_cost_usd` set at install, `max_consecutive_failures 5`.
 
 ### 5.6 Escalation — channels + deterministic dispatcher
@@ -215,16 +217,42 @@ channel secret refs internally (plaintext never crosses into any model
 context), (3) enforces throttles, (4) fans out. Anomaly rules (§5.3.5) call
 the same dispatcher, so model-less signals carry the identical envelope.
 
-**Deterministic envelope (ratified 2026-07-08)** — every outbound message on
-every channel is prefixed, rendered in Go:
+**Deterministic message (ratified 2026-07-08)** — every outbound message
+carries workspace + gateway host + affected host, rendered in Go, never by
+the model. Rendering is **per channel kind** so channel-specific markup is
+never delivered as literal noise to a channel that can't parse it:
 
-```
-[{workspace_name} · via {gateway_hostname}] {SEVERITY} · {remote_host_name} ({ssh_host})
-{title}
-{body}
-```
+- **gchat_webhook** (the rich channel) — compact lightweight-Markdown render
+  with `*emphasis*` and a `<url|label>` clickable task link when a public URL
+  is configured (`RenderMessage`):
 
-e.g. `[example-system · via dev-laptop-a] CRITICAL · ip-prod-1 (100.100.0.3)`.
+  ```
+  *{SEVERITY} · {workspace_name}*
+  {title}
+
+  *Host:* {remote_host_name} ({ssh_host})
+  *Source:* `{source_name}`
+  *Watcher:* `{gateway_hostname}`
+
+  {body}
+
+  *Task:* <{public_url}/tasks/{id}?workspace={ws}|{id}>
+  *Template:* `{template_id}`
+  ```
+
+- **telegram / whatsapp / mesh** (plaintext channels, incl. dashboards that
+  surface mesh text) — the deterministic envelope line, then title, source,
+  body, and bare task/template refs, no Markdown (`RenderPlainMessage` →
+  `Envelope`):
+
+  ```
+  [{workspace_name} · via {gateway_hostname}] {SEVERITY} · {remote_host_name} ({ssh_host})
+  {title}
+  ...
+  ```
+
+  e.g. `[example-system · via lxc-mcplexer] CRITICAL · prod-1 (203.0.113.10)`.
+
 Task titles use the same fields: `[{workspace_name}] {severity}: {headline} @ {remote_host_name}`.
 
 Remaining knobs in the worker's `parameters_json`:
@@ -250,6 +278,13 @@ Channel kinds (v1):
   recorded operator intent OpenWA requires.
 - **mesh**: mesh alert with severity-mapped priority (also what wakes the
   worker and feeds googlechat space bindings).
+- **PWA/Web Push human escalation** is daemon-wide rather than a channel row.
+  A newly discovered `critical` incident publishes one durable Signal event
+  to every active browser/PWA subscription. Evidence updates do not push
+  again; a post-remediation regression may alert when it creates a different
+  canonical task. Lock-screen text contains only system/source context, never
+  a raw log sample, and clicking opens the canonical task (or Monitoring while
+  the first deterministic observation is still awaiting triage).
 - **task filing** is not a channel — it's the worker's own `task.create`
   action governed by the `task` knob above (dedupe: if an open task already
   references the template id via meta key `logwatch_template`, append a note
@@ -281,7 +316,7 @@ CREATE TABLE log_sources (
   workspace_id   TEXT NOT NULL,
   remote_host_id TEXT NOT NULL REFERENCES remote_hosts(id),
   name           TEXT NOT NULL,
-  kind           TEXT NOT NULL,            -- docker | compose | journald | file
+  kind           TEXT NOT NULL,            -- docker | compose | swarm | journald | file
   selector       TEXT NOT NULL,            -- container name / project / unit / path (validated charset)
   schedule_spec  TEXT NOT NULL DEFAULT '2m',
   max_pull_bytes INTEGER NOT NULL DEFAULT 4194304,
@@ -345,7 +380,8 @@ costs ~nothing.
    `remote_hosts` row; any subsequent mismatch hard-fails the source and
    raises a `critical` mesh alert. No `InsecureIgnoreHostKey`, ever.
 3. **No shell**: remote commands are fixed per-kind argv templates
-   (`docker`, `logs`, `--since`, `<cursor>`, `<selector>`); selectors are
+  (`docker`, `logs`, `--since`, `<cursor>`, `<selector>`), including the
+  stable read-only `docker service logs` shape for Swarm; selectors are
    validated against `^[A-Za-z0-9._/-]+$` at CRUD time *and* dial time.
    `internal/gateway/cmdguard.go` rules extend to remote argv (no
    `~/.mcplexer` references, no metacharacters).
@@ -365,9 +401,9 @@ costs ~nothing.
 | M1 | Store: migrations + models + CRUD for hosts, sources, channels (admin MCP tools + REST + validation) | table-driven store tests; `mcplexer__create_remote_host/log_source/monitoring_channel` round-trip; selector validation rejects shell metachars; channel config accepts secret refs only |
 | M2 | `sshx` executor (ssh_key + ssh_agent auth) + collector loop (docker kind) + redaction + cursors + health | pull from the IP prod box in CI-skippable integration test; host-key change hard-fails; truncation template appears at cap; redaction test vectors pass |
 | M3 | Distiller + `monitoring.*` namespace (incl. `notify` dispatcher + envelope) + anomaly rules | 10k-line synthetic corpus → <50 templates; digest respects budget_tokens ±10%; `monitoring.stats` returns in <50ms; new-error-template fires exactly one alert under storm test; every channel payload carries the deterministic envelope |
-| M4 | Built-in `log-watch` worker template + autoinstall + escalation engine + levers | quiet tick = blocked run, zero spend; seeded error storm → 1 task + 1 gchat message, no dupes; critical path sends whatsapp via secret ref; policy editable via `update_worker` |
+| M4 | Built-in `log-watch` worker template + autoinstall + escalation engine + levers | quiet tick = blocked run, zero spend; seeded error storm → 1 task + 1 gchat message, no dupes; a newly discovered critical incident sends one durable PWA/Web Push human alert; policy editable via `update_worker` |
 | M5 | "Monitoring" page per workspace: hosts/sources/channels CRUD (settable gchat webhooks), template explorer, digest preview with token estimate, min_severity levers, install-worker button | e2e: add host → add source → add gchat_webhook channel → see templates → flip lever → worker installed; PWA passes existing lint/build |
-| M6 | Stretch — DONE: journald (systemd unit) + compose (project) source kinds via fixed read-only argv templates, multi-format leading-timestamp parsing, UI kind selector; `monitoring.ack` shipped in M3. REMAINING: file kind (needs byte-offset cursoring, not time), follow-mode streaming, embedding-assisted residual clustering, mesh transport for paired peers | journald/compose collected + tested; file explicitly refused with a clear message |
+| M6 | Stretch — DONE: journald (systemd unit) + compose (project) + swarm (service) source kinds via fixed read-only argv templates, multi-format leading-timestamp parsing, UI kind selector; `monitoring.ack` shipped in M3. REMAINING: file kind (needs byte-offset cursoring, not time), follow-mode streaming, embedding-assisted residual clustering, mesh transport for paired peers | journald/compose/swarm collected + tested; file explicitly refused with a clear message |
 
 Rough sizing: M1–M4 are each ~2–4 focused sessions; M5 similar on the web
 side. M2 and M3 are parallelizable after M1 lands (M3 can develop against

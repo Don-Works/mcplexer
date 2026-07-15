@@ -4,7 +4,7 @@
 // what the distiller learned (templates + digest), who runs the jobs
 // (peer responsibilities), and the log-watch worker's state.
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { Badge } from '@/components/ui/badge'
 import { useApi } from '@/hooks/use-api'
 import { listAuthScopes, listWorkspaces } from '@/api/client'
@@ -21,7 +21,8 @@ import { TemplatesSection } from './TemplatesSection'
 import { DigestPanel } from './DigestPanel'
 
 export function MonitoringPage() {
-  const [workspaceId, setWorkspaceId] = useState('')
+  const [searchParams, setSearchParams] = useSearchParams()
+  const [workspaceId, setWorkspaceId] = useState(() => searchParams.get('workspace') ?? '')
   const [status, setStatus] = useState<MonitoringStatus | null>(null)
 
   const { data: workspaces } = useApi(useCallback(() => listWorkspaces(), []))
@@ -31,10 +32,29 @@ export function MonitoringPage() {
     monitoringStatus().then(setStatus).catch(() => setStatus(null))
   }, [])
   useEffect(() => {
-    if (!workspaceId && workspaces && workspaces.length > 0) {
-      setWorkspaceId(workspaces[0].id)
-    }
-  }, [workspaces, workspaceId])
+    if (!workspaces || workspaces.length === 0 || workspaces.some(w => w.id === workspaceId)) return
+
+    // The global workspace is often first alphabetically but intentionally has
+    // no hosts. Landing there made a healthy watcher look completely empty.
+    // Probe the small workspace list and open the first real monitoring
+    // workspace instead; explicit ?workspace= deep links still win above.
+    let cancelled = false
+    const candidates = workspaces.filter(w => w.name.trim().toLowerCase() !== 'global')
+    void Promise.all(candidates.map(async workspace => ({
+      workspace,
+      hosts: await listRemoteHosts(workspace.id).catch(() => []),
+    }))).then(rows => {
+      if (cancelled) return
+      const preferred = rows.find(row => row.hosts.length > 0)?.workspace
+        ?? candidates[0]
+        ?? workspaces[0]
+      setWorkspaceId(preferred.id)
+      const next = new URLSearchParams(searchParams)
+      next.set('workspace', preferred.id)
+      setSearchParams(next, { replace: true })
+    })
+    return () => { cancelled = true }
+  }, [searchParams, setSearchParams, workspaces, workspaceId])
 
   const hostsFetcher = useCallback(
     () => (workspaceId ? listRemoteHosts(workspaceId) : Promise.resolve([])), [workspaceId])
@@ -71,15 +91,25 @@ export function MonitoringPage() {
             the digest; this feature is read-only against every watched box.
           </p>
         </div>
-        <select
-          className="border border-border bg-background px-2 py-1.5 text-sm"
-          value={workspaceId}
-          onChange={e => setWorkspaceId(e.target.value)}
-        >
-          {(workspaces ?? []).map(w => (
-            <option key={w.id} value={w.id}>{w.name}</option>
-          ))}
-        </select>
+        <label className="flex items-center gap-2 text-xs text-muted-foreground">
+          Workspace
+          <select
+            aria-label="Monitoring workspace"
+            className="border border-border bg-background px-2 py-1.5 text-sm text-foreground"
+            value={workspaceId}
+            onChange={e => {
+              const id = e.target.value
+              setWorkspaceId(id)
+              const next = new URLSearchParams(searchParams)
+              next.set('workspace', id)
+              setSearchParams(next, { replace: true })
+            }}
+          >
+            {(workspaces ?? []).map(w => (
+              <option key={w.id} value={w.id}>{w.name}</option>
+            ))}
+          </select>
+        </label>
       </div>
 
       <RunnerStrip status={status} />

@@ -56,11 +56,43 @@ func CommandForSource(src *store.LogSource, since time.Time) (string, error) {
 		return DockerLogsCommand(src.Selector, since)
 	case store.LogSourceKindCompose:
 		return ComposeLogsCommand(src.Selector, since)
+	case store.LogSourceKindSwarm:
+		return SwarmLogsCommand(src.Selector, since)
 	case store.LogSourceKindJournald:
 		return JournaldCommand(src.Selector, since)
 	default:
 		return "", fmt.Errorf("sshx: source kind %q has no read-only command template", src.Kind)
 	}
+}
+
+// SwarmLogsCommand pulls one Docker Swarm service's aggregated logs:
+//
+//	docker service logs --raw --timestamps --since '<cursor>' '<service>'
+//
+// The service name is stable across task/container replacement, unlike
+// the generated task container name. This keeps monitoring attached
+// across normal stack deploys without introducing a generic remote exec.
+//
+// --raw is required for the same reason compose needs --no-log-prefix:
+// without it `docker service logs` decorates every line with a
+// "<service>.<slot>.<id>@<node>    | " prefix, so the RFC3339 timestamp is
+// no longer at byte zero, the collector's leading-timestamp parse fails
+// for every line, and the cursor never advances (unbounded re-pull).
+// --raw drops the decoration and emits "<timestamp> <message>".
+func SwarmLogsCommand(service string, since time.Time) (string, error) {
+	svc, err := quoteSelector(service)
+	if err != nil {
+		return "", err
+	}
+	cmd := "docker service logs --raw --timestamps"
+	if !since.IsZero() {
+		ts, err := quoteToken("since", since.UTC().Format(time.RFC3339Nano))
+		if err != nil {
+			return "", err
+		}
+		cmd += " --since " + ts
+	}
+	return cmd + " " + svc, nil
 }
 
 // DockerLogsCommand builds the fixed read-only pull command:
@@ -88,16 +120,18 @@ func DockerLogsCommand(selector string, since time.Time) (string, error) {
 
 // ComposeLogsCommand pulls one compose project's aggregated logs:
 //
-//	docker compose -p '<project>' logs --no-color --timestamps --since '<cursor>'
+//	docker compose -p '<project>' logs --no-color --timestamps --no-log-prefix --since '<cursor>'
 //
 // The selector is the compose project name. Requires the compose v2
-// plugin on the remote host.
+// plugin on the remote host. --no-log-prefix is required because the
+// collector expects the RFC3339 timestamp at byte zero of each line;
+// Compose otherwise prepends "container | " and every line is skipped.
 func ComposeLogsCommand(project string, since time.Time) (string, error) {
 	proj, err := quoteSelector(project)
 	if err != nil {
 		return "", err
 	}
-	cmd := "docker compose -p " + proj + " logs --no-color --timestamps"
+	cmd := "docker compose -p " + proj + " logs --no-color --timestamps --no-log-prefix"
 	if !since.IsZero() {
 		ts, err := quoteToken("since", since.UTC().Format(time.RFC3339Nano))
 		if err != nil {

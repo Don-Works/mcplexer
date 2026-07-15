@@ -67,14 +67,21 @@ func TestAutoInstallLogWatch(t *testing.T) {
 	if !strings.Contains(w.PreExecuteScript, `abort("quiet")`) {
 		t.Fatalf("zero-spend gate missing: %q", w.PreExecuteScript)
 	}
-	if w.MaxToolCalls != 20 || w.MaxWallClockSeconds != 300 || w.MaxConsecutiveFailures != 5 {
+	if !strings.Contains(w.PreExecuteScript, `window: "10m"`) {
+		t.Fatalf("gate window must match the 10m schedule: %q", w.PreExecuteScript)
+	}
+	if !strings.Contains(w.PromptTemplate, "TOP-LEVEL CALL BUDGET:") {
+		t.Fatalf("batching guidance missing from prompt")
+	}
+	if w.MaxToolCalls != autoLogWatchMaxToolCalls || w.MaxWallClockSeconds != 300 || w.MaxConsecutiveFailures != 5 {
 		t.Fatalf("caps not stamped: %+v", w)
 	}
 	if strings.Contains(w.ToolAllowlistJSON, "telegram") || strings.Contains(w.ToolAllowlistJSON, "openwa") {
 		t.Fatalf("worker must hold NO channel tools: %s", w.ToolAllowlistJSON)
 	}
 	triggers, err := db.ListWorkerMeshTriggers(ctx, w.ID)
-	if err != nil || len(triggers) != 1 || triggers[0].TagMatch != "logwatch" {
+	if err != nil || len(triggers) != 1 || triggers[0].TagMatch != "logwatch" ||
+		triggers[0].ThrottleSeconds != autoLogWatchTriggerThrottleSeconds {
 		t.Fatalf("wake trigger: %v %+v", err, triggers)
 	}
 

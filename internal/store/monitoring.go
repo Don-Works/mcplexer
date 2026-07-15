@@ -49,12 +49,13 @@ const (
 	ChannelKindMesh         = "mesh"
 )
 
-// Log source kinds. Only "docker" is collected in v1 — `docker logs`
-// is the ratified collection contract; journald/file exist for
-// third-party boxes and compose is a convenience (M6).
+// Log source kinds. `docker logs` is the ratified collection contract;
+// compose and swarm provide stable deploy-level selectors while
+// journald/file cover third-party boxes (M6).
 const (
 	LogSourceKindDocker   = "docker"
 	LogSourceKindCompose  = "compose"
+	LogSourceKindSwarm    = "swarm"
 	LogSourceKindJournald = "journald"
 	LogSourceKindFile     = "file"
 )
@@ -240,10 +241,10 @@ func ValidateMonitoringChannel(c *MonitoringChannel) error {
 // ValidateLogSource checks kind, selector, and bounds.
 func ValidateLogSource(s *LogSource) error {
 	switch s.Kind {
-	case LogSourceKindDocker, LogSourceKindCompose, LogSourceKindJournald, LogSourceKindFile:
+	case LogSourceKindDocker, LogSourceKindCompose, LogSourceKindSwarm, LogSourceKindJournald, LogSourceKindFile:
 	default:
 		return &FieldError{Code: "invalid_source_kind", Field: "kind", Value: s.Kind,
-			Message: "kind must be docker|compose|journald|file (docker/compose/journald are collected; file needs byte-offset cursoring — tracked)"}
+			Message: "kind must be docker|compose|swarm|journald|file (docker/compose/swarm/journald are collected; file needs byte-offset cursoring — tracked)"}
 	}
 	if strings.TrimSpace(s.Name) == "" {
 		return &FieldError{Code: "missing_name", Field: "name", Message: "name is required"}

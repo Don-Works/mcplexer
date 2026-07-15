@@ -217,12 +217,16 @@ func TestPull_ErrorLeavesCursor(t *testing.T) {
 	}
 }
 
-// TestPull_JournaldAndCompose: M6 kinds flow through the same pull
+// TestPull_AggregateKinds: aggregate/service kinds flow through the same pull
 // pipeline, and the runner sees the right kind.
-func TestPull_JournaldAndCompose(t *testing.T) {
-	for _, kind := range []string{store.LogSourceKindJournald, store.LogSourceKindCompose} {
+func TestPull_AggregateKinds(t *testing.T) {
+	for _, kind := range []string{
+		store.LogSourceKindJournald,
+		store.LogSourceKindCompose,
+		store.LogSourceKindSwarm,
+	} {
 		runner := &fakeRunner{out: "2026-07-08T14:00:00.000000Z hello from " + kind + "\n"}
-		m, _, sink := newFixture(runner)
+		m, fs, sink := newFixture(runner)
 		src := srcDocker()
 		src.Kind = kind
 		src.Selector = "myunit"
@@ -234,6 +238,13 @@ func TestPull_JournaldAndCompose(t *testing.T) {
 		}
 		if len(sink.lines) != 1 {
 			t.Fatalf("%s: expected 1 line, got %d", kind, len(sink.lines))
+		}
+		// The cursor MUST advance: these kinds rely on the per-kind command
+		// (compose --no-log-prefix, swarm --raw) putting the RFC3339 stamp at
+		// byte zero. A leading-prefix output would parse to a zero timestamp
+		// and stall the cursor here — the swarm regression this guards.
+		if fs.cursorTS.IsZero() {
+			t.Fatalf("%s: cursor must advance on byte-zero-timestamp output", kind)
 		}
 	}
 }

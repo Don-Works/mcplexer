@@ -77,13 +77,13 @@ func TestClassifier_DefaultsAndOverrides(t *testing.T) {
 		"logwatch: pull truncated at 100 bytes": store.SeverityWarn,
 		"GET /healthz 200":                      store.SeverityInfo,
 		// explicit level beats keyword false-positives (the production
-		// case GLM-5.2 flagged: a filename literally named "Failed")
+		// case: a filename literally named "Failed")
 		`info acme/service.go:76 ignoring file as it is not an xml {"file": "Failed"}`: store.SeverityInfo,
-		// app timestamp BEFORE the level (Acme real format: "<ts> info <pkg> <msg>")
+		// app timestamp BEFORE the level (a real-world format: "<ts> info <pkg> <msg>")
 		"2026-07-10T08:23:08.923Z\tinfo\tacme/service.go:110\tignoring file as it is not an xml\t{\"file\": \"Failed\"}": store.SeverityInfo,
-		`{"level":"info","msg":"job failed to find any orders"}`:                        store.SeverityInfo,
-		`error acme/service.go:80 connection refused`:                                  store.SeverityError,
-		`{"level":"error","msg":"db down"}`:                                             store.SeverityError,
+		`{"level":"info","msg":"job failed to find any orders"}`:                                                         store.SeverityInfo,
+		`error acme/service.go:80 connection refused`:                                                                    store.SeverityError,
+		`{"level":"error","msg":"db down"}`:                                                                              store.SeverityError,
 		// but an explicit low level never masks a real catastrophe keyword
 		`info worker panic: nil deref`: store.SeverityCritical,
 	} {
@@ -214,6 +214,9 @@ func TestDigest_BudgetRespected(t *testing.T) {
 	firstEntry := strings.SplitN(out, "\n", 3)[1]
 	if !strings.Contains(firstEntry, "NEW ✱ ERROR") || !strings.Contains(firstEntry, "shape 007") {
 		t.Fatalf("new error template must render first, got: %s", firstEntry)
+	}
+	if !strings.Contains(out, "template_id: tpl-007") {
+		t.Fatal("digest entries must expose the exact stable template id for task dedupe")
 	}
 	if !strings.Contains(out, "omitted by budget") {
 		t.Fatal("budget overflow must be explicit, not silent")

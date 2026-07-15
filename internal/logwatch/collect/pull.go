@@ -20,7 +20,7 @@ import (
 // re-covers the window.
 func (m *Manager) pullSource(ctx context.Context, src *store.LogSource) error {
 	switch src.Kind {
-	case store.LogSourceKindDocker, store.LogSourceKindCompose, store.LogSourceKindJournald:
+	case store.LogSourceKindDocker, store.LogSourceKindCompose, store.LogSourceKindSwarm, store.LogSourceKindJournald:
 		// collected kinds
 	default:
 		return fmt.Errorf("logwatch: source kind %q is not collected (file kind needs byte-offset cursoring — tracked in M6)", src.Kind)

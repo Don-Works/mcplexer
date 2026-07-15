@@ -97,12 +97,15 @@ func monitoringNamespaceToolDefinitions() []Tool {
 		},
 		{
 			Name:        "monitoring__notify",
-			Description: "THE send path for monitoring incidents. The daemon renders the deterministic envelope '[workspace · via gateway-host] SEVERITY · remote-host', resolves channel secret refs internally, enforces per-template cooldown + hourly caps, and fans out to every enabled channel whose min_severity admits. Call ONCE per incident after triage; storm-safe by construction. Pass template_id so repeat incidents dedupe.",
+			Description: "THE send path for monitoring incidents. The daemon renders a compact deterministic alert with system, severity, source/host, and an optional clickable MCPlexer task id; resolves channel secret refs internally; enforces per-template cooldown + hourly caps; and fans out to every enabled channel whose min_severity admits. A new critical incident also enters the durable Signal + PWA Web Push path exactly once. Call ONCE per incident after triage; storm-safe by construction. Pass template_id so repeat incidents dedupe.",
 			InputSchema: json.RawMessage(`{"type": "object", "properties": {
 				"severity": {"type": "string", "description": "info|warn|error|critical (required)."},
 				"title": {"type": "string", "description": "One-line incident headline (required)."},
 				"body": {"type": "string", "description": "Short triage summary + drill-down pointers."},
-				"remote_host_id": {"type": "string", "description": "Host having the issue — resolved into the envelope."},
+				"task_id": {"type": "string", "description": "Optional canonical MCPlexer task id. When public_url is configured, Chat renders the id itself as the clickable link."},
+				"new_incident": {"type": "boolean", "description": "True only when this call created a new canonical incident task. Enables one-time critical human/PWA escalation; false for evidence updates."},
+				"source_name": {"type": "string", "description": "Optional human-readable source/service name copied from the digest."},
+				"remote_host_id": {"type": "string", "description": "Optional opaque host id copied exactly from monitoring__hosts. Omit it when you only have a host, source, service, or container name; those names are not ids."},
 				"template_id": {"type": "string", "description": "Template that triggered this — enables per-template throttle dedup."},
 				"workspace_id": {"type": "string"}
 			}, "required": ["severity", "title"]}`),

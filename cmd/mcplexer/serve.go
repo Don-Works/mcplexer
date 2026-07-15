@@ -1637,7 +1637,7 @@ func runServer(ctx context.Context, cfg *Config, db *sqlite.DB, cfgSvc *config.S
 		AddonRegistry:          d.addonReg,
 		AddonCreator:           d.addonCreator,
 		MeshManager:            d.meshMgr,
-		MonitoringNotifier:     ensureMonitoringDispatch(db, d.secretsMgr, d.meshMgr),
+		MonitoringNotifier:     ensureMonitoringDispatch(db, d.secretsMgr, d.meshMgr, d.notifyBus),
 		AddonPreview:           addon.NewPreviewExecutorWithRequestAuth(d.authInj.HeadersForDownstream, d.authInj.ApplyToRequest),
 		OAuthWizard:            oauth.NewWizard(db, db, d.flow, d.enc),
 		TelegramManager:        d.telegramMgr,

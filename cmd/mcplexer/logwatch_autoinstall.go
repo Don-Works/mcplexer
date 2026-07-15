@@ -26,11 +26,26 @@ import (
 const (
 	autoLogWatchName     = "log-watch"
 	autoLogWatchTemplate = "log-watch"
-	autoLogWatchSchedule = "2m"
+	autoLogWatchSchedule = "10m"
 
-	// logWatchGate aborts before any model spend on quiet ticks —
-	// the ratified wake floor: error-class novelty/delta immediate,
-	// info novelty batches into the next non-quiet tick's digest.
+	// A first error-class template still wakes the worker immediately.
+	// Subsequent novel shapes are grouped briefly and recovered by the
+	// periodic sweep instead of starting overlapping model loops.
+	autoLogWatchTriggerThrottleSeconds = 300
+	// The prompt targets 3-4 batched outer calls. Keep triple that budget so
+	// a provider can recover from one malformed call without losing notify.
+	autoLogWatchMaxToolCalls = 12
+
+	// logWatchGate aborts before any model spend on quiet ticks. Its window
+	// deliberately matches the schedule: every new template is seen by one
+	// periodic sweep without paying to re-triage the same rolling window.
+	// Error-class novelty still wakes immediately through the mesh trigger.
+	//
+	// Note the prompt's digest reads a slightly WIDER window (15m) than this
+	// 10m gate on purpose: the ~5m overlap means a template first seen in the
+	// tail of one tick is still surfaced by the next tick's digest even though
+	// it didn't itself trip this gate. Repeat observations are absorbed by the
+	// worker's canonical-task dedupe (task__list meta_match), not re-filed.
 	logWatchGate = `const s = monitoring.stats({window: "10m"});
 if (s.new_templates === 0 && s.error_delta === 0) abort("quiet");`
 )
@@ -95,7 +110,7 @@ func ensureLogWatchTrigger(ctx context.Context, workers *workersadmin.Service, w
 		WorkerID:        workerID,
 		KindMatch:       "alert",
 		TagMatch:        "logwatch",
-		ThrottleSeconds: 120,
+		ThrottleSeconds: autoLogWatchTriggerThrottleSeconds,
 	})
 	return err
 }
@@ -115,13 +130,14 @@ func workspaceHasEnabledSources(ctx context.Context, db store.Store, workspaceID
 
 // installLogWatchWorker installs from the seed template, then stamps
 // the gate script + budgets + the wake trigger. Model overrides come
-// from env so an operator can run the triage worker on their own
-// provider (e.g. GLM/Z.AI via openai_compat) instead of the template's
-// claude_cli default:
+// from env so an operator can run the triage worker on a commercially
+// permitted provider (e.g. a metered GLM/Z.AI API via openai_compat) instead
+// of the template's claude_cli default. A personal coding-plan credential is
+// not an automatic fit for customer automation:
 //
 //	MCPLEXER_LOGWATCH_MODEL_PROVIDER=openai_compat
 //	MCPLEXER_LOGWATCH_MODEL_ID=glm-5.2
-//	MCPLEXER_LOGWATCH_MODEL_ENDPOINT=https://api.z.ai/api/coding/paas/v4
+//	MCPLEXER_LOGWATCH_MODEL_ENDPOINT=https://api.z.ai/api/paas/v4/chat/completions
 //	MCPLEXER_LOGWATCH_SECRET_SCOPE=<scope id holding api_key>  (optional; else auto-picked)
 func installLogWatchWorker(ctx context.Context, workers *workersadmin.Service, workspaceID, scopeID string) error {
 	enabled := true
@@ -144,7 +160,7 @@ func installLogWatchWorker(ctx context.Context, workers *workersadmin.Service, w
 		return err
 	}
 	gate := logWatchGate
-	maxTools := 20
+	maxTools := autoLogWatchMaxToolCalls
 	maxWall := 300
 	maxFail := 5
 	if _, err := workers.Update(ctx, workersadmin.UpdateInput{

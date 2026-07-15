@@ -18,7 +18,7 @@ export interface RemoteHost {
   updated_at: string
 }
 
-export type LogSourceKind = 'docker' | 'compose' | 'journald' | 'file'
+export type LogSourceKind = 'docker' | 'compose' | 'swarm' | 'journald' | 'file'
 
 export interface LogSource {
   id: string
@@ -130,10 +130,11 @@ export const fetchDigest = (workspaceId: string, window: string, budgetTokens: n
 export const sendTestNotification = (workspaceId: string, severity: Severity, remoteHostId?: string) =>
   request<{ dispatched: boolean }>('/monitoring/notify', {
     method: 'POST',
-    body: JSON.stringify({
-      workspace_id: workspaceId,
-      severity,
-      title: 'test notification from the Monitoring page',
+		body: JSON.stringify({
+			workspace_id: workspaceId,
+			severity,
+			new_incident: severity === 'critical',
+			title: 'test notification from the Monitoring page',
       body: 'If you can read this, the channel works. Envelope, severity floor, and secret resolution all exercised.',
       remote_host_id: remoteHostId,
       test: true,

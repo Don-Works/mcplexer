@@ -216,6 +216,9 @@ func (h *handler) handleMonitoringNotify(ctx context.Context, raw json.RawMessag
 		Severity     string `json:"severity"`
 		Title        string `json:"title"`
 		Body         string `json:"body"`
+		TaskID       string `json:"task_id"`
+		NewIncident  bool   `json:"new_incident"`
+		SourceName   string `json:"source_name"`
 		RemoteHostID string `json:"remote_host_id"`
 		TemplateID   string `json:"template_id"`
 		WorkspaceID  string `json:"workspace_id"`
@@ -235,7 +238,8 @@ func (h *handler) handleMonitoringNotify(ctx context.Context, raw json.RawMessag
 	}
 	n := distill.Notification{
 		WorkspaceID: wsID, Severity: args.Severity,
-		Title: args.Title, Body: args.Body, TemplateID: args.TemplateID,
+		Title: args.Title, Body: args.Body, TaskID: args.TaskID,
+		NewIncident: args.NewIncident, SourceName: args.SourceName, TemplateID: args.TemplateID,
 	}
 	if args.RemoteHostID != "" {
 		host, err := h.store.GetRemoteHost(ctx, args.RemoteHostID)

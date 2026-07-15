@@ -1,4 +1,4 @@
-// SourcesSection — one row per watched docker container: selector,
+// SourcesSection — one row per watched container/project/service: selector,
 // pull cadence, cursor freshness, and the consecutive-failure health
 // counter that feeds the source-went-dark rule.
 import { useState } from 'react'
@@ -18,11 +18,12 @@ interface Props {
   refetch: () => void
 }
 
-type SourceKind = 'docker' | 'compose' | 'journald'
+type SourceKind = 'docker' | 'compose' | 'swarm' | 'journald'
 const emptyDraft = { name: '', remote_host_id: '', selector: '', schedule_spec: '2m', kind: 'docker' as SourceKind }
 const KIND_HINT: Record<SourceKind, string> = {
   docker: 'container name',
   compose: 'compose project name',
+  swarm: 'swarm service name',
   journald: 'systemd unit (e.g. nginx.service)',
 }
 
@@ -67,7 +68,7 @@ export function SourcesSection({ workspaceId, sources, hosts, refetch }: Props) 
         <p className="mt-2 text-sm text-muted-foreground">
           {hosts.length === 0
             ? 'Add a host first, then point sources at its containers.'
-            : 'No sources yet. A source is one container’s docker logs, pulled incrementally and distilled into templates.'}
+            : 'No sources yet. A source is one container, Compose project, Swarm service, or journal unit pulled incrementally and distilled into templates.'}
         </p>
       )}
 
@@ -114,6 +115,7 @@ export function SourcesSection({ workspaceId, sources, hosts, refetch }: Props) 
             onChange={e => setDraft({ ...draft, kind: e.target.value as SourceKind })}>
             <option value="docker">docker</option>
             <option value="compose">compose</option>
+            <option value="swarm">swarm</option>
             <option value="journald">journald</option>
           </select>
           <Input placeholder={KIND_HINT[draft.kind]} value={draft.selector} className="font-mono"

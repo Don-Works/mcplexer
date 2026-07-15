@@ -31,10 +31,15 @@ type Notifier interface {
 // dispatcher renders the deterministic envelope from these fields —
 // the distiller never formats channel output.
 type Notification struct {
-	WorkspaceID    string
-	Severity       string
-	Title          string
-	Body           string
+	WorkspaceID string
+	Severity    string
+	Title       string
+	Body        string
+	TaskID      string
+	// NewIncident is true only for the first notification of a newly
+	// discovered incident. The dispatcher uses it to gate high-signal
+	// human escalation (PWA/Web Push) without buzzing on evidence updates.
+	NewIncident    bool
 	RemoteHostName string
 	RemoteHostAddr string
 	SourceName     string
@@ -143,7 +148,8 @@ func (d *Distiller) fireAnomaly(ctx context.Context, src *store.LogSource, host 
 		WorkspaceID:    src.WorkspaceID,
 		Severity:       agg.tpl.Severity,
 		Title:          fmt.Sprintf("new %s-class log template on %s/%s (×%d)", agg.tpl.Severity, host.Name, src.Name, agg.count),
-		Body:           fmt.Sprintf("template: %s\nfirst sample: %s\ntemplate_id: %s — drill down with monitoring.raw({template_id})", agg.tpl.Masked, agg.tpl.SampleFirst, agg.tpl.ID),
+		Body:           fmt.Sprintf("Template: %s\nFirst sample: %s", agg.tpl.Masked, agg.tpl.SampleFirst),
+		NewIncident:    true,
 		RemoteHostName: host.Name,
 		RemoteHostAddr: host.SSHHost,
 		SourceName:     src.Name,

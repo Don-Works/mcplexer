@@ -174,12 +174,19 @@ func supportsCrossOriginOpenerPolicy(r *http.Request) bool {
 // that are neither loopback nor in the trustedHosts allowlist. This
 // mitigates CSRF and DNS rebinding abuse against an unauthenticated local
 // API while still allowing the UI to be served on a deliberately exposed
-// hostname (e.g. an internal LAN box). The OAuth callback path is exempt
-// because it receives cross-site redirects from providers.
+// hostname (e.g. an internal LAN box). Safe top-level navigations to UI
+// routes are allowed so links from another site can open the SPA; API
+// routes and non-navigation requests remain protected. The OAuth callback
+// path is exempt because it receives cross-site redirects from providers.
 func browserOriginProtectionMiddleware(trustedHosts []string) func(http.Handler) http.Handler {
 	allowed := normalizeHosts(trustedHosts)
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if isUIPageNavigation(r) {
+				next.ServeHTTP(w, r)
+				return
+			}
+
 			if r.URL.Path == "/api/v1/oauth/callback" && r.Method == http.MethodGet {
 				next.ServeHTTP(w, r)
 				return
@@ -202,6 +209,29 @@ func browserOriginProtectionMiddleware(trustedHosts []string) func(http.Handler)
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+func isUIPageNavigation(r *http.Request) bool {
+	if r == nil || (r.Method != http.MethodGet && r.Method != http.MethodHead) {
+		return false
+	}
+	if r.URL.Path == "/api" || strings.HasPrefix(r.URL.Path, "/api/") {
+		return false
+	}
+	// When the browser supplies Fetch Metadata, trust it: a real top-level
+	// navigation is mode=navigate + dest=document. Any other mode (cors,
+	// no-cors, same-origin) is a subresource/fetch — never a page open — and
+	// must NOT be waved through on the strength of a spoofable Accept header.
+	// Sec-Fetch-* are forbidden request headers, so a page can't forge them.
+	if mode := strings.TrimSpace(r.Header.Get("Sec-Fetch-Mode")); mode != "" {
+		return strings.EqualFold(mode, "navigate") &&
+			strings.EqualFold(strings.TrimSpace(r.Header.Get("Sec-Fetch-Dest")), "document")
+	}
+	// Only when Fetch Metadata is entirely absent (browser controllers and
+	// some embedded webviews omit it on a real document navigation) do we
+	// fall back to the navigation Accept header, which still distinguishes
+	// the static SPA shell from API fetches.
+	return strings.Contains(strings.ToLower(r.Header.Get("Accept")), "text/html")
 }
 
 // requestBodyLimitMiddleware applies a global max body size for request handlers.

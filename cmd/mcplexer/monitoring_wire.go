@@ -21,6 +21,7 @@ import (
 	"github.com/don-works/mcplexer/internal/logwatch/distill"
 	"github.com/don-works/mcplexer/internal/logwatch/escalate"
 	"github.com/don-works/mcplexer/internal/mesh"
+	"github.com/don-works/mcplexer/internal/notify"
 	"github.com/don-works/mcplexer/internal/secrets"
 	"github.com/don-works/mcplexer/internal/store"
 )
@@ -112,8 +113,11 @@ func registerMonitoringBridgeSenders(tg escalate.TelegramBridge, gw *gateway.Ser
 // ensureMonitoringDispatch builds (once) and returns the shared
 // dispatcher — the REST Deps need it as a value, not a package var
 // that might still be nil at construction order's mercy.
-func ensureMonitoringDispatch(db store.Store, secretsMgr *secrets.Manager, meshMgr *mesh.Manager) *escalate.Dispatcher {
+func ensureMonitoringDispatch(db store.Store, secretsMgr *secrets.Manager, meshMgr *mesh.Manager, human *notify.Bus) *escalate.Dispatcher {
 	buildMonitoring(db, secretsMgr, meshMgr)
+	if monitoringDispatch != nil && human != nil {
+		monitoringDispatch.RegisterHumanPublisher(human)
+	}
 	return monitoringDispatch
 }
 

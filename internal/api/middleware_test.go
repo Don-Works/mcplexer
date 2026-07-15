@@ -125,6 +125,72 @@ func TestBrowserOriginProtectionMiddleware(t *testing.T) {
 		}
 	})
 
+	t.Run("allows cross-site top-level navigation to UI", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "http://localhost/monitoring", nil)
+		req.Header.Set("Origin", "https://chat.google.com")
+		req.Header.Set("Sec-Fetch-Site", "cross-site")
+		req.Header.Set("Sec-Fetch-Mode", "navigate")
+		req.Header.Set("Sec-Fetch-Dest", "document")
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, req)
+		if rr.Code != http.StatusNoContent {
+			t.Fatalf("expected %d, got %d", http.StatusNoContent, rr.Code)
+		}
+	})
+
+	t.Run("allows UI navigation without fetch metadata", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "http://localhost/monitoring", nil)
+		req.Header.Set("Origin", "chrome-extension://browser-controller")
+		req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, req)
+		if rr.Code != http.StatusNoContent {
+			t.Fatalf("expected %d, got %d", http.StatusNoContent, rr.Code)
+		}
+	})
+
+	t.Run("blocks cross-site top-level navigation to API", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "http://localhost/api/v1/workspaces", nil)
+		req.Header.Set("Origin", "https://evil.example")
+		req.Header.Set("Sec-Fetch-Site", "cross-site")
+		req.Header.Set("Sec-Fetch-Mode", "navigate")
+		req.Header.Set("Sec-Fetch-Dest", "document")
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, req)
+		if rr.Code != http.StatusForbidden {
+			t.Fatalf("expected %d, got %d", http.StatusForbidden, rr.Code)
+		}
+	})
+
+	t.Run("blocks cross-site subresource request to UI route", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "http://localhost/monitoring", nil)
+		req.Header.Set("Origin", "https://evil.example")
+		req.Header.Set("Sec-Fetch-Site", "cross-site")
+		req.Header.Set("Sec-Fetch-Mode", "cors")
+		req.Header.Set("Sec-Fetch-Dest", "empty")
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, req)
+		if rr.Code != http.StatusForbidden {
+			t.Fatalf("expected %d, got %d", http.StatusForbidden, rr.Code)
+		}
+	})
+
+	t.Run("Accept text/html can't override explicit non-navigation fetch metadata", func(t *testing.T) {
+		// A spoofable Accept header must not wave through a request the
+		// browser itself labelled a cross-site fetch (mode=cors).
+		req := httptest.NewRequest(http.MethodGet, "http://localhost/monitoring", nil)
+		req.Header.Set("Origin", "https://evil.example")
+		req.Header.Set("Sec-Fetch-Site", "cross-site")
+		req.Header.Set("Sec-Fetch-Mode", "cors")
+		req.Header.Set("Sec-Fetch-Dest", "empty")
+		req.Header.Set("Accept", "text/html,application/xhtml+xml")
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, req)
+		if rr.Code != http.StatusForbidden {
+			t.Fatalf("expected %d, got %d", http.StatusForbidden, rr.Code)
+		}
+	})
+
 	t.Run("allows cross-site GET to oauth callback", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "http://localhost/api/v1/oauth/callback?state=abc&code=xyz", nil)
 		req.Header.Set("Sec-Fetch-Site", "cross-site")

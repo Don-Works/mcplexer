@@ -65,13 +65,13 @@ func monitoringToolDefs() []gateway.Tool {
 		// --- log sources ---
 		{
 			Name:        "create_log_source",
-			Description: "Create a Monitoring log source — one docker container's logs on a remote host, pulled incrementally on a schedule and distilled into templates. Selector is the container name (strict charset, no shell metacharacters).",
+			Description: "Create a Monitoring log source on a remote host, pulled incrementally and distilled into templates. Selectors name a container, Compose project, Swarm service, or systemd unit and always use a strict non-shell charset.",
 			InputSchema: schema(props{
 				"workspace_id":   propStr("Workspace (required)."),
 				"remote_host_id": propStr("Remote host this source lives on (required)."),
 				"name":           propStr("Source name, unique per workspace (required)."),
-				"kind":           propStr("docker (default; the deploy contract) | compose (project name) | journald (systemd unit) | file (not yet collected). docker/compose/journald pull incrementally."),
-				"selector":       propStr("Docker container name, ^[A-Za-z0-9._/-]+$ (required)."),
+				"kind":           propStr("docker (default; container name) | compose (project name) | swarm (service name) | journald (systemd unit) | file (not yet collected). docker/compose/swarm/journald pull incrementally."),
+				"selector":       propStr("Container/project/service/unit name, ^[A-Za-z0-9._/-]+$ (required)."),
 				"schedule_spec":  propStr("Pull cadence: Go duration ('2m' default) or cron expression."),
 				"max_pull_bytes": propInt("Per-pull byte cap. Default 4194304 (4 MiB)."),
 				"retention_mb":   propInt("Raw ring-buffer cap in MB. Default 50."),
@@ -98,7 +98,7 @@ func monitoringToolDefs() []gateway.Tool {
 				"id":             propStr("Log source ID (required)."),
 				"remote_host_id": propStr("Move the source to another host."),
 				"name":           propStr("New name."),
-				"kind":           propStr("docker | compose | journald | file."),
+				"kind":           propStr("docker | compose | swarm | journald | file."),
 				"selector":       propStr("New selector, ^[A-Za-z0-9._/-]+$."),
 				"schedule_spec":  propStr("New pull cadence."),
 				"max_pull_bytes": propInt("New per-pull byte cap."),

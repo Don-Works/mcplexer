@@ -195,9 +195,10 @@ func renderEntry(t *store.LogTemplate, windowCount int64, src *store.LogSource, 
 	if src != nil {
 		srcName = src.Name
 	}
-	return fmt.Sprintf("[%s] ×%d %s %q %s→%s\n    sample: %s\n",
+	return fmt.Sprintf("[%s] ×%d %s %q %s→%s\n    template_id: %s\n    sample: %s\n",
 		srcName, windowCount, marks, t.Masked,
 		t.FirstSeen.UTC().Format("15:04:05"), t.LastSeen.UTC().Format("15:04:05"),
+		t.ID,
 		truncate(t.SampleLast, 200))
 }
 

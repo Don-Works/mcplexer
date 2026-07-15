@@ -156,6 +156,9 @@ func (h *monitoringQueryHandler) notify(w http.ResponseWriter, r *http.Request) 
 		Severity     string `json:"severity"`
 		Title        string `json:"title"`
 		Body         string `json:"body"`
+		TaskID       string `json:"task_id"`
+		NewIncident  bool   `json:"new_incident"`
+		SourceName   string `json:"source_name"`
 		RemoteHostID string `json:"remote_host_id"`
 		TemplateID   string `json:"template_id"`
 		Test         bool   `json:"test"`
@@ -170,7 +173,9 @@ func (h *monitoringQueryHandler) notify(w http.ResponseWriter, r *http.Request) 
 	}
 	n := distill.Notification{
 		WorkspaceID: in.WorkspaceID, Severity: in.Severity,
-		Title: in.Title, Body: in.Body, TemplateID: in.TemplateID, Test: in.Test,
+		Title: in.Title, Body: in.Body, TaskID: in.TaskID,
+		NewIncident: in.NewIncident, SourceName: in.SourceName,
+		TemplateID: in.TemplateID, Test: in.Test,
 	}
 	if in.RemoteHostID != "" {
 		host, err := h.store.GetRemoteHost(r.Context(), in.RemoteHostID)
