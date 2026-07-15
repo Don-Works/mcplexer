@@ -89,6 +89,13 @@ func TestRedact_ValuePatterns(t *testing.T) {
 			want: []string{"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"},
 		},
 		{
+			// The Google Chat incoming-webhook URL IS the credential (key+token
+			// in the query); it must never survive into an audit row or log.
+			name: "google chat webhook url",
+			in:   `{"error":"webhook post failed: https://chat.googleapis.com/v1/spaces/AAQ_abc123/messages?key=SECRETKEY&token=SECRETTOKEN"}`,
+			want: []string{"SECRETKEY", "SECRETTOKEN"},
+		},
+		{
 			// Regression: the array branch (redact.go) is load-bearing for
 			// tool params that pass lists. A top-level JSON array whose
 			// element is credential-shaped must be redacted.

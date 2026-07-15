@@ -73,12 +73,14 @@ func CommandForSource(src *store.LogSource, since time.Time) (string, error) {
 // the generated task container name. This keeps monitoring attached
 // across normal stack deploys without introducing a generic remote exec.
 //
-// --raw is required for the same reason compose needs --no-log-prefix:
-// without it `docker service logs` decorates every line with a
-// "<service>.<slot>.<id>@<node>    | " prefix, so the RFC3339 timestamp is
-// no longer at byte zero, the collector's leading-timestamp parse fails
-// for every line, and the cursor never advances (unbounded re-pull).
-// --raw drops the decoration and emits "<timestamp> <message>".
+// --raw is required, but NOT for byte-0 reasons: verified on a live swarm,
+// `docker service logs --timestamps` keeps the RFC3339 stamp at byte zero
+// even without --raw (the "<service>.<slot>.<id>@<node> | " decoration lands
+// AFTER the timestamp — unlike compose, whose prefix lands before it). --raw
+// is needed because it strips the volatile per-task id out of the message
+// BODY: without it the rotating task id pollutes template mining and
+// destabilises the cursor line-hash on every task replacement. Output with
+// --raw --timestamps is a clean "<timestamp> <message>".
 func SwarmLogsCommand(service string, since time.Time) (string, error) {
 	svc, err := quoteSelector(service)
 	if err != nil {
@@ -149,12 +151,17 @@ func ComposeLogsCommand(project string, since time.Time) (string, error) {
 // short-iso-precise gives a leading RFC3339-ish timestamp the collector
 // parses. since uses journald's "2006-01-02 15:04:05" local-ish layout,
 // which journalctl parses as UTC when TZ is unset on the pull.
+//
+// -q (--quiet) is required: without it journalctl prints "-- Journal begins
+// at … --" and "-- Reboot --" banner lines that carry no leading timestamp,
+// so the collector would parse them as zero-timestamp lines and fire a false
+// "source discontinuity" on every pull.
 func JournaldCommand(unit string, since time.Time) (string, error) {
 	u, err := quoteSelector(unit)
 	if err != nil {
 		return "", err
 	}
-	cmd := "journalctl -u " + u + " -o short-iso-precise --no-pager --utc"
+	cmd := "journalctl -u " + u + " -q -o short-iso-precise --no-pager --utc"
 	if !since.IsZero() {
 		ts, err := quoteTimestamp(since.UTC().Format("2006-01-02 15:04:05"))
 		if err != nil {

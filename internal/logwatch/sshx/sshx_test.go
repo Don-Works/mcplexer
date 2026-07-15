@@ -114,7 +114,7 @@ func TestCommandForSource_Kinds(t *testing.T) {
 		{"docker", "api", "docker logs --timestamps --since '2026-07-08T14:00:00Z' 'api'"},
 		{"compose", "acme", "docker compose -p 'acme' logs --no-color --timestamps --no-log-prefix --since '2026-07-08T14:00:00Z'"},
 		{"swarm", "acme-production_backend", "docker service logs --raw --timestamps --since '2026-07-08T14:00:00Z' 'acme-production_backend'"},
-		{"journald", "nginx.service", "journalctl -u 'nginx.service' -o short-iso-precise --no-pager --utc --since '2026-07-08 14:00:00'"},
+		{"journald", "nginx.service", "journalctl -u 'nginx.service' -q -o short-iso-precise --no-pager --utc --since '2026-07-08 14:00:00'"},
 	}
 	for _, c := range cases {
 		src := &store.LogSource{Kind: c.kind, Selector: c.selector}
@@ -131,10 +131,13 @@ func TestCommandForSource_Kinds(t *testing.T) {
 	if _, err := CommandForSource(&store.LogSource{Kind: "file", Selector: "/var/log/app.log"}, since); err == nil {
 		t.Fatal("file kind must have no command template")
 	}
-	// injection stays rejected across all kinds.
+	// injection stays rejected across all kinds — shell metachars AND a
+	// leading dash (argument injection: "--follow" reaching the flag parser).
 	for _, k := range []string{"docker", "compose", "swarm", "journald"} {
-		if _, err := CommandForSource(&store.LogSource{Kind: k, Selector: "x; rm -rf /"}, since); err == nil {
-			t.Errorf("%s: injection selector must be rejected", k)
+		for _, bad := range []string{"x; rm -rf /", "--follow", "-n"} {
+			if _, err := CommandForSource(&store.LogSource{Kind: k, Selector: bad}, since); err == nil {
+				t.Errorf("%s: selector %q must be rejected", k, bad)
+			}
 		}
 	}
 }

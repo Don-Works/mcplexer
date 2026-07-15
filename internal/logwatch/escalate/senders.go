@@ -73,7 +73,11 @@ func (s *GChatWebhookSender) Send(ctx context.Context, ch *store.MonitoringChann
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return fmt.Errorf("escalate: webhook post: %w", err)
+		// The webhook URL embeds key+token in its query and IS the credential.
+		// A *url.Error stringifies it verbatim and it would land in slog (which
+		// runs no redaction). Strip the resolved URL out of the error text.
+		return fmt.Errorf("escalate: webhook post failed: %s",
+			strings.ReplaceAll(err.Error(), strings.TrimSpace(string(url)), "[redacted-webhook-url]"))
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {

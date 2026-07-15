@@ -74,6 +74,8 @@ var valueRedactPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`\bxox[abprs]-[A-Za-z0-9-]{10,}\b`),
 	// Slack incoming-webhook URLs (the URL IS the secret).
 	regexp.MustCompile(`https://hooks\.slack\.com/services/T[A-Za-z0-9]+/B[A-Za-z0-9]+/[A-Za-z0-9]+`),
+	// Google Chat incoming-webhook URLs — the key+token query IS the secret.
+	regexp.MustCompile(`https://chat\.googleapis\.com/v1/spaces/[^/\s]+/messages\?[^\s"']+`),
 	// Telegram bot tokens: "<bot_id>:<30+_char_alnum_dash_underscore>".
 	// The colon + length make this distinctive enough to avoid
 	// false-positives on ordinary "id:thing" pairs. Real Telegram tokens
