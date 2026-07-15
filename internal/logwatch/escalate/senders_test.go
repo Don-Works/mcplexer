@@ -89,4 +89,10 @@ func TestWhatsAppSender(t *testing.T) {
 	if err := sender.Send(context.Background(), bad, store.SeverityCritical, "x"); err == nil {
 		t.Fatal("plaintext chat id must be rejected")
 	}
+	customTool := &store.MonitoringChannel{Name: "custom", ConfigJSON: `{
+		"chat_id_ref":"secret://WHATSAPP_PERSONAL_CHAT_ID","tool":"other__send"
+	}`}
+	if err := sender.Send(context.Background(), customTool, store.SeverityCritical, "x"); err == nil {
+		t.Fatal("arbitrary downstream tool must be rejected")
+	}
 }

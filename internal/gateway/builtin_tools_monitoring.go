@@ -43,7 +43,7 @@ func monitoringNamespaceToolDefinitions() []Tool {
 		},
 		{
 			Name:        "monitoring__stats",
-			Description: "Cheap window counters for the zero-spend gate: lines, templates, new_templates (unacked, first seen in window), error_delta (error+critical lines). A log-watch worker's pre_execute_script calls this and abort('quiet')s when new_templates and error_delta are both zero.",
+			Description: "Cheap window counters for the zero-spend gate: lines, templates, new_templates (unacked, first seen in window), and error_delta (error+critical lines). Scheduled log-watch AI wakes only for new_templates; deterministic code handles rate spikes without model spend.",
 			InputSchema: json.RawMessage(`{"type": "object", "properties": {
 				"window": {"type": "string", "description": "Go duration, default 10m."},
 				"source_ids": {"type": "array", "items": {"type": "string"}, "description": "Default: all sources in workspace."},

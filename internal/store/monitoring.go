@@ -83,7 +83,8 @@ type RemoteHost struct {
 // LogSource is one log stream on a RemoteHost. Selector is the docker
 // container name (or journald unit / file path for later kinds) and is
 // validated against a strict charset at CRUD time AND dial time — it
-// is interpolated into a fixed argv template, never a shell string.
+// is interpolated into a fixed remote-shell command template only after
+// strict validation and quoting; SSH does not provide a true argv exec.
 // CursorTS/CursorHash track incremental pulls; ConsecutiveFailures
 // drives health surfacing + the source-went-dark anomaly rule.
 type LogSource struct {
@@ -230,6 +231,23 @@ func ValidateMonitoringChannel(c *MonitoringChannel) error {
 				Message: key + " must be a secret:// ref, never a plaintext value",
 				Hint:    "store the value via the secrets subsystem, then reference it as secret://<KEY>",
 			}
+		}
+	}
+	switch c.Kind {
+	case ChannelKindGChatWebhook:
+		if value, _ := cfg["auth_scope_id"].(string); strings.TrimSpace(value) == "" {
+			return &FieldError{Code: "invalid_channel_config", Field: "config_json",
+				Message: "gchat_webhook requires auth_scope_id"}
+		}
+	case ChannelKindTelegram:
+		if value, _ := cfg["chat_id"].(string); strings.TrimSpace(value) == "" {
+			return &FieldError{Code: "invalid_channel_config", Field: "config_json",
+				Message: "telegram requires chat_id"}
+		}
+	case ChannelKindWhatsApp:
+		if tool, _ := cfg["tool"].(string); tool != "" && tool != "openwa__send_text" {
+			return &FieldError{Code: "invalid_channel_config", Field: "config_json",
+				Message: "whatsapp tool must be openwa__send_text"}
 		}
 	}
 	for k, v := range cfg {

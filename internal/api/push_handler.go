@@ -106,7 +106,7 @@ func (h *pushHandler) test(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "notification bus is not configured")
 		return
 	}
-	h.bus.Publish(notify.Event{
+	evt := notify.Event{
 		MessageID: uuid.NewString(),
 		Source:    "system",
 		AgentName: "mcplexer",
@@ -118,6 +118,10 @@ func (h *pushHandler) test(w http.ResponseWriter, r *http.Request) {
 		Tags:      "pwa,push,test",
 		Link:      "/app",
 		CreatedAt: time.Now().UTC(),
-	})
+	}
+	if err := h.bus.PublishDurable(r.Context(), evt, true); err != nil {
+		writeError(w, http.StatusBadGateway, "push test was not accepted by an enabled subscription")
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }

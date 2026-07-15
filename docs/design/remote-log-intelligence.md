@@ -38,7 +38,8 @@ install, no log shipper — just SSH reachability.
   downstream agents picking up the filed task; it is NOT this feature's
   responsibility and never will be. Read-only is enforced by construction:
   the SSH layer exposes no generic exec path — only the fixed read-only
-  per-kind argv templates (`docker logs`, `journalctl`, `tail`) exist, so
+  per-kind command templates (`docker logs`, `journalctl`) exist, with every
+  selector validated and shell-quoted before it reaches the remote shell, so
   adding any mutating command shape requires a new ADR, not a config change.
 - No log shipping agents / no mcplexer install required on watched boxes.
   (If a box *is* a paired p2p peer, a mesh transport can come later; SSH is
@@ -92,25 +93,35 @@ and 50-line function cap apply as usual.
 
 ### 5.1 Collector
 
-- Scheduler job per enabled source (reuses `internal/scheduler` specs — cron
-  or duration, default `1m`–`5m` per source).
-- Incremental pull: `docker logs --since <cursor> --until <now> <container>`
-  executed as **argv, never shell string**, over a pooled SSH connection.
+- The collector manager evaluates every enabled source against its
+  `internal/scheduler` spec (cron or duration, default `1m`–`5m` per source)
+  and runs at most four due pulls concurrently.
+- Incremental pull: `docker logs --timestamps --since <cursor> <container>`
+  carried as one command string over a host-key-pinned SSH connection. SSH has
+  no protocol-level argv exec, so fixed literals plus strict validation and
+  single-quoting of every variable token are the injection boundary.
 - Cursor = last-pulled timestamp + a rolling hash of the tail line to detect
   container restarts / log rotation (restart ⇒ cursor reset + `event`
   template noting the restart — that itself is signal).
 - Caps per pull: max bytes (default 4 MiB), max wall clock (default 30s),
   truncation is recorded as a synthetic template (`logwatch: pull truncated`)
   so silent gaps can't hide.
-- Health: consecutive-failure counter per host/source → status on dashboard +
-  mesh alert at threshold (mirrors worker `max_consecutive_failures`).
+- Health: consecutive failed scheduled pulls surface on the dashboard. The
+  third failure opens one critical incident through the normal dispatcher and
+  retries that episode until a route accepts it; an SSH host-key mismatch does
+  so on the first failure. A successful pull with zero lines resets health and
+  is not treated as a dark source.
 
 ### 5.2 Redaction
 
-Before any byte is persisted: reuse `internal/audit` redaction +
-`internal/sanitize` patterns (bearer tokens, api keys, emails, secret-shaped
-strings). Redaction runs *before* storage so raw ring buffers are already
-clean — digests can't leak what was never stored.
+Before any byte is persisted, reuse `internal/audit` value-pattern redaction
+for recognised bearer tokens, API keys, webhook URLs, JWTs, and private-key
+blocks. Redaction runs before storage, so recognised credential shapes do not
+reach the raw ring buffer or digest. This is defence in depth, not a proof that
+arbitrary application-specific secrets are impossible: watched services must
+still avoid logging secrets, operators must restrict access to the gateway DB,
+and each deployment should test its own log corpus before enabling model
+triage.
 
 ### 5.3 Distiller — the token-cost engine
 
@@ -311,7 +322,10 @@ acknowledgement. Signal persistence survives reloads and push/channel failure is
 observable, but there is not yet a durable channel outbox with acknowledgement,
 re-page, and failover scheduling. Production operators should configure at least
 two independent critical routes and run a synthetic end-to-end notification
-drill; do not describe this as pager-grade until outbox/ack/re-page lands.
+drill. Mobile → Push → Test returns success only after at least one enabled
+subscription accepts the push; the operator must still confirm it appeared on
+the intended device. Do not describe this as pager-grade until
+outbox/ack/re-page lands.
 
 ## 6. Data model (SQLite, migration NNN)
 
@@ -425,7 +439,7 @@ costs ~nothing.
 | M3 | Distiller + `monitoring.*` namespace (incl. `notify` dispatcher + envelope) + anomaly rules | 10k-line synthetic corpus → <50 templates; digest respects budget_tokens ±10%; `monitoring.stats` returns in <50ms; new-error-template fires exactly one alert under storm test; every channel payload carries the deterministic envelope |
 | M4 | Built-in `log-watch` worker template + autoinstall + escalation engine + levers | quiet tick = blocked run, zero spend; seeded error storm → 1 task + 1 gchat message, no dupes; a newly discovered critical incident sends one durable PWA/Web Push human alert; policy editable via `update_worker` |
 | M5 | "Monitoring" page per workspace: hosts/sources/channels CRUD (settable gchat webhooks), template explorer, digest preview with token estimate, min_severity levers, install-worker button | e2e: add host → add source → add gchat_webhook channel → see templates → flip lever → worker installed; PWA passes existing lint/build |
-| M6 | Stretch — DONE: journald (systemd unit) + compose (project) + swarm (service) source kinds via fixed read-only argv templates, multi-format leading-timestamp parsing, UI kind selector; `monitoring.ack` shipped in M3. REMAINING: file kind (needs byte-offset cursoring, not time), follow-mode streaming, embedding-assisted residual clustering, mesh transport for paired peers | journald/compose/swarm collected + tested; file explicitly refused with a clear message |
+| M6 | Stretch — DONE: journald (systemd unit) + compose (project) + swarm (service) source kinds via fixed read-only command templates, multi-format leading-timestamp parsing, UI kind selector; `monitoring.ack` shipped in M3. REMAINING: file kind (needs byte-offset cursoring, not time), follow-mode streaming, embedding-assisted residual clustering, mesh transport for paired peers | journald/compose/swarm collected + tested; file explicitly refused with a clear message |
 
 Rough sizing: M1–M4 are each ~2–4 focused sessions; M5 similar on the web
 side. M2 and M3 are parallelizable after M1 lands (M3 can develop against

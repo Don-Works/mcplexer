@@ -67,10 +67,13 @@ synthetic template so silent gaps cannot masquerade as quiet logs.
 
 ### 5. Redaction before persistence
 
-Every line passes the audit/sanitize redaction pass (bearer tokens, API
-keys, secret-shaped strings) **before** it is written to the ring buffer.
-Digests, templates, search results, and model prompts are downstream of
-storage, so nothing unredacted can reach them.
+Every line passes the audit value-pattern redaction pass (recognised bearer
+tokens, API keys, webhook URLs, JWTs, and private-key blocks) **before** it is
+written to the ring buffer. Digests, templates, search results, and model
+prompts are downstream of that pass. Pattern redaction is defence in depth,
+not a guarantee for arbitrary application-specific secret formats: watched
+services must avoid logging secrets, gateway DB access remains sensitive, and
+operators must test representative log corpora before enabling model triage.
 
 ### 6. Outbound notifications: daemon-side dispatch only
 
