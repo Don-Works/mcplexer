@@ -83,7 +83,8 @@ type RemoteHost struct {
 // LogSource is one log stream on a RemoteHost. Selector is the docker
 // container name (or journald unit / file path for later kinds) and is
 // validated against a strict charset at CRUD time AND dial time — it
-// is interpolated into a fixed argv template, never a shell string.
+// is interpolated into a fixed remote-shell command template only after
+// strict validation and quoting; SSH does not provide a true argv exec.
 // CursorTS/CursorHash track incremental pulls; ConsecutiveFailures
 // drives health surfacing + the source-went-dark anomaly rule.
 type LogSource struct {
@@ -232,6 +233,23 @@ func ValidateMonitoringChannel(c *MonitoringChannel) error {
 			}
 		}
 	}
+	switch c.Kind {
+	case ChannelKindGChatWebhook:
+		if value, _ := cfg["auth_scope_id"].(string); strings.TrimSpace(value) == "" {
+			return &FieldError{Code: "invalid_channel_config", Field: "config_json",
+				Message: "gchat_webhook requires auth_scope_id"}
+		}
+	case ChannelKindTelegram:
+		if value, _ := cfg["chat_id"].(string); strings.TrimSpace(value) == "" {
+			return &FieldError{Code: "invalid_channel_config", Field: "config_json",
+				Message: "telegram requires chat_id"}
+		}
+	case ChannelKindWhatsApp:
+		if tool, _ := cfg["tool"].(string); tool != "" && tool != "openwa__send_text" {
+			return &FieldError{Code: "invalid_channel_config", Field: "config_json",
+				Message: "whatsapp tool must be openwa__send_text"}
+		}
+	}
 	for k, v := range cfg {
 		if s, isStr := v.(string); isStr && (strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "https://")) {
 			return &FieldError{Code: "plaintext_channel_credential", Field: "config_json", Value: k,
@@ -306,4 +324,10 @@ type MonitoringStore interface {
 	CountLinesByTemplate(ctx context.Context, sourceIDs []string, since time.Time) (map[string]int64, error)
 	SearchLogLines(ctx context.Context, sourceID, q string, limit int) ([]*LogLine, error)
 	ListLogLinesByTemplate(ctx context.Context, templateID string, limit int) ([]*LogLine, error)
+
+	// CountErrorLinesInWindows supports deterministic rate-spike detection
+	// with current and trailing-baseline counts from one indexed scan.
+	CountErrorLinesInWindows(ctx context.Context, sourceID string, baselineSince, currentSince time.Time) (current int64, baseline int64, err error)
+	GetLogSourceErrorSpikeActive(ctx context.Context, sourceID string) (bool, error)
+	SetLogSourceErrorSpikeActive(ctx context.Context, sourceID string, active bool) error
 }

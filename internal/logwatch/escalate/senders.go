@@ -76,15 +76,24 @@ func (s *GChatWebhookSender) Send(ctx context.Context, ch *store.MonitoringChann
 		// The webhook URL embeds key+token in its query and IS the credential.
 		// A *url.Error stringifies it verbatim and it would land in slog (which
 		// runs no redaction). Strip the resolved URL out of the error text.
-		return fmt.Errorf("escalate: webhook post failed: %s",
-			strings.ReplaceAll(err.Error(), strings.TrimSpace(string(url)), "[redacted-webhook-url]"))
+		clean := strings.ReplaceAll(err.Error(), strings.TrimSpace(string(url)), "[redacted-webhook-url]")
+		return transient(fmt.Errorf("escalate: webhook post failed: %s", clean))
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 256))
-		return fmt.Errorf("escalate: webhook status %d: %s", resp.StatusCode, string(body))
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 256))
+		err := fmt.Errorf("escalate: webhook status %d", resp.StatusCode)
+		if transientHTTPStatus(resp.StatusCode) {
+			return transient(err)
+		}
+		return err
 	}
 	return nil
+}
+
+func transientHTTPStatus(status int) bool {
+	return status == http.StatusRequestTimeout || status == http.StatusTooEarly ||
+		status == http.StatusTooManyRequests || status >= http.StatusInternalServerError
 }
 
 // MeshPoster is the slice of *mesh.Manager the mesh sender needs.

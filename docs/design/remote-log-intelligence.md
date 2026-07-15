@@ -38,7 +38,8 @@ install, no log shipper — just SSH reachability.
   downstream agents picking up the filed task; it is NOT this feature's
   responsibility and never will be. Read-only is enforced by construction:
   the SSH layer exposes no generic exec path — only the fixed read-only
-  per-kind argv templates (`docker logs`, `journalctl`, `tail`) exist, so
+  per-kind command templates (`docker logs`, `journalctl`) exist, with every
+  selector validated and shell-quoted before it reaches the remote shell, so
   adding any mutating command shape requires a new ADR, not a config change.
 - No log shipping agents / no mcplexer install required on watched boxes.
   (If a box *is* a paired p2p peer, a mesh transport can come later; SSH is
@@ -92,25 +93,35 @@ and 50-line function cap apply as usual.
 
 ### 5.1 Collector
 
-- Scheduler job per enabled source (reuses `internal/scheduler` specs — cron
-  or duration, default `1m`–`5m` per source).
-- Incremental pull: `docker logs --since <cursor> --until <now> <container>`
-  executed as **argv, never shell string**, over a pooled SSH connection.
+- The collector manager evaluates every enabled source against its
+  `internal/scheduler` spec (cron or duration, default `1m`–`5m` per source)
+  and runs at most four due pulls concurrently.
+- Incremental pull: `docker logs --timestamps --since <cursor> <container>`
+  carried as one command string over a host-key-pinned SSH connection. SSH has
+  no protocol-level argv exec, so fixed literals plus strict validation and
+  single-quoting of every variable token are the injection boundary.
 - Cursor = last-pulled timestamp + a rolling hash of the tail line to detect
   container restarts / log rotation (restart ⇒ cursor reset + `event`
   template noting the restart — that itself is signal).
 - Caps per pull: max bytes (default 4 MiB), max wall clock (default 30s),
   truncation is recorded as a synthetic template (`logwatch: pull truncated`)
   so silent gaps can't hide.
-- Health: consecutive-failure counter per host/source → status on dashboard +
-  mesh alert at threshold (mirrors worker `max_consecutive_failures`).
+- Health: consecutive failed scheduled pulls surface on the dashboard. The
+  third failure opens one critical incident through the normal dispatcher and
+  retries that episode until a route accepts it; an SSH host-key mismatch does
+  so on the first failure. A successful pull with zero lines resets health and
+  is not treated as a dark source.
 
 ### 5.2 Redaction
 
-Before any byte is persisted: reuse `internal/audit` redaction +
-`internal/sanitize` patterns (bearer tokens, api keys, emails, secret-shaped
-strings). Redaction runs *before* storage so raw ring buffers are already
-clean — digests can't leak what was never stored.
+Before any byte is persisted, reuse `internal/audit` value-pattern redaction
+for recognised bearer tokens, API keys, webhook URLs, JWTs, and private-key
+blocks. Redaction runs before storage, so recognised credential shapes do not
+reach the raw ring buffer or digest. This is defence in depth, not a proof that
+arbitrary application-specific secrets are impossible: watched services must
+still avoid logging secrets, operators must restrict access to the gateway DB,
+and each deployment should test its own log corpus before enabling model
+triage.
 
 ### 5.3 Distiller — the token-cost engine
 
@@ -130,9 +141,12 @@ clean — digests can't leak what was never stored.
 5. **Anomaly rules** (deterministic, cheap, run at pull time):
    - new error/critical-class template
    - rate spike: error-class count in window > K× trailing baseline (default 5×, min 10)
-   - source went dark (0 lines for N× its cadence when historically chatty)
-   Each fires ONE mesh message (`kind:alert`, `tags:logwatch,<severity>`,
-   content = mini-digest) — mesh-trigger throttling dedupes the rest.
+   - collector/source went dark: three consecutive failed scheduled pulls.
+     A successful pull with zero lines is healthy, so genuinely quiet services
+     do not page. Failed delivery is retried under one episode id; a successful
+     pull re-arms the next outage.
+   Each enters the deterministic dispatcher once; configured channels receive
+   it by severity, and a mesh channel can wake the AI worker for triage.
 6. **Digest renderer** — `logs.digest({source_ids?, window, budget_tokens})`
    fills the budget in priority order: new critical/error templates → rate
    spikes → new info templates → top count deltas → steady-state summary
@@ -181,10 +195,12 @@ Exactly the `memory-consolidator` pattern (`cmd/mcplexer/consolidator_autoinstal
 - **`pre_execute_script` zero-spend gate**:
   ```js
   const s = monitoring.stats({window: "10m"});
-  if (s.new_templates === 0 && s.error_delta === 0 && !hook.params.forced)
-    abort("quiet");
+  const forced = hook.run.trigger_kind === "mesh" || hook.run.trigger_kind === "manual";
+  if (s.new_templates === 0 && !forced) abort("quiet");
   ```
-  Quiet tick ⇒ status=blocked, zero model spend.
+  Quiet tick ⇒ status=blocked, zero model spend. Chronic known errors no longer
+  wake the model every sweep; deterministic anomaly mesh triggers still force
+  triage immediately.
 - Prompt: triage skill + `monitoring.digest({budget_tokens: 2000})`. The
   worker classifies severity (can raise/lower the deterministic floor),
   writes a one-paragraph incident summary, then calls `monitoring.notify`
@@ -197,7 +213,9 @@ Exactly the `memory-consolidator` pattern (`cmd/mcplexer/consolidator_autoinstal
   responsibility entirely — see Non-goals; the filed task with its
   drill-down pointers is this feature's terminal output.
 - Budgets: `max_wall_clock 300s`, `max_tool_calls 12`,
-  `max_monthly_cost_usd` set at install, `max_consecutive_failures 5`.
+  `max_monthly_cost_usd 5` by default, `max_consecutive_failures 5`.
+  Autoinstall converges these safety limits on existing workers while preserving
+  an explicit positive operator-set monthly cap, schedule, model, and enabled state.
 
 ### 5.6 Escalation — channels + deterministic dispatcher
 
@@ -280,7 +298,8 @@ Channel kinds (v1):
   worker and feeds googlechat space bindings).
 - **PWA/Web Push human escalation** is daemon-wide rather than a channel row.
   A newly discovered `critical` incident publishes one durable Signal event
-  to every active browser/PWA subscription. Evidence updates do not push
+  before synchronously waiting for an enabled browser/PWA subscription to
+  accept the push. Evidence updates do not push
   again; a post-remediation regression may alert when it creates a different
   canonical task. Lock-screen text contains only system/source context, never
   a raw log sample, and clicking opens the canonical task (or Monitoring while
@@ -291,8 +310,22 @@ Channel kinds (v1):
   instead of filing a duplicate).
 
 **Storm-proofing is layered**: mesh-trigger `throttle_seconds` (per-source),
-dispatcher `per_template_cooldown`, and `max_notifies_per_hour` global cap —
-an error storm becomes one task with a rising count, not 500 pings.
+severity-aware per-template cooldown, and independent hourly budgets. A higher
+severity bypasses the existing template cooldown; lower-severity traffic gets
+6 channel notifications/hour and cannot consume the separate critical budget
+(12/hour). Durable Signal history records every new critical incident, while
+lock-screen interruptions are capped at 6/hour. Transient channel and Web Push
+failures receive three bounded attempts.
+
+The current delivery contract is **accepted by at least one route**, not human
+acknowledgement. Signal persistence survives reloads and push/channel failure is
+observable, but there is not yet a durable channel outbox with acknowledgement,
+re-page, and failover scheduling. Production operators should configure at least
+two independent critical routes and run a synthetic end-to-end notification
+drill. Mobile → Push → Test returns success only after at least one enabled
+subscription accepts the push; the operator must still confirm it appeared on
+the intended device. Do not describe this as pager-grade until
+outbox/ack/re-page lands.
 
 ## 6. Data model (SQLite, migration NNN)
 
@@ -326,6 +359,7 @@ CREATE TABLE log_sources (
   enabled        INTEGER NOT NULL DEFAULT 1,
   cursor_ts      TEXT, cursor_hash TEXT,
   consecutive_failures INTEGER NOT NULL DEFAULT 0,
+  error_spike_active INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
   UNIQUE (workspace_id, name)
 );
@@ -342,13 +376,16 @@ CREATE TABLE log_templates (
   acked        INTEGER NOT NULL DEFAULT 0, ack_note TEXT
 );
 CREATE INDEX idx_templates_source_seen ON log_templates(source_id, last_seen);
+CREATE UNIQUE INDEX idx_templates_source_id ON log_templates(source_id, id);
 
 -- raw ring buffer, bounded by retention_mb/days, redacted before insert
 CREATE TABLE log_lines (
-  source_id   TEXT NOT NULL,
+  source_id   TEXT NOT NULL REFERENCES log_sources(id) ON DELETE CASCADE,
   template_id TEXT NOT NULL,
   ts          TEXT NOT NULL,
-  line        TEXT NOT NULL
+  line        TEXT NOT NULL,
+  FOREIGN KEY (source_id, template_id)
+    REFERENCES log_templates(source_id, id) ON DELETE CASCADE
 );
 CREATE INDEX idx_lines_source_ts ON log_lines(source_id, ts);
 
@@ -358,7 +395,7 @@ CREATE TABLE monitoring_channels (
   name         TEXT NOT NULL,
   kind         TEXT NOT NULL,               -- gchat_webhook | telegram | whatsapp | mesh
   config_json  TEXT NOT NULL DEFAULT '{}',  -- secret refs only, never plaintext creds
-  min_severity TEXT NOT NULL DEFAULT 'high',-- info|warn|error|critical floor
+  min_severity TEXT NOT NULL DEFAULT 'error',-- info|warn|error|critical floor
   enabled      INTEGER NOT NULL DEFAULT 1,
   created_at   TEXT NOT NULL, updated_at TEXT NOT NULL,
   UNIQUE (workspace_id, name)
@@ -379,17 +416,16 @@ costs ~nothing.
 2. **Host key pinning**: first successful dial records the pin (TOFU) on the
    `remote_hosts` row; any subsequent mismatch hard-fails the source and
    raises a `critical` mesh alert. No `InsecureIgnoreHostKey`, ever.
-3. **No shell**: remote commands are fixed per-kind argv templates
-  (`docker`, `logs`, `--since`, `<cursor>`, `<selector>`), including the
-  stable read-only `docker service logs` shape for Swarm; selectors are
-   validated against `^[A-Za-z0-9._/-]+$` at CRUD time *and* dial time.
-   `internal/gateway/cmdguard.go` rules extend to remote argv (no
-   `~/.mcplexer` references, no metacharacters).
+3. **Fixed shell command**: SSH exec carries one command string interpreted by
+   the remote login shell (there is no protocol-level argv exec). Commands use
+   fixed per-kind templates, and selectors are validated against
+   `^[A-Za-z0-9._/][A-Za-z0-9._/-]*$` then single-quoted at CRUD and dial time.
 4. **Bounded reads**: byte + wall-clock caps per pull; the SSH session is
    killed past deadline.
-5. **Least privilege guidance** (docs): dedicated `logwatch` user on the box,
-   in the `docker` group or with a sudoers line scoped to `docker logs`;
-   README snippet provided.
+5. **Box-side privilege boundary**: Docker-group access is root-equivalent,
+   not least privilege. Production should use a dedicated non-login account
+   with a forced-command, root-owned exact-grammar wrapper (and forwarding/PTY
+   disabled), or a dedicated rootless Docker daemon. See ADR 0007 §7.
 6. **Redaction before persistence** (§5.2) — digest/model layers only ever
    see scrubbed text.
 
@@ -403,7 +439,7 @@ costs ~nothing.
 | M3 | Distiller + `monitoring.*` namespace (incl. `notify` dispatcher + envelope) + anomaly rules | 10k-line synthetic corpus → <50 templates; digest respects budget_tokens ±10%; `monitoring.stats` returns in <50ms; new-error-template fires exactly one alert under storm test; every channel payload carries the deterministic envelope |
 | M4 | Built-in `log-watch` worker template + autoinstall + escalation engine + levers | quiet tick = blocked run, zero spend; seeded error storm → 1 task + 1 gchat message, no dupes; a newly discovered critical incident sends one durable PWA/Web Push human alert; policy editable via `update_worker` |
 | M5 | "Monitoring" page per workspace: hosts/sources/channels CRUD (settable gchat webhooks), template explorer, digest preview with token estimate, min_severity levers, install-worker button | e2e: add host → add source → add gchat_webhook channel → see templates → flip lever → worker installed; PWA passes existing lint/build |
-| M6 | Stretch — DONE: journald (systemd unit) + compose (project) + swarm (service) source kinds via fixed read-only argv templates, multi-format leading-timestamp parsing, UI kind selector; `monitoring.ack` shipped in M3. REMAINING: file kind (needs byte-offset cursoring, not time), follow-mode streaming, embedding-assisted residual clustering, mesh transport for paired peers | journald/compose/swarm collected + tested; file explicitly refused with a clear message |
+| M6 | Stretch — DONE: journald (systemd unit) + compose (project) + swarm (service) source kinds via fixed read-only command templates, multi-format leading-timestamp parsing, UI kind selector; `monitoring.ack` shipped in M3. REMAINING: file kind (needs byte-offset cursoring, not time), follow-mode streaming, embedding-assisted residual clustering, mesh transport for paired peers | journald/compose/swarm collected + tested; file explicitly refused with a clear message |
 
 Rough sizing: M1–M4 are each ~2–4 focused sessions; M5 similar on the web
 side. M2 and M3 are parallelizable after M1 lands (M3 can develop against

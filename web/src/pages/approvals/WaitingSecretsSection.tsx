@@ -2,7 +2,7 @@
 // on, alongside tool approvals. Display-only: the secret is still provided
 // through the native secret prompt — this panel gives the human visibility
 // plus a live countdown to the auto-expiry (defaultPromptTimeout, 2m).
-import { KeyRound } from 'lucide-react'
+import { AlertTriangle, KeyRound } from 'lucide-react'
 import type { SecretPrompt } from '@/hooks/use-secret-prompt-stream'
 
 function remaining(
@@ -50,11 +50,12 @@ export function WaitingSecretsSection({ prompts, now }: Props) {
                 </div>
                 {r.label && (
                   <span
-                    className={`shrink-0 text-xs tabular-nums ${
+                    className={`flex shrink-0 items-center gap-1 text-xs tabular-nums ${
                       r.urgent ? 'text-red-400' : 'text-muted-foreground'
                     }`}
                   >
-                    {r.expired ? r.label : `${r.label} left`}
+                    {r.urgent && <AlertTriangle aria-hidden="true" className="h-3.5 w-3.5" />}
+                    {r.expired ? r.label : `${r.urgent ? 'Urgent: ' : ''}${r.label} left`}
                   </span>
                 )}
               </div>

@@ -35,6 +35,9 @@ const (
 	// The prompt targets 3-4 batched outer calls. Keep triple that budget so
 	// a provider can recover from one malformed call without losing notify.
 	autoLogWatchMaxToolCalls = 12
+	// A real default ceiling prevents a forgotten worker from spending without
+	// bound. Existing positive operator-configured caps remain untouched.
+	autoLogWatchMaxMonthlyCostUSD = 5.0
 
 	// logWatchGate aborts before any model spend on quiet ticks. Its window
 	// deliberately matches the schedule: every new template is seen by one
@@ -47,7 +50,8 @@ const (
 	// it didn't itself trip this gate. Repeat observations are absorbed by the
 	// worker's canonical-task dedupe (task__list meta_match), not re-filed.
 	logWatchGate = `const s = monitoring.stats({window: "10m"});
-if (s.new_templates === 0 && s.error_delta === 0) abort("quiet");`
+const forced = hook.run.trigger_kind === "mesh" || hook.run.trigger_kind === "manual";
+if (s.new_templates === 0 && !forced) abort("quiet");`
 )
 
 func autoInstallLogWatchEnabled() bool {
@@ -78,9 +82,9 @@ func autoInstallLogWatch(ctx context.Context, db store.Store, workers *workersad
 		if installed, err := workers.Get(ctx, workersadmin.GetInput{
 			Name: autoLogWatchName, WorkspaceID: ws.ID,
 		}); err == nil && installed != nil && installed.Worker != nil {
-			// Present — converge the wake trigger (a prior boot may
-			// have installed the worker but failed on the trigger)
-			// without touching operator-tuned schedule/enabled state.
+			if err := convergeLogWatchWorker(ctx, workers, installed.Worker); err != nil {
+				log.Printf("log-watch autoinstall: safety config for workspace %s: %v", ws.ID, err)
+			}
 			if err := ensureLogWatchTrigger(ctx, workers, installed.Worker.ID); err != nil {
 				log.Printf("log-watch autoinstall: trigger for workspace %s: %v", ws.ID, err)
 			}
@@ -92,6 +96,39 @@ func autoInstallLogWatch(ctx context.Context, db store.Store, workers *workersad
 		}
 		log.Printf("log-watch autoinstall: installed in workspace %s", ws.ID)
 	}
+}
+
+// convergeLogWatchWorker upgrades safety/cost invariants without changing an
+// operator's enabled state, schedule, model, prompt, or positive monthly cap.
+func convergeLogWatchWorker(
+	ctx context.Context, workers *workersadmin.Service, worker *store.Worker,
+) error {
+	in := workersadmin.UpdateInput{ID: worker.ID}
+	dirty := false
+	if worker.PreExecuteScript != logWatchGate {
+		gate := logWatchGate
+		in.PreExecuteScript, dirty = &gate, true
+	}
+	setCappedInt(&in.MaxToolCalls, worker.MaxToolCalls, autoLogWatchMaxToolCalls, &dirty)
+	setCappedInt(&in.MaxWallClockSeconds, worker.MaxWallClockSeconds, 300, &dirty)
+	setCappedInt(&in.MaxConsecutiveFailures, worker.MaxConsecutiveFailures, 5, &dirty)
+	if worker.MaxMonthlyCostUSD <= 0 {
+		capUSD := autoLogWatchMaxMonthlyCostUSD
+		in.MaxMonthlyCostUSD, dirty = &capUSD, true
+	}
+	if !dirty {
+		return nil
+	}
+	_, err := workers.Update(ctx, in)
+	return err
+}
+
+func setCappedInt(dst **int, current, ceiling int, dirty *bool) {
+	if current > 0 && current <= ceiling {
+		return
+	}
+	value := ceiling
+	*dst, *dirty = &value, true
 }
 
 // ensureLogWatchTrigger creates the tag:logwatch wake trigger when the
@@ -163,11 +200,13 @@ func installLogWatchWorker(ctx context.Context, workers *workersadmin.Service, w
 	maxTools := autoLogWatchMaxToolCalls
 	maxWall := 300
 	maxFail := 5
+	maxMonthlyCost := autoLogWatchMaxMonthlyCostUSD
 	if _, err := workers.Update(ctx, workersadmin.UpdateInput{
 		ID:                     installed.ID,
 		PreExecuteScript:       &gate,
 		MaxToolCalls:           &maxTools,
 		MaxWallClockSeconds:    &maxWall,
+		MaxMonthlyCostUSD:      &maxMonthlyCost,
 		MaxConsecutiveFailures: &maxFail,
 	}); err != nil {
 		return err

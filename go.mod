@@ -1,6 +1,6 @@
 module github.com/don-works/mcplexer
 
-go 1.25.11
+go 1.25.12
 
 require (
 	aead.dev/minisign v0.3.0

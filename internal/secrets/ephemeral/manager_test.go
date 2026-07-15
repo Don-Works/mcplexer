@@ -228,15 +228,15 @@ func TestBusFanout(t *testing.T) {
 	defer bus.Unsubscribe(sub)
 
 	created, err := mgr.RequestPrompt(ctx, ephemeral.PromptRequest{
-		Reason: "fanout", Label: "X", Timeout: 2 * time.Second,
+		Reason: "fanout", Label: "X", Requester: "test-requester", Timeout: 2 * time.Second,
 	})
 	if err != nil {
 		t.Fatalf("RequestPrompt: %v", err)
 	}
 	select {
 	case e := <-sub:
-		if e.Type != "pending" || e.ID != created.ID {
-			t.Errorf("first event = %+v, want pending/%s", e, created.ID)
+		if e.Type != "pending" || e.ID != created.ID || e.Requester != "test-requester" {
+			t.Errorf("first event = %+v, want pending/%s from test-requester", e, created.ID)
 		}
 	case <-time.After(time.Second):
 		t.Fatal("no pending event published")

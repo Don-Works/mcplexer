@@ -1,8 +1,7 @@
 // monitoring_template.go — sqlite impl of the distiller's template
 // store + raw-line ring buffer (migration 128, M3). Templates are the
-// dedup unit: one row per masked line shape per source, with lifetime
-// counts. Window counts are computed from log_lines at query time so
-// digests are stateless.
+// dedup unit: one row per masked line shape per source; window counts
+// come from log_lines at query time so digests are stateless.
 package sqlite
 
 import (
@@ -120,9 +119,8 @@ func (d *DB) AckLogTemplate(ctx context.Context, id, note string) error {
 }
 
 // InsertLogLines batch-appends redacted lines to the ring buffer.
-// logLineInsertChunk bounds each multi-row INSERT so a high-volume pull
-// can't exceed SQLite's variable ceiling (SQLITE_MAX_VARIABLE_NUMBER,
-// 32766). 4 params/row × 500 rows = 2000 vars — comfortably under it.
+// logLineInsertChunk bounds each multi-row INSERT below SQLite's
+// variable ceiling (4 params/row × 500 rows = 2000, well under 32766).
 const logLineInsertChunk = 500
 
 func (d *DB) InsertLogLines(ctx context.Context, lines []store.LogLine) error {
@@ -158,45 +156,7 @@ func (d *DB) insertLogLineChunk(ctx context.Context, lines []store.LogLine) erro
 	return nil
 }
 
-// PruneLogLines enforces the per-source retention caps: age first,
-// then oldest-beyond-byte-budget. Returns rows removed.
-func (d *DB) PruneLogLines(ctx context.Context, sourceID string, maxAge time.Time, maxBytes int64) (int64, error) {
-	res, err := d.q.ExecContext(ctx,
-		`DELETE FROM log_lines WHERE source_id = ? AND ts < ?`,
-		sourceID, formatTime(maxAge.UTC()))
-	if err != nil {
-		return 0, fmt.Errorf("prune log lines by age: %w", err)
-	}
-	removed, _ := res.RowsAffected()
-	if maxBytes <= 0 {
-		return removed, nil
-	}
-	var total sql.NullInt64
-	if err := d.q.QueryRowContext(ctx,
-		`SELECT SUM(LENGTH(line)) FROM log_lines WHERE source_id = ?`,
-		sourceID).Scan(&total); err != nil {
-		return removed, fmt.Errorf("prune log lines size: %w", err)
-	}
-	if !total.Valid || total.Int64 <= maxBytes {
-		return removed, nil
-	}
-	// Drop the oldest half beyond budget in one pass; the next prune
-	// converges. Avoids a per-row loop on a hot path.
-	res, err = d.q.ExecContext(ctx, `
-		DELETE FROM log_lines WHERE rowid IN (
-			SELECT rowid FROM log_lines WHERE source_id = ?
-			ORDER BY ts ASC
-			LIMIT (SELECT COUNT(*)/2 FROM log_lines WHERE source_id = ?)
-		)`, sourceID, sourceID)
-	if err != nil {
-		return removed, fmt.Errorf("prune log lines by size: %w", err)
-	}
-	n, _ := res.RowsAffected()
-	return removed + n, nil
-}
-
-// CountLinesByTemplate returns per-template line counts within the
-// window — the digest's stateless window_count.
+// CountLinesByTemplate returns per-template counts within the window.
 func (d *DB) CountLinesByTemplate(ctx context.Context, sourceIDs []string, since time.Time) (map[string]int64, error) {
 	out := map[string]int64{}
 	if len(sourceIDs) == 0 {

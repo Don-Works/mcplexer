@@ -19,13 +19,9 @@ import (
 // the cursor. Any error leaves the cursor untouched so the next pull
 // re-covers the window.
 func (m *Manager) pullSource(ctx context.Context, src *store.LogSource) error {
-	switch src.Kind {
-	case store.LogSourceKindDocker, store.LogSourceKindCompose, store.LogSourceKindSwarm, store.LogSourceKindJournald:
-		// collected kinds
-	default:
-		return fmt.Errorf("logwatch: source kind %q is not collected (file kind needs byte-offset cursoring — tracked in M6)", src.Kind)
+	if err := validateCollectedKind(src.Kind); err != nil {
+		return err
 	}
-	// Dial-time re-validation, defence in depth (ADR 0007 §1).
 	if err := store.ValidateSelector(src.Selector); err != nil {
 		return err
 	}
@@ -40,32 +36,58 @@ func (m *Manager) pullSource(ctx context.Context, src *store.LogSource) error {
 	if err != nil {
 		return err
 	}
+	result, pullErr := m.executePull(ctx, host, cred, src)
+	if err := m.persistObservedPin(ctx, host.ID, result.NewPin); err != nil {
+		return err
+	}
+	if pullErr != nil {
+		return pullErr
+	}
+	return m.ingestPull(ctx, src, host, result)
+}
 
+func validateCollectedKind(kind string) error {
+	switch kind {
+	case store.LogSourceKindDocker, store.LogSourceKindCompose,
+		store.LogSourceKindSwarm, store.LogSourceKindJournald:
+		return nil
+	default:
+		return fmt.Errorf("logwatch: source kind %q is not collected (file kind needs byte-offset cursoring — tracked in M6)", kind)
+	}
+}
+
+func (m *Manager) executePull(
+	ctx context.Context, host *store.RemoteHost, cred sshx.Credential, src *store.LogSource,
+) (sshx.Result, error) {
 	since := time.Time{}
 	if src.CursorTS != nil {
 		since = *src.CursorTS
 	}
-	pctx, cancel := context.WithTimeout(ctx, pullTimeout)
+	pullCtx, cancel := context.WithTimeout(ctx, pullTimeout)
 	defer cancel()
-	res, err := m.runner.Pull(pctx, host, cred, src, since)
-	if res.NewPin != "" {
-		// TOFU: persist the first-seen fingerprint even when the read
-		// itself failed — the identity observation stands.
-		if perr := m.store.SetRemoteHostPin(ctx, host.ID, res.NewPin); perr != nil {
-			return fmt.Errorf("logwatch: persist TOFU pin: %w", perr)
-		}
-	}
-	if err != nil {
-		return err
-	}
+	return m.runner.Pull(pullCtx, host, cred, src, since)
+}
 
-	lines, firstRaw, lastRaw := parseLogLines(res.Output)
+func (m *Manager) persistObservedPin(ctx context.Context, hostID, pin string) error {
+	if pin == "" {
+		return nil
+	}
+	if err := m.store.SetRemoteHostPin(ctx, hostID, pin); err != nil {
+		return fmt.Errorf("logwatch: persist TOFU pin: %w", err)
+	}
+	return nil
+}
+
+func (m *Manager) ingestPull(
+	ctx context.Context, src *store.LogSource, host *store.RemoteHost, result sshx.Result,
+) error {
+	lines, firstRaw, lastRaw := parseLogLines(result.Stdout, result.Stderr)
 	lines, discontinuity := reconcileCursor(lines, firstRaw, src)
 	if discontinuity {
 		lines = append([]Line{{TS: m.now().UTC(),
 			Text: "logwatch: source discontinuity — container/service restarted, recreated, or logs rotated"}}, lines...)
 	}
-	if res.Truncated {
+	if result.Truncated {
 		lines = append(lines, Line{TS: m.now().UTC(),
 			Text: fmt.Sprintf("logwatch: pull truncated at %d bytes — window incomplete, raise max_pull_bytes or shorten schedule_spec", src.MaxPullBytes)})
 	}
@@ -111,15 +133,23 @@ type rawLine struct {
 	raw string
 }
 
-// parseLogLines splits timestamped log output (docker/compose
-// --timestamps, journald short-iso-precise) into redacted Lines. Each
+// parsedLine is one split-but-not-yet-redacted line from a single
+// stream, kept alongside its full raw text for cursor hashing.
+type parsedLine struct {
+	ts   time.Time
+	text string // raw line minus its leading timestamp token
+	raw  string // full raw line, pre-redaction
+}
+
+// splitStream splits one stream's timestamped output (docker/compose
+// --timestamps, journald short-iso-precise) into parsed lines. Each
 // raw line begins with a timestamp token in one of several layouts;
-// malformed lines keep their raw text and inherit the previous line's
-// timestamp. Returns the parsed lines plus the first and last raw
-// lines (pre-redaction) for cursor hashing.
-func parseLogLines(out []byte) ([]Line, rawLine, rawLine) {
-	var lines []Line
-	var first, last rawLine
+// malformed lines keep their raw text and inherit the PREVIOUS LINE
+// IN THIS STREAM's timestamp — stdout and stderr are timestamped
+// independently by the remote tool and must not borrow each other's
+// continuation timestamps.
+func splitStream(out []byte) []parsedLine {
+	var lines []parsedLine
 	var prevTS time.Time
 	for raw := range strings.SplitSeq(string(out), "\n") {
 		if strings.TrimSpace(raw) == "" {
@@ -131,12 +161,48 @@ func parseLogLines(out []byte) ([]Line, rawLine, rawLine) {
 			text = raw
 		}
 		prevTS = ts
-		lines = append(lines, Line{TS: ts, Text: audit.RedactString(text, nil)})
-		if first.raw == "" {
-			first = rawLine{ts: ts, raw: raw}
-		}
-		last = rawLine{ts: ts, raw: raw}
+		lines = append(lines, parsedLine{ts: ts, text: text, raw: raw})
 	}
+	return lines
+}
+
+// mergeByTS stably interleaves two independently-timestamped streams
+// by timestamp, ties favoring a. Docker preserves stream separation,
+// so app-stdout and app-stderr carry independent timestamps with no
+// cross-stream ordering guarantee on the wire; merging by timestamp
+// keeps the combined sequence — and therefore the cursor's
+// first/last-line semantics — chronologically meaningful.
+func mergeByTS(a, b []parsedLine) []parsedLine {
+	merged := make([]parsedLine, 0, len(a)+len(b))
+	i, j := 0, 0
+	for i < len(a) && j < len(b) {
+		if a[i].ts.After(b[j].ts) {
+			merged = append(merged, b[j])
+			j++
+		} else {
+			merged = append(merged, a[i])
+			i++
+		}
+	}
+	merged = append(merged, a[i:]...)
+	merged = append(merged, b[j:]...)
+	return merged
+}
+
+// parseLogLines merges stdout and stderr into one chronological,
+// redacted line sequence. Returns the parsed lines plus the first and
+// last raw lines (pre-redaction) for cursor hashing.
+func parseLogLines(stdout, stderr []byte) ([]Line, rawLine, rawLine) {
+	merged := mergeByTS(splitStream(stdout), splitStream(stderr))
+	if len(merged) == 0 {
+		return nil, rawLine{}, rawLine{}
+	}
+	lines := make([]Line, len(merged))
+	for i, p := range merged {
+		lines[i] = Line{TS: p.ts, Text: audit.RedactString(p.text, nil)}
+	}
+	first := rawLine{ts: merged[0].ts, raw: merged[0].raw}
+	last := rawLine{ts: merged[len(merged)-1].ts, raw: merged[len(merged)-1].raw}
 	return lines, first, last
 }
 

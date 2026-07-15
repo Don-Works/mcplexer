@@ -105,8 +105,9 @@ export function ChannelsSection({ workspaceId, channels, hosts, notifyEnabled, r
 
       {channels.length === 0 && !adding && (
         <p className="mt-2 text-sm text-muted-foreground">
-          No channels: incidents only reach the mesh and the task ledger. Add a
-          gchat webhook for team visibility; keep whatsapp for critical only.
+          No configured channels. New critical incidents still enter Signal and
+          attempt Web Push when a device is subscribed. Add a team route such as
+          Google Chat and an independent critical-only route such as WhatsApp.
         </p>
       )}
 

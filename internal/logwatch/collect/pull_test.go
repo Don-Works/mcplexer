@@ -52,6 +52,7 @@ func (fakeSecrets) Get(context.Context, string, string) ([]byte, error) {
 
 type fakeRunner struct {
 	out       string
+	errOut    string
 	truncated bool
 	newPin    string
 	err       error
@@ -62,7 +63,7 @@ type fakeRunner struct {
 func (r *fakeRunner) Pull(_ context.Context, _ *store.RemoteHost, _ sshx.Credential, src *store.LogSource, since time.Time) (sshx.Result, error) {
 	r.gotSince = since
 	r.gotKind = src.Kind
-	return sshx.Result{Output: []byte(r.out), Truncated: r.truncated, NewPin: r.newPin}, r.err
+	return sshx.Result{Stdout: []byte(r.out), Stderr: []byte(r.errOut), Truncated: r.truncated, NewPin: r.newPin}, r.err
 }
 
 type captureSink struct{ lines []Line }
@@ -115,6 +116,26 @@ func TestPull_FirstRun(t *testing.T) {
 	}
 	if fs.pin != "SHA256:firstseen" {
 		t.Fatalf("TOFU pin not persisted: %q", fs.pin)
+	}
+}
+
+// TestPull_StderrIngested proves a container's stderr-origin line
+// (docker preserves stream separation) reaches the sink like any
+// other line, chronologically merged with stdout.
+func TestPull_StderrIngested(t *testing.T) {
+	runner := &fakeRunner{
+		out:    "2026-07-08T14:00:00.000000000Z stdout hello\n",
+		errOut: "2026-07-08T14:00:00.500000000Z ERROR stderr line\n",
+	}
+	m, _, sink := newFixture(runner)
+	if err := m.pullSource(context.Background(), srcDocker()); err != nil {
+		t.Fatalf("pull: %v", err)
+	}
+	if len(sink.lines) != 2 {
+		t.Fatalf("expected 2 lines (stdout+stderr), got %d: %+v", len(sink.lines), sink.lines)
+	}
+	if sink.lines[0].Text != "stdout hello" || sink.lines[1].Text != "ERROR stderr line" {
+		t.Fatalf("lines not chronologically merged: %+v", sink.lines)
 	}
 }
 

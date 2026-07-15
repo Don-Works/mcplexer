@@ -1,7 +1,7 @@
 // tools_monitoring.go — MCP tool defs for the Monitoring feature
 // (remote hosts, log sources, alert channels; migration 128). All
 // CWD-gated like every mcplexer__* tool. The collector only ever runs
-// fixed read-only argv templates on these hosts — see ADR 0007.
+// fixed read-only command templates on these hosts — see ADR 0007.
 package control
 
 import (

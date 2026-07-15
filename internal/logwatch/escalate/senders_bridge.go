@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/don-works/mcplexer/internal/store"
 )
@@ -71,9 +72,12 @@ func (s *WhatsAppSender) Send(ctx context.Context, ch *store.MonitoringChannel, 
 	if !secretRefKeyRe.MatchString(cfg.ChatIDRef) {
 		return fmt.Errorf("escalate: channel %s chat_id_ref must be a secret:// ref", ch.Name)
 	}
-	tool := cfg.Tool
+	tool := strings.TrimSpace(cfg.Tool)
 	if tool == "" {
 		tool = "openwa__send_text"
+	}
+	if tool != "openwa__send_text" {
+		return fmt.Errorf("escalate: channel %s has unsupported whatsapp tool", ch.Name)
 	}
 	args, err := json.Marshal(map[string]string{
 		"chat_id":    cfg.ChatIDRef,

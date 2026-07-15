@@ -19,6 +19,24 @@ type fakePushStore struct {
 	subs map[string]notify.WebPushSubscription
 }
 
+type fakeNotifyStore struct{}
+
+func (*fakeNotifyStore) Insert(context.Context, notify.Event) (int64, error) { return 1, nil }
+func (*fakeNotifyStore) List(context.Context, notify.ListFilter) ([]notify.StoredEvent, error) {
+	return nil, nil
+}
+func (*fakeNotifyStore) MarkRead(context.Context, []int64) error  { return nil }
+func (*fakeNotifyStore) MarkAllRead(context.Context) error        { return nil }
+func (*fakeNotifyStore) UnreadCount(context.Context) (int, error) { return 0, nil }
+func (*fakeNotifyStore) Prune(context.Context, int) (int, error)  { return 0, nil }
+
+type acceptingPushDispatcher struct{ event notify.Event }
+
+func (d *acceptingPushDispatcher) Dispatch(_ context.Context, event notify.Event) error {
+	d.event = event
+	return nil
+}
+
 func newFakePushStore() *fakePushStore {
 	return &fakePushStore{
 		keys: notify.WebPushVAPIDKeys{
@@ -70,6 +88,9 @@ func (s *fakePushStore) MarkPushSubscriptionError(context.Context, string, strin
 func TestPushHandlerLifecycleAndTestEvent(t *testing.T) {
 	store := newFakePushStore()
 	bus := notify.NewBus()
+	bus.SetStore(&fakeNotifyStore{})
+	push := &acceptingPushDispatcher{}
+	bus.SetDispatcher(push)
 	ch := bus.Subscribe()
 	defer bus.Unsubscribe(ch)
 
@@ -119,6 +140,9 @@ func TestPushHandlerLifecycleAndTestEvent(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("timed out waiting for push test event")
 	}
+	if push.event.Kind != "push_test" {
+		t.Fatalf("push dispatcher event = %+v", push.event)
+	}
 
 	rec = httptest.NewRecorder()
 	h.unsubscribe(rec, httptest.NewRequest(http.MethodPost, "/api/v1/push/unsubscribe", strings.NewReader(`{"endpoint":"https://push.example/sub"}`)))
@@ -129,6 +153,17 @@ func TestPushHandlerLifecycleAndTestEvent(t *testing.T) {
 	h.status(rec, httptest.NewRequest(http.MethodGet, "/api/v1/push/status", nil))
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"subscription_count":0`) {
 		t.Fatalf("status after unsubscribe = %d %q", rec.Code, rec.Body.String())
+	}
+}
+
+func TestPushHandlerTestFailsWithoutAcceptedPushRoute(t *testing.T) {
+	bus := notify.NewBus()
+	bus.SetStore(&fakeNotifyStore{})
+	h := &pushHandler{store: newFakePushStore(), bus: bus}
+	rec := httptest.NewRecorder()
+	h.test(rec, httptest.NewRequest(http.MethodPost, "/api/v1/push/test", nil))
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("test status = %d, body = %q", rec.Code, rec.Body.String())
 	}
 }
 

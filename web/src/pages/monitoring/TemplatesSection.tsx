@@ -14,12 +14,24 @@ const sevTone: Record<Severity, 'muted' | 'warn' | 'high' | 'critical'> = {
   info: 'muted', warn: 'warn', error: 'high', critical: 'critical',
 }
 
-export function TemplatesSection({ templates, refetch }: {
+export function TemplatesSection({ workspaceId, templates, refetch }: {
+  workspaceId: string
   templates: MonitoringTemplate[]
   refetch: () => void
 }) {
   const [sevFilter, setSevFilter] = useState<Severity | 'all'>('all')
   const rows = templates.filter(t => sevFilter === 'all' || t.severity === sevFilter)
+
+  async function acknowledge(template: MonitoringTemplate) {
+    try {
+      await ackTemplate(template.id, workspaceId, 'acked from Monitoring page')
+      toast.success('template acked')
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : String(error))
+    } finally {
+      refetch()
+    }
+  }
 
   return (
     <section>
@@ -67,11 +79,8 @@ export function TemplatesSection({ templates, refetch }: {
                 ) : (
                   <Button size="sm" variant="ghost"
                     title="mark known/expected — stops novelty wake-ups, stays in digests"
-                    onClick={async () => {
-                      await ackTemplate(t.id, 'acked from Monitoring page')
-                      toast.success('template acked')
-                      refetch()
-                    }}>
+                    aria-label={`Acknowledge template ${t.masked}`}
+                    onClick={() => acknowledge(t)}>
                     <Check className="h-4 w-4" />
                   </Button>
                 )}

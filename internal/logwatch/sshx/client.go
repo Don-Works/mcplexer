@@ -4,7 +4,6 @@
 package sshx
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -14,15 +13,20 @@ import (
 
 	"golang.org/x/crypto/ssh"
 
+	"github.com/don-works/mcplexer/internal/audit"
 	"github.com/don-works/mcplexer/internal/store"
 )
 
 // DialTimeout bounds the TCP+handshake phase of a dial.
 const DialTimeout = 15 * time.Second
 
-// Result is one bounded command run.
+// Result is one bounded command run. Stdout and Stderr share ONE
+// maxBytes budget (see captureStreams) — Docker preserves stream
+// separation for docker/compose/swarm logs, so an app's stderr-origin
+// lines land in Stderr, not Stdout.
 type Result struct {
-	Output    []byte
+	Stdout    []byte
+	Stderr    []byte
 	Truncated bool
 	// NewPin is set when the dial TOFU-recorded a fingerprint (host
 	// had no pin). The caller persists it via SetRemoteHostPin.
@@ -73,7 +77,8 @@ func Dial(ctx context.Context, host *store.RemoteHost, cred Credential) (*Client
 func (c *Client) NewPin() string { return c.newPin }
 
 // Run executes one pre-built command (from a fixed builder in this
-// package) with a byte cap. The session dies with the context.
+// package) with a byte cap shared across stdout and stderr. The
+// session dies with the context.
 func (c *Client) Run(ctx context.Context, command string, maxBytes int64) (Result, error) {
 	res := Result{NewPin: c.newPin}
 	if maxBytes <= 0 {
@@ -84,50 +89,65 @@ func (c *Client) Run(ctx context.Context, command string, maxBytes int64) (Resul
 		return res, fmt.Errorf("sshx: new session: %w", err)
 	}
 	defer func() { _ = sess.Close() }()
-
-	stdout, err := sess.StdoutPipe()
+	stdout, stderr, err := sessionPipes(sess)
 	if err != nil {
-		return res, fmt.Errorf("sshx: stdout pipe: %w", err)
+		return res, err
 	}
-	var stderr bytes.Buffer
-	sess.Stderr = &stderr
-
 	if err := sess.Start(command); err != nil {
 		return res, fmt.Errorf("sshx: start: %w", err)
 	}
-
-	// Kill the session when the context dies so a hung remote read
-	// cannot outlive the wall-clock cap.
-	done := make(chan struct{})
-	defer close(done)
-	go func() {
-		select {
-		case <-ctx.Done():
-			_ = sess.Close()
-		case <-done:
-		}
-	}()
-
-	// Read one byte past the cap so truncation is detectable.
-	out, readErr := io.ReadAll(io.LimitReader(stdout, maxBytes+1))
-	if int64(len(out)) > maxBytes {
-		out = out[:maxBytes]
-		res.Truncated = true
-		_ = sess.Close() // stop the remote writer; Wait below will error, which we ignore for truncated reads
-	}
-	res.Output = out
-
+	stopWatch := context.AfterFunc(ctx, func() { _ = sess.Close() })
+	defer stopWatch()
+	so, se, truncated, readErr := captureStreams(stdout, stderr, maxBytes, func() { _ = sess.Close() })
+	res.Stdout, res.Stderr, res.Truncated = so, se, truncated
 	waitErr := sess.Wait()
+	return finishRun(ctx, command, res, readErr, waitErr)
+}
+
+func sessionPipes(session *ssh.Session) (io.Reader, io.Reader, error) {
+	stdout, err := session.StdoutPipe()
+	if err != nil {
+		return nil, nil, fmt.Errorf("sshx: stdout pipe: %w", err)
+	}
+	stderr, err := session.StderrPipe()
+	if err != nil {
+		return nil, nil, fmt.Errorf("sshx: stderr pipe: %w", err)
+	}
+	return stdout, stderr, nil
+}
+
+func finishRun(
+	ctx context.Context, command string, result Result, readErr, waitErr error,
+) (Result, error) {
 	if ctx.Err() != nil {
-		return res, fmt.Errorf("sshx: run aborted: %w", ctx.Err())
+		return result, fmt.Errorf("sshx: run aborted: %w", ctx.Err())
 	}
 	if readErr != nil {
-		return res, fmt.Errorf("sshx: read: %w", readErr)
+		return result, fmt.Errorf("sshx: read: %w", readErr)
 	}
-	if waitErr != nil && !res.Truncated {
-		return res, fmt.Errorf("sshx: %s: %w (stderr: %s)", firstToken(command), waitErr, truncateStr(stderr.String(), 512))
+	if waitErr != nil && !result.Truncated {
+		return result, fmt.Errorf("sshx: %s: %w (%s)",
+			firstToken(command), waitErr, diagnostic(result.Stdout, result.Stderr))
 	}
-	return res, nil
+	return result, nil
+}
+
+// diagnostic returns a small, redacted tail of the run's captured
+// output for a non-zero-exit error — never the full command or
+// output (ADR 0007 §5: nothing unredacted reaches logs). stderr is
+// preferred since that's where remote tools put failure messages;
+// stdout is a fallback when stderr is empty.
+func diagnostic(stdout, stderr []byte) string {
+	s := string(stderr)
+	if s == "" {
+		s = string(stdout)
+	}
+	s = audit.RedactString(s, nil)
+	const n = 256
+	if len(s) <= n {
+		return s
+	}
+	return "…" + s[len(s)-n:]
 }
 
 // Close tears down the ssh and agent connections.
@@ -147,11 +167,4 @@ func firstToken(s string) string {
 		}
 	}
 	return s
-}
-
-func truncateStr(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return s[:n] + "…"
 }

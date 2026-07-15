@@ -156,15 +156,27 @@ func (h *handler) handleMonitoringDigest(ctx context.Context, raw json.RawMessag
 
 func (h *handler) handleMonitoringSearch(ctx context.Context, raw json.RawMessage) json.RawMessage {
 	var args struct {
-		SourceID string `json:"source_id"`
-		Q        string `json:"q"`
-		Limit    int    `json:"limit"`
+		SourceID    string `json:"source_id"`
+		Q           string `json:"q"`
+		Limit       int    `json:"limit"`
+		WorkspaceID string `json:"workspace_id"`
 	}
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return marshalErrorResult(err.Error())
 	}
 	if args.SourceID == "" || args.Q == "" {
 		return marshalErrorResult("source_id and q are required")
+	}
+	wsID, rpc := h.dataWorkspace(ctx, args.WorkspaceID, false)
+	if rpc != nil {
+		return rpcResult(rpc)
+	}
+	owned, err := h.monitoringSourceInWorkspace(ctx, args.SourceID, wsID)
+	if err != nil {
+		return marshalErrorResult(err.Error())
+	}
+	if !owned {
+		return marshalErrorResult(store.ErrLogSourceNotFound.Error())
 	}
 	lines, err := h.store.SearchLogLines(ctx, args.SourceID, args.Q, args.Limit)
 	if err != nil {
@@ -175,14 +187,26 @@ func (h *handler) handleMonitoringSearch(ctx context.Context, raw json.RawMessag
 
 func (h *handler) handleMonitoringRaw(ctx context.Context, raw json.RawMessage) json.RawMessage {
 	var args struct {
-		TemplateID string `json:"template_id"`
-		Limit      int    `json:"limit"`
+		TemplateID  string `json:"template_id"`
+		Limit       int    `json:"limit"`
+		WorkspaceID string `json:"workspace_id"`
 	}
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return marshalErrorResult(err.Error())
 	}
 	if args.TemplateID == "" {
 		return marshalErrorResult("template_id is required")
+	}
+	wsID, rpc := h.dataWorkspace(ctx, args.WorkspaceID, false)
+	if rpc != nil {
+		return rpcResult(rpc)
+	}
+	owned, err := h.monitoringTemplateInWorkspace(ctx, args.TemplateID, wsID)
+	if err != nil {
+		return marshalErrorResult(err.Error())
+	}
+	if !owned {
+		return marshalErrorResult(store.ErrLogTemplateNotFound.Error())
 	}
 	lines, err := h.store.ListLogLinesByTemplate(ctx, args.TemplateID, args.Limit)
 	if err != nil {
@@ -193,14 +217,26 @@ func (h *handler) handleMonitoringRaw(ctx context.Context, raw json.RawMessage) 
 
 func (h *handler) handleMonitoringAck(ctx context.Context, raw json.RawMessage) json.RawMessage {
 	var args struct {
-		TemplateID string `json:"template_id"`
-		Note       string `json:"note"`
+		TemplateID  string `json:"template_id"`
+		Note        string `json:"note"`
+		WorkspaceID string `json:"workspace_id"`
 	}
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return marshalErrorResult(err.Error())
 	}
 	if args.TemplateID == "" {
 		return marshalErrorResult("template_id is required")
+	}
+	wsID, rpc := h.dataWorkspace(ctx, args.WorkspaceID, true)
+	if rpc != nil {
+		return rpcResult(rpc)
+	}
+	owned, err := h.monitoringTemplateInWorkspace(ctx, args.TemplateID, wsID)
+	if err != nil {
+		return marshalErrorResult(err.Error())
+	}
+	if !owned {
+		return marshalErrorResult(store.ErrLogTemplateNotFound.Error())
 	}
 	if err := h.store.AckLogTemplate(ctx, args.TemplateID, args.Note); err != nil {
 		return marshalErrorResult(err.Error())
@@ -242,9 +278,12 @@ func (h *handler) handleMonitoringNotify(ctx context.Context, raw json.RawMessag
 		NewIncident: args.NewIncident, SourceName: args.SourceName, TemplateID: args.TemplateID,
 	}
 	if args.RemoteHostID != "" {
-		host, err := h.store.GetRemoteHost(ctx, args.RemoteHostID)
+		host, owned, err := h.monitoringHostInWorkspace(ctx, args.RemoteHostID, wsID)
 		if err != nil {
 			return marshalErrorResult("remote_host_id: " + err.Error())
+		}
+		if !owned {
+			return marshalErrorResult("remote_host_id: " + store.ErrRemoteHostNotFound.Error())
 		}
 		n.RemoteHostName, n.RemoteHostAddr = host.Name, host.SSHHost
 	}

@@ -21,17 +21,19 @@ model context.
 
 The SSH layer (`internal/logwatch/sshx`) exposes no API that accepts a
 command string. Callers select a *kind* (`docker`, later `journald` /
-`file`) and the executor builds a fixed argv template:
+`file`) and the executor builds a fixed command template:
 
-- `docker`: `docker logs --timestamps --since <cursor> --until <now> <selector>`
+- `docker`: `docker logs --timestamps --since <cursor> <selector>`
 - future kinds add their own fixed read-only templates (`journalctl -u`,
   `tail -c`).
 
-Selectors are validated against `^[A-Za-z0-9._/-]+$` at CRUD time **and**
-again at dial time. No shell is invoked on the remote side (`ssh` exec
-channel with argv, never `sh -c`). Adding any mutating command shape
-requires a new ADR — it is not a configuration or code-review-sized change.
-`internal/gateway/cmdguard.go` protected-path rules extend to remote argv.
+Selectors are validated against
+`^[A-Za-z0-9._/][A-Za-z0-9._/-]*$` at CRUD time **and** again at dial time,
+then single-quoted. SSH's exec request carries one command string which the
+remote login shell interprets; the protocol does not provide a true argv exec.
+The safety boundary is therefore the literal per-kind template plus strict
+validation and quoting—not an absence of a shell. Adding any mutating command
+shape requires a new ADR.
 
 ### 2. Credentials: two auth-scope types, both landing together
 
@@ -65,10 +67,13 @@ synthetic template so silent gaps cannot masquerade as quiet logs.
 
 ### 5. Redaction before persistence
 
-Every line passes the audit/sanitize redaction pass (bearer tokens, API
-keys, secret-shaped strings) **before** it is written to the ring buffer.
-Digests, templates, search results, and model prompts are downstream of
-storage, so nothing unredacted can reach them.
+Every line passes the audit value-pattern redaction pass (recognised bearer
+tokens, API keys, webhook URLs, JWTs, and private-key blocks) **before** it is
+written to the ring buffer. Digests, templates, search results, and model
+prompts are downstream of that pass. Pattern redaction is defence in depth,
+not a guarantee for arbitrary application-specific secret formats: watched
+services must avoid logging secrets, gateway DB access remains sensitive, and
+operators must test representative log corpora before enabling model triage.
 
 ### 6. Outbound notifications: daemon-side dispatch only
 
@@ -81,15 +86,30 @@ except through the dispatcher, which also stamps the deterministic envelope
 
 ### 7. Least privilege on the box (guidance, not enforcement)
 
-Documented setup: a dedicated `logwatch` user in the `docker` group (or a
-sudoers line scoped to `docker logs`). The feature functions with any
-account that can run `docker logs`; the docs steer operators toward the
-narrow one.
+Membership in the Docker daemon's group is **root-equivalent**: that user can
+normally start a privileged container and mount the host filesystem. It is a
+functional setup, not a least-privilege one, and production reviews must record
+that risk explicitly.
+
+The preferred production setup is a dedicated, non-login `logwatch` account
+whose SSH key is restricted with an `authorized_keys` forced command. A
+root-owned wrapper must reject anything except the exact supported log-read
+grammars and then invoke Docker; the account must not receive unrestricted
+Docker-socket access. Restrict the key further with `no-port-forwarding`,
+`no-agent-forwarding`, `no-X11-forwarding`, and `no-pty`. A rootless Docker
+daemon dedicated to the watched workload is another acceptable boundary.
+
+A bare sudoers wildcard such as “allow `docker logs *`” is not sufficient:
+argument matching and future Docker flags can reopen command or daemon access.
+Until the forced-command/rootless boundary is deployed and tested, treat the
+remote credential as host-root-equivalent.
 
 ## Consequences
 
-- A compromised gateway can *read* logs on watched boxes but cannot mutate
-  them through this subsystem — the executor physically lacks the code path.
+- The current command builder offers no configurable mutation path, but the
+  remote credential's true blast radius depends on the box-side restriction.
+- A Docker-group credential is host-root-equivalent even though MCPlexer only
+  constructs log-read commands.
 - Key rotation = update the auth scope; host rebuild = explicit re-pin.
 - The no-generic-exec rule means future remediation features cannot quietly
   reuse this transport; they must go through their own ADR and design.

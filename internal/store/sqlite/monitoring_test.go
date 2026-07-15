@@ -188,7 +188,7 @@ func TestMonitoringChannelCRUD(t *testing.T) {
 
 	c := &store.MonitoringChannel{
 		WorkspaceID: wsID, Name: "incidents", Kind: store.ChannelKindGChatWebhook,
-		ConfigJSON: `{"webhook_ref":"secret://GCHAT_WEBHOOK_INCIDENTS"}`,
+		ConfigJSON: `{"auth_scope_id":"scope-test","webhook_ref":"secret://GCHAT_WEBHOOK_INCIDENTS"}`,
 		Enabled:    true,
 	}
 	if err := db.CreateMonitoringChannel(ctx, c); err != nil {
@@ -239,6 +239,14 @@ func TestMonitoringChannelRejectsPlaintext(t *testing.T) {
 			WorkspaceID: wsID, Name: "bad4", Kind: "email"}},
 		{"bad severity", store.MonitoringChannel{
 			WorkspaceID: wsID, Name: "bad5", Kind: store.ChannelKindMesh, MinSeverity: "high"}},
+		{"gchat missing auth scope", store.MonitoringChannel{
+			WorkspaceID: wsID, Name: "bad6", Kind: store.ChannelKindGChatWebhook,
+			ConfigJSON: `{"webhook_ref":"secret://GCHAT_WEBHOOK"}`}},
+		{"telegram missing chat id", store.MonitoringChannel{
+			WorkspaceID: wsID, Name: "bad7", Kind: store.ChannelKindTelegram}},
+		{"whatsapp arbitrary tool", store.MonitoringChannel{
+			WorkspaceID: wsID, Name: "bad8", Kind: store.ChannelKindWhatsApp,
+			ConfigJSON: `{"chat_id_ref":"secret://WHATSAPP_CHAT_ID","tool":"other__send"}`}},
 	}
 	for _, tc := range cases {
 		ch := tc.ch

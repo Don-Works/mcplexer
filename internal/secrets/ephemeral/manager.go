@@ -148,6 +148,7 @@ func (m *Manager) RequestPrompt(
 			ID:        id,
 			Reason:    req.Reason,
 			Label:     req.Label,
+			Requester: req.Requester,
 			Status:    "pending",
 			ExpiresAt: expires,
 			CreatedAt: now,

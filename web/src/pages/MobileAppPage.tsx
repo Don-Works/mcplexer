@@ -40,6 +40,7 @@ import {
 import { getHealth, listApprovals, listUsers, listWorkspaces, type HealthResponse } from '@/api/client'
 import {
   getPushPublicKey,
+  sendTestPush,
   subscribePush,
   unsubscribePush,
   type BrowserPushSubscriptionJSON,
@@ -333,6 +334,7 @@ function StatusStrip({
   const [standalone, setStandalone] = useState(() => isStandaloneMode())
   const [pushState, setPushState] = useState<PushState>('checking')
   const [pushBusy, setPushBusy] = useState(false)
+  const [pushTestBusy, setPushTestBusy] = useState(false)
   const [expanded, setExpanded] = useState(false)
   const secure = secureOrigin()
   const trusted = hostnameTrusted(window.location.hostname, health?.system?.trusted_hosts)
@@ -415,6 +417,18 @@ function StatusStrip({
     } finally { setPushBusy(false) }
   }
 
+  async function testPush() {
+    setPushTestBusy(true)
+    try {
+      await sendTestPush()
+      toast.success('An enabled device accepted the test push. Confirm the notification appeared.')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'No enabled device accepted the test push')
+    } finally {
+      setPushTestBusy(false)
+    }
+  }
+
   const appLabel = standalone ? 'installed' : secure ? 'browser' : 'no HTTPS'
   const pushLabel = pushState === 'on'
     ? 'on'
@@ -470,11 +484,22 @@ function StatusStrip({
               <Bell className="h-3.5 w-3.5" />
               Push {pushLabel}
             </span>
+            {pushState === 'on' ? (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={testPush}
+                disabled={pushBusy || pushTestBusy}
+              >
+                <Bell className="mr-1 h-4 w-4" />
+                {pushTestBusy ? 'Sending' : 'Test'}
+              </Button>
+            ) : null}
             <Button
               size="sm"
               variant={pushState === 'on' ? 'default' : 'outline'}
               onClick={togglePush}
-              disabled={pushBusy}
+              disabled={pushBusy || pushTestBusy}
             >
               {pushState === 'on' ? <CheckCircle2 className="mr-1 h-4 w-4" /> : <BellRing className="mr-1 h-4 w-4" />}
               {pushBusy ? 'Working' : pushState === 'on' ? 'Disable' : pushState === 'blocked' ? 'How to enable' : 'Enable'}

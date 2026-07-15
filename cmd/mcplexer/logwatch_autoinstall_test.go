@@ -70,11 +70,18 @@ func TestAutoInstallLogWatch(t *testing.T) {
 	if !strings.Contains(w.PreExecuteScript, `window: "10m"`) {
 		t.Fatalf("gate window must match the 10m schedule: %q", w.PreExecuteScript)
 	}
+	if strings.Contains(w.PreExecuteScript, "error_delta") ||
+		!strings.Contains(w.PreExecuteScript, `trigger_kind === "mesh"`) {
+		t.Fatalf("gate must ignore chronic errors but admit anomaly wakes: %q", w.PreExecuteScript)
+	}
 	if !strings.Contains(w.PromptTemplate, "TOP-LEVEL CALL BUDGET:") {
 		t.Fatalf("batching guidance missing from prompt")
 	}
 	if w.MaxToolCalls != autoLogWatchMaxToolCalls || w.MaxWallClockSeconds != 300 || w.MaxConsecutiveFailures != 5 {
 		t.Fatalf("caps not stamped: %+v", w)
+	}
+	if w.MaxMonthlyCostUSD != autoLogWatchMaxMonthlyCostUSD {
+		t.Fatalf("monthly cost cap = %v, want %v", w.MaxMonthlyCostUSD, autoLogWatchMaxMonthlyCostUSD)
 	}
 	if strings.Contains(w.ToolAllowlistJSON, "telegram") || strings.Contains(w.ToolAllowlistJSON, "openwa") {
 		t.Fatalf("worker must hold NO channel tools: %s", w.ToolAllowlistJSON)
@@ -95,5 +102,47 @@ func TestAutoInstallLogWatch(t *testing.T) {
 	triggers, _ = db.ListWorkerMeshTriggers(ctx, w.ID)
 	if len(triggers) != 1 {
 		t.Fatalf("second run must not duplicate triggers: %d", len(triggers))
+	}
+}
+
+func TestAutoInstallLogWatchConvergesLegacySafetyConfig(t *testing.T) {
+	allowClaudeCLI(t)
+	enableLogWatchAutoinstall(t)
+	ctx := context.Background()
+	db := newAutoinstallDB(t)
+	scopeID := seedAPIKeyScope(t, db)
+	wsID := seedWorkspace(t, db, "legacy-watch")
+	seedLogSource(t, db, wsID, scopeID)
+	workers := newWorkerAdminWithTemplates(t, db)
+	workers.SetMeshTriggerStore(db)
+	autoInstallLogWatch(ctx, db, workers)
+
+	got, err := workers.Get(ctx, workersadmin.GetInput{Name: autoLogWatchName, WorkspaceID: wsID})
+	if err != nil || got.Worker == nil {
+		t.Fatalf("installed worker: %v", err)
+	}
+	legacyGate, schedule, enabled := `const s=monitoring.stats({window:"10m"}); if(s.error_delta===0) abort("quiet");`, "30m", false
+	tooManyTools, tooLong, tooManyFailures, unlimited := 50, 900, 9, 0.0
+	_, err = workers.Update(ctx, workersadmin.UpdateInput{ID: got.Worker.ID,
+		PreExecuteScript: &legacyGate, ScheduleSpec: &schedule, Enabled: &enabled,
+		MaxToolCalls: &tooManyTools, MaxWallClockSeconds: &tooLong,
+		MaxConsecutiveFailures: &tooManyFailures, MaxMonthlyCostUSD: &unlimited})
+	if err != nil {
+		t.Fatalf("seed legacy config: %v", err)
+	}
+
+	autoInstallLogWatch(ctx, db, workers)
+	got, err = workers.Get(ctx, workersadmin.GetInput{Name: autoLogWatchName, WorkspaceID: wsID})
+	if err != nil {
+		t.Fatalf("get converged worker: %v", err)
+	}
+	w := got.Worker
+	if w.Enabled || w.ScheduleSpec != schedule {
+		t.Fatalf("operator state was clobbered: enabled=%v schedule=%s", w.Enabled, w.ScheduleSpec)
+	}
+	if w.PreExecuteScript != logWatchGate || w.MaxToolCalls != 12 ||
+		w.MaxWallClockSeconds != 300 || w.MaxConsecutiveFailures != 5 ||
+		w.MaxMonthlyCostUSD != autoLogWatchMaxMonthlyCostUSD {
+		t.Fatalf("legacy safety config did not converge: %+v", w)
 	}
 }

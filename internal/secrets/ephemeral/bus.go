@@ -14,6 +14,7 @@ type Event struct {
 	ID        string    `json:"id"`
 	Reason    string    `json:"reason,omitempty"`
 	Label     string    `json:"label,omitempty"`
+	Requester string    `json:"requester,omitempty"`
 	Status    string    `json:"status,omitempty"` // pending|submitted|cancelled|timeout
 	ExpiresAt time.Time `json:"expires_at,omitempty"`
 	CreatedAt time.Time `json:"created_at,omitempty"`
