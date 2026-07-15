@@ -109,16 +109,20 @@ func TestClassifier_DefaultsAndOverrides(t *testing.T) {
 
 // fakeDistillStore records upserts/inserts in memory.
 type fakeDistillStore struct {
-	templates map[string]int64
-	lines     []store.LogLine
+	templates   map[string]int64
+	templateSev map[string]string
+	lines       []store.LogLine
+	spikeActive map[string]bool
 }
 
 func (f *fakeDistillStore) UpsertLogTemplate(_ context.Context, tpl *store.LogTemplate, n int64) (bool, error) {
 	if f.templates == nil {
 		f.templates = map[string]int64{}
+		f.templateSev = map[string]string{}
 	}
 	_, existed := f.templates[tpl.ID]
 	f.templates[tpl.ID] += n
+	f.templateSev[tpl.ID] = tpl.Severity
 	return !existed, nil
 }
 func (f *fakeDistillStore) InsertLogLines(_ context.Context, lines []store.LogLine) error {
@@ -129,11 +133,46 @@ func (f *fakeDistillStore) PruneLogLines(context.Context, string, time.Time, int
 	return 0, nil
 }
 
-type captureNotifier struct{ notes []Notification }
+// CountErrorLinesInWindows mirrors the sqlite implementation's window
+// semantics (current: ts >= currentSince; baseline: ts in
+// [baselineSince, currentSince)) over the in-memory line log.
+func (f *fakeDistillStore) CountErrorLinesInWindows(_ context.Context, sourceID string, baselineSince, currentSince time.Time) (int64, int64, error) {
+	var current, baseline int64
+	for _, l := range f.lines {
+		if l.SourceID != sourceID ||
+			store.SeverityRank(f.templateSev[l.TemplateID]) < store.SeverityRank(store.SeverityError) {
+			continue
+		}
+		switch {
+		case !l.TS.Before(currentSince):
+			current++
+		case !l.TS.Before(baselineSince):
+			baseline++
+		}
+	}
+	return current, baseline, nil
+}
+
+func (f *fakeDistillStore) GetLogSourceErrorSpikeActive(_ context.Context, sourceID string) (bool, error) {
+	return f.spikeActive[sourceID], nil
+}
+
+func (f *fakeDistillStore) SetLogSourceErrorSpikeActive(_ context.Context, sourceID string, active bool) error {
+	if f.spikeActive == nil {
+		f.spikeActive = map[string]bool{}
+	}
+	f.spikeActive[sourceID] = active
+	return nil
+}
+
+type captureNotifier struct {
+	notes []Notification
+	err   error
+}
 
 func (c *captureNotifier) Notify(_ context.Context, n Notification) error {
 	c.notes = append(c.notes, n)
-	return nil
+	return c.err
 }
 
 // TestDistiller_NoveltyWakesOnceOnErrorClass: a NEW error template

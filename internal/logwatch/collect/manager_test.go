@@ -92,8 +92,16 @@ func (r *concurrencyRunner) Pull(ctx context.Context, _ *store.RemoteHost, _ ssh
 // syncSink is a thread-safe Sink fake — tick() pulls sources
 // concurrently, so Ingest must tolerate concurrent callers.
 type syncSink struct {
-	mu    sync.Mutex
-	lines []Line
+	mu        sync.Mutex
+	lines     []Line
+	dark      []darkAlert
+	healthErr error
+}
+
+type darkAlert struct {
+	sourceID  string
+	episodeID string
+	failures  int
 }
 
 func (s *syncSink) Ingest(_ context.Context, _ *store.LogSource, _ *store.RemoteHost, lines []Line) error {
@@ -107,6 +115,22 @@ func (s *syncSink) lineCount() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return len(s.lines)
+}
+
+func (s *syncSink) NotifyCollectionFailure(
+	_ context.Context, source *store.LogSource, _ *store.RemoteHost,
+	failures int, episodeID string,
+) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.dark = append(s.dark, darkAlert{sourceID: source.ID, episodeID: episodeID, failures: failures})
+	return s.healthErr
+}
+
+func (s *syncSink) darkAlerts() []darkAlert {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]darkAlert(nil), s.dark...)
 }
 
 func manySources(n int) []*store.LogSource {

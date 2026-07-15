@@ -153,7 +153,10 @@ func TestDispatcher_NewCriticalHumanAlertIsOneShotAndSafe(t *testing.T) {
 }
 
 func TestDispatcher_OngoingOrNonCriticalIncidentDoesNotHumanAlert(t *testing.T) {
-	d, _ := newTestDispatcher(nil, nil)
+	d, _ := newTestDispatcher([]*store.MonitoringChannel{{
+		Name: "feed", Kind: store.ChannelKindMesh, MinSeverity: store.SeverityInfo,
+		Enabled: true, WorkspaceID: "ws",
+	}}, map[string]Sender{store.ChannelKindMesh: &captureSender{}})
 	human := &captureHumanPublisher{}
 	d.RegisterHumanPublisher(human)
 	for _, n := range []distill.Notification{

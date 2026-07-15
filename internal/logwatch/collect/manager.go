@@ -9,6 +9,7 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -88,6 +89,21 @@ type Sink interface {
 	Ingest(ctx context.Context, src *store.LogSource, host *store.RemoteHost, lines []Line) error
 }
 
+// HealthSink is the optional deterministic alarm path for collection
+// failures. Distiller implements it; slim test sinks may omit it.
+type HealthSink interface {
+	NotifyCollectionFailure(
+		ctx context.Context, src *store.LogSource, host *store.RemoteHost,
+		consecutiveFailures int, episodeID string,
+	) error
+}
+
+type darkEpisode struct {
+	id       string
+	sent     bool
+	inFlight bool
+}
+
 // Manager owns the pull loop.
 type Manager struct {
 	store   Store
@@ -97,6 +113,8 @@ type Manager struct {
 
 	mu       sync.Mutex
 	lastRun  map[string]time.Time // source id → last pull attempt
+	dark     map[string]darkEpisode
+	darkSeq  uint64
 	now      func() time.Time
 	interval time.Duration
 }
@@ -109,7 +127,8 @@ func NewManager(st Store, secrets SecretReader, sink Sink, runner Runner) *Manag
 	}
 	return &Manager{
 		store: st, secrets: secrets, runner: runner, sink: sink,
-		lastRun: map[string]time.Time{}, now: time.Now, interval: tickInterval,
+		lastRun: map[string]time.Time{}, dark: map[string]darkEpisode{},
+		now: time.Now, interval: tickInterval,
 	}
 }
 
@@ -162,17 +181,86 @@ func (m *Manager) pullOne(ctx context.Context, src *store.LogSource) {
 	if ctx.Err() != nil {
 		return
 	}
-	if err := m.pullSource(ctx, src); err != nil {
-		if ctx.Err() != nil {
-			return
-		}
-		n := src.ConsecutiveFailures + 1
-		if serr := m.store.SetLogSourceFailures(ctx, src.ID, n); serr != nil {
-			slog.Warn("logwatch: record failure", "source", src.Name, "error", serr)
-		}
-		slog.Warn("logwatch: pull failed", "source", src.Name,
-			"consecutive_failures", n, "error", err)
+	err := m.pullSource(ctx, src)
+	if err == nil {
+		m.recordPullSuccess(ctx, src)
+		return
 	}
+	if ctx.Err() != nil {
+		return
+	}
+	failures := src.ConsecutiveFailures + 1
+	if storeErr := m.store.SetLogSourceFailures(ctx, src.ID, failures); storeErr != nil {
+		slog.Warn("logwatch: record failure", "source", src.Name, "error", storeErr)
+	}
+	m.notifySourceDark(ctx, src, failures)
+	slog.Warn("logwatch: pull failed", "source", src.Name,
+		"consecutive_failures", failures, "error", err)
+}
+
+func (m *Manager) recordPullSuccess(ctx context.Context, src *store.LogSource) {
+	m.clearDarkEpisode(src.ID)
+	if src.ConsecutiveFailures == 0 {
+		return
+	}
+	if err := m.store.SetLogSourceFailures(ctx, src.ID, 0); err != nil {
+		slog.Warn("logwatch: reset failures", "source", src.Name, "error", err)
+	}
+}
+
+func (m *Manager) notifySourceDark(ctx context.Context, src *store.LogSource, failures int) {
+	const sourceDarkThreshold = 3
+	health, ok := m.sink.(HealthSink)
+	if failures < sourceDarkThreshold || !ok {
+		return
+	}
+	episodeID, claimed := m.claimDarkEpisode(src.ID)
+	if !claimed {
+		return
+	}
+	host, err := m.store.GetRemoteHost(ctx, src.RemoteHostID)
+	if err != nil {
+		host = &store.RemoteHost{ID: src.RemoteHostID, Name: src.RemoteHostID}
+	}
+	err = health.NotifyCollectionFailure(ctx, src, host, failures, episodeID)
+	m.completeDarkAlert(src.ID, episodeID, err == nil)
+	if err != nil {
+		slog.Warn("logwatch: source-dark alert failed", "source", src.Name, "error", err)
+	}
+}
+
+func (m *Manager) claimDarkEpisode(sourceID string) (string, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	episode, exists := m.dark[sourceID]
+	if !exists {
+		m.darkSeq++
+		episode.id = strconv.FormatInt(m.now().UTC().UnixNano(), 36) + "-" + strconv.FormatUint(m.darkSeq, 36)
+	}
+	if episode.sent || episode.inFlight {
+		return episode.id, false
+	}
+	episode.inFlight = true
+	m.dark[sourceID] = episode
+	return episode.id, true
+}
+
+func (m *Manager) completeDarkAlert(sourceID, episodeID string, sent bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	episode, exists := m.dark[sourceID]
+	if !exists || episode.id != episodeID {
+		return
+	}
+	episode.inFlight = false
+	episode.sent = sent
+	m.dark[sourceID] = episode
+}
+
+func (m *Manager) clearDarkEpisode(sourceID string) {
+	m.mu.Lock()
+	delete(m.dark, sourceID)
+	m.mu.Unlock()
 }
 
 func (m *Manager) due(src *store.LogSource) bool {

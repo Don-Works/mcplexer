@@ -35,7 +35,7 @@ func (d *Dispatcher) Notify(ctx context.Context, n distill.Notification) error {
 	d.deliverHuman(ctx, workspace.Name, n, outcome)
 	if suppressed != "" {
 		outcome.failures = append(outcome.failures, "channels: "+suppressed)
-		return d.criticalDeliveryResult(n, outcome.delivered, outcome.failures)
+		return d.deliveryResult(n, outcome.delivered, outcome.failures)
 	}
 	channels, err := d.store.ListMonitoringChannels(ctx, n.WorkspaceID)
 	if err != nil {
@@ -45,7 +45,7 @@ func (d *Dispatcher) Notify(ctx context.Context, n distill.Notification) error {
 	if outcome.sent > 0 && !n.Test {
 		d.recordNotify(n.WorkspaceID, n.TemplateID, n.Severity)
 	}
-	return d.criticalDeliveryResult(n, outcome.delivered, outcome.failures)
+	return d.deliveryResult(n, outcome.delivered, outcome.failures)
 }
 
 func (d *Dispatcher) prepareNotification(n *distill.Notification) string {

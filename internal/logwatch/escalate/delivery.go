@@ -72,17 +72,18 @@ func pauseWithContext(ctx context.Context, delay time.Duration) error {
 	}
 }
 
-func (d *Dispatcher) criticalDeliveryResult(
+func (d *Dispatcher) deliveryResult(
 	n distill.Notification,
 	delivered int,
 	failures []string,
 ) error {
-	if n.Severity != store.SeverityCritical || (!n.NewIncident && !n.Test) {
+	if store.SeverityRank(n.Severity) < store.SeverityRank(store.SeverityError) ||
+		(!n.NewIncident && !n.Test) {
 		return nil
 	}
 	if delivered > 0 {
 		if len(failures) > 0 {
-			slog.Warn("escalate: critical delivered with degraded routes",
+			slog.Warn("escalate: incident delivered with degraded routes",
 				"workspace", n.WorkspaceID, "delivered", delivered,
 				"failed_routes", len(failures))
 		}
@@ -91,5 +92,6 @@ func (d *Dispatcher) criticalDeliveryResult(
 	if len(failures) == 0 {
 		failures = []string{"no eligible delivery route"}
 	}
-	return fmt.Errorf("escalate: critical delivery not accepted: %s", strings.Join(failures, "; "))
+	return fmt.Errorf("escalate: %s delivery not accepted: %s",
+		n.Severity, strings.Join(failures, "; "))
 }

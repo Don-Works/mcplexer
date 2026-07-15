@@ -113,6 +113,11 @@ func TestDispatcher_NoCriticalRouteFailsButMinorStaysQuiet(t *testing.T) {
 	if err := d.Notify(context.Background(), testNotification(store.SeverityWarn, "warn")); err != nil {
 		t.Fatalf("minor no-route event should remain quiet: %v", err)
 	}
+	errorIncident := testNotification(store.SeverityError, "error")
+	errorIncident.NewIncident = true
+	if err := d.Notify(context.Background(), errorIncident); err == nil {
+		t.Fatal("new error incident without a configured route must report delivery failure")
+	}
 	critical := testNotification(store.SeverityCritical, "critical")
 	critical.NewIncident = true
 	err := d.Notify(context.Background(), critical)

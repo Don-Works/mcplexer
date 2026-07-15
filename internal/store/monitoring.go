@@ -306,4 +306,10 @@ type MonitoringStore interface {
 	CountLinesByTemplate(ctx context.Context, sourceIDs []string, since time.Time) (map[string]int64, error)
 	SearchLogLines(ctx context.Context, sourceID, q string, limit int) ([]*LogLine, error)
 	ListLogLinesByTemplate(ctx context.Context, templateID string, limit int) ([]*LogLine, error)
+
+	// CountErrorLinesInWindows supports deterministic rate-spike detection
+	// with current and trailing-baseline counts from one indexed scan.
+	CountErrorLinesInWindows(ctx context.Context, sourceID string, baselineSince, currentSince time.Time) (current int64, baseline int64, err error)
+	GetLogSourceErrorSpikeActive(ctx context.Context, sourceID string) (bool, error)
+	SetLogSourceErrorSpikeActive(ctx context.Context, sourceID string, active bool) error
 }
