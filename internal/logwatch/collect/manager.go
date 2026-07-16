@@ -68,13 +68,18 @@ type SecretReader interface {
 // wraps sshx and builds the fixed per-kind command; tests substitute a
 // fake so no network is involved.
 type Runner interface {
-	Pull(ctx context.Context, host *store.RemoteHost, cred sshx.Credential, src *store.LogSource, since time.Time) (sshx.Result, error)
+	Pull(ctx context.Context, host *store.RemoteHost, cred sshx.Credential, src *store.LogSource, since time.Time) (PullResult, error)
 }
 
 // Line is one redacted, timestamped log line handed to the sink.
 type Line struct {
 	TS   time.Time
 	Text string
+	// IncidentID identifies one occurrence without changing TemplateID.
+	// Notify asks the distiller to dispatch the occurrence even when its
+	// stable template was seen before.
+	IncidentID string
+	Notify     bool
 }
 
 // Sink receives each pull's lines. Synthetic collector events
@@ -95,12 +100,15 @@ type Manager struct {
 	runner  Runner
 	sink    Sink
 
-	mu       sync.Mutex
-	lastRun  map[string]time.Time // source id → last pull attempt
-	dark     map[string]darkEpisode
-	darkSeq  uint64
-	now      func() time.Time
-	interval time.Duration
+	mu        sync.Mutex
+	lastRun   map[string]time.Time // source id → last pull attempt
+	dark      map[string]darkEpisode
+	darkSeq   uint64
+	hostPorts map[string]string // host id → last observed exposure fingerprint
+	truncated map[string]string // source id → active truncation episode id
+	truncSeq  uint64
+	now       func() time.Time
+	interval  time.Duration
 }
 
 // NewManager wires a collector. runner may be nil (defaults to the
@@ -112,6 +120,7 @@ func NewManager(st Store, secrets SecretReader, sink Sink, runner Runner) *Manag
 	return &Manager{
 		store: st, secrets: secrets, runner: runner, sink: sink,
 		lastRun: map[string]time.Time{}, dark: map[string]darkEpisode{},
+		hostPorts: map[string]string{}, truncated: map[string]string{},
 		now: time.Now, interval: tickInterval,
 	}
 }

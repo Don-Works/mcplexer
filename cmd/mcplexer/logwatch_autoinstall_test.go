@@ -10,6 +10,7 @@ import (
 	"github.com/don-works/mcplexer/internal/store"
 	"github.com/don-works/mcplexer/internal/store/sqlite"
 	workersadmin "github.com/don-works/mcplexer/internal/workers/admin"
+	"github.com/don-works/mcplexer/internal/workertemplates"
 )
 
 func enableLogWatchAutoinstall(t *testing.T) {
@@ -70,12 +71,15 @@ func TestAutoInstallLogWatch(t *testing.T) {
 	if !strings.Contains(w.PreExecuteScript, `window: "10m"`) {
 		t.Fatalf("gate window must match the 10m schedule: %q", w.PreExecuteScript)
 	}
+	if !strings.Contains(w.PreExecuteScript, `!s.evidence_gap`) {
+		t.Fatalf("evidence gaps must bypass the quiet gate: %q", w.PreExecuteScript)
+	}
 	if strings.Contains(w.PreExecuteScript, "error_delta") ||
 		!strings.Contains(w.PreExecuteScript, `trigger_kind === "mesh"`) {
 		t.Fatalf("gate must ignore chronic errors but admit anomaly wakes: %q", w.PreExecuteScript)
 	}
-	if !strings.Contains(w.PromptTemplate, "TOP-LEVEL CALL BUDGET:") {
-		t.Fatalf("batching guidance missing from prompt")
+	if w.PromptTemplate != workertemplates.HardenedLogWatchPrompt {
+		t.Fatalf("installed worker did not receive the hardened evidence contract")
 	}
 	if w.MaxToolCalls != autoLogWatchMaxToolCalls || w.MaxWallClockSeconds != 300 || w.MaxConsecutiveFailures != 5 {
 		t.Fatalf("caps not stamped: %+v", w)
@@ -121,10 +125,11 @@ func TestAutoInstallLogWatchConvergesLegacySafetyConfig(t *testing.T) {
 	if err != nil || got.Worker == nil {
 		t.Fatalf("installed worker: %v", err)
 	}
-	legacyGate, schedule, enabled := `const s=monitoring.stats({window:"10m"}); if(s.error_delta===0) abort("quiet");`, "30m", false
+	legacyGate, legacyPrompt, schedule, enabled := `const s=monitoring.stats({window:"10m"}); if(s.error_delta===0) abort("quiet");`, "diagnose every error and create a task", "30m", false
 	tooManyTools, tooLong, tooManyFailures, unlimited := 50, 900, 9, 0.0
 	_, err = workers.Update(ctx, workersadmin.UpdateInput{ID: got.Worker.ID,
-		PreExecuteScript: &legacyGate, ScheduleSpec: &schedule, Enabled: &enabled,
+		PreExecuteScript: &legacyGate, PromptTemplate: &legacyPrompt,
+		ScheduleSpec: &schedule, Enabled: &enabled,
 		MaxToolCalls: &tooManyTools, MaxWallClockSeconds: &tooLong,
 		MaxConsecutiveFailures: &tooManyFailures, MaxMonthlyCostUSD: &unlimited})
 	if err != nil {
@@ -140,7 +145,9 @@ func TestAutoInstallLogWatchConvergesLegacySafetyConfig(t *testing.T) {
 	if w.Enabled || w.ScheduleSpec != schedule {
 		t.Fatalf("operator state was clobbered: enabled=%v schedule=%s", w.Enabled, w.ScheduleSpec)
 	}
-	if w.PreExecuteScript != logWatchGate || w.MaxToolCalls != 12 ||
+	if w.PreExecuteScript != logWatchGate ||
+		w.PromptTemplate != workertemplates.HardenedLogWatchPrompt ||
+		w.MaxToolCalls != 12 ||
 		w.MaxWallClockSeconds != 300 || w.MaxConsecutiveFailures != 5 ||
 		w.MaxMonthlyCostUSD != autoLogWatchMaxMonthlyCostUSD {
 		t.Fatalf("legacy safety config did not converge: %+v", w)

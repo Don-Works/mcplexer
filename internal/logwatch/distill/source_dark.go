@@ -43,7 +43,8 @@ func (d *Distiller) NotifyCollectionFailure(
 		RemoteHostName: hostName,
 		RemoteHostAddr: host.SSHHost,
 		SourceName:     source.Name,
-		TemplateID:     "source-dark:" + source.ID + ":" + episodeID,
+		TemplateID:     "source-dark:" + source.ID + ":" + string(reason),
+		IncidentID:     "source-dark:" + source.ID + ":" + episodeID,
 	})
 }
 

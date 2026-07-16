@@ -16,23 +16,25 @@ type severityRule struct {
 	sev string
 }
 
-// criticalKeywordRe matches unambiguous catastrophe keywords. These win
-// even over an explicit lower log level — a line that says "panic" is
-// critical no matter what level field it carries.
+// criticalKeywordRe matches catastrophe keywords only for unstructured lines.
+// An explicit application level remains authoritative even when one of these
+// words appears inside a handled message or wrapped error value.
 var criticalKeywordRe = regexp.MustCompile(`(?i)\b(panic|fatal|out of memory|oom-?kill(ed)?|sigsegv|segfault|data race)\b`)
 
 // keywordRules are the fallback keyword heuristics, tried only when the
 // line has no explicit structured log level. First match wins. The
 // synthetic "logwatch:" collector events class as warn.
 var keywordRules = []severityRule{
+	// A truncated pull makes every conclusion from that window unreliable;
+	// treat it as a health alarm, not ordinary warning noise.
+	{regexp.MustCompile(`(?i)^logwatch: pull truncated\b`), store.SeverityCritical},
 	{regexp.MustCompile(`(?i)(\berror\b|\berr=|exception|traceback|stack trace|refused|timed? ?out|unavailable|\bfailed\b|\bfailure\b)`), store.SeverityError},
 	{regexp.MustCompile(`(?i)(\bwarn(ing)?\b|^logwatch:)`), store.SeverityWarn},
 }
 
-// jsonLevelRe / mapLevel extract an app's OWN structured log level so a
-// benign `info … {"file":"Failed"}` line isn't mifrom-classified error by
-// the keyword heuristics (the "Failed" filename would otherwise match).
-var jsonLevelRe = regexp.MustCompile(`(?i)"level"\s*:\s*"([a-z]+)"`)
+// namedLevelRe extracts an app's OWN logfmt-style level so a handled info
+// event is not reclassified from error text carried as data.
+var namedLevelRe = regexp.MustCompile(`(?i)(^|[\s,{\[])['"]?(level|log\.level|severity|lvl)['"]?\s*[:=]\s*['"]?([a-z]+)`)
 
 func mapLevel(s string) string {
 	switch strings.ToLower(strings.Trim(s, ":[]()")) {
@@ -56,9 +58,24 @@ func mapLevel(s string) string {
 // emit "2026-…Z\tinfo\tacme/service.go:110\t…", where the level is the
 // SECOND field after docker's own timestamp has been split off.
 func explicitLevel(line string) string {
-	if m := jsonLevelRe.FindStringSubmatch(line); m != nil {
-		if lvl := mapLevel(m[1]); lvl != "" {
-			return lvl
+	// Parse JSON rather than regex-scanning it. Only a direct/top-level level
+	// field is authoritative; a nested payload's `{"level":"error"}` is
+	// message data and must not override a leading INFO level.
+	trimmed := strings.TrimSpace(line)
+	if strings.HasPrefix(trimmed, "{") {
+		var object map[string]any
+		if json.Unmarshal([]byte(trimmed), &object) == nil {
+			levels := map[string]string{}
+			for key, value := range object {
+				if text, ok := value.(string); ok {
+					levels[strings.ToLower(key)] = text
+				}
+			}
+			for _, key := range []string{"level", "log.level", "severity", "lvl"} {
+				if lvl := mapLevel(levels[key]); lvl != "" {
+					return lvl
+				}
+			}
 		}
 	}
 	// Only the leading fields carry the level; scanning the whole line
@@ -69,6 +86,11 @@ func explicitLevel(line string) string {
 			break
 		}
 		if lvl := mapLevel(tok); lvl != "" {
+			return lvl
+		}
+	}
+	if m := namedLevelRe.FindStringSubmatch(line); m != nil {
+		if lvl := mapLevel(m[3]); lvl != "" {
 			return lvl
 		}
 	}
@@ -118,18 +140,18 @@ func (c *Classifier) Classify(line string) string {
 			return r.sev
 		}
 	}
-	// 2. Unambiguous catastrophe keywords (panic/OOM/…) — safety first,
-	//    even over a lower explicit level.
-	if criticalKeywordRe.MatchString(line) {
-		return store.SeverityCritical
-	}
-	// 3. The app's OWN structured level, when present. This is the
-	//    authoritative signal and prevents keyword false-positives on
-	//    message payloads (e.g. a filename literally named "Failed").
+	// 2. The app's OWN structured level is authoritative. Message bodies
+	//    routinely contain wrapped errors, SQL text, and exception names;
+	//    keyword matching those values overrides the application's explicit
+	//    decision that an event was handled.
 	if lvl := explicitLevel(line); lvl != "" {
 		return lvl
 	}
-	// 4. Keyword heuristics for unstructured lines.
+	// 3. Keyword heuristics are only a fallback for genuinely unstructured
+	//    lines with no level field/token.
+	if criticalKeywordRe.MatchString(line) {
+		return store.SeverityCritical
+	}
 	for _, r := range keywordRules {
 		if r.re.MatchString(line) {
 			return r.sev

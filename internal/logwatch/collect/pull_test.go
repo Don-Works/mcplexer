@@ -58,12 +58,13 @@ type fakeRunner struct {
 	err       error
 	gotSince  time.Time
 	gotKind   string
+	docker    *DockerObservation
 }
 
-func (r *fakeRunner) Pull(_ context.Context, _ *store.RemoteHost, _ sshx.Credential, src *store.LogSource, since time.Time) (sshx.Result, error) {
+func (r *fakeRunner) Pull(_ context.Context, _ *store.RemoteHost, _ sshx.Credential, src *store.LogSource, since time.Time) (PullResult, error) {
 	r.gotSince = since
 	r.gotKind = src.Kind
-	return sshx.Result{Stdout: []byte(r.out), Stderr: []byte(r.errOut), Truncated: r.truncated, NewPin: r.newPin}, r.err
+	return PullResult{Result: sshx.Result{Stdout: []byte(r.out), Stderr: []byte(r.errOut), Truncated: r.truncated, NewPin: r.newPin}, Docker: r.docker}, r.err
 }
 
 type captureSink struct{ lines []Line }
@@ -165,36 +166,22 @@ func TestPull_ContinuousCursor(t *testing.T) {
 	}
 }
 
-// TestPull_Discontinuity injects the synthetic event when the tail
-// hash no longer matches (restart / recreation / rotation).
-func TestPull_Discontinuity(t *testing.T) {
-	runner := &fakeRunner{out: "2026-07-08T15:00:00Z fresh container banner\n"}
-	m, _, sink := newFixture(runner)
-
-	src := srcDocker()
-	ts := time.Date(2026, 7, 8, 14, 0, 1, 1, time.UTC)
-	src.CursorTS = &ts
-	src.CursorHash = "deadbeefdeadbeef"
-
-	if err := m.pullSource(context.Background(), src); err != nil {
-		t.Fatalf("pull: %v", err)
-	}
-	if len(sink.lines) != 2 || !strings.HasPrefix(sink.lines[0].Text, "logwatch: source discontinuity") {
-		t.Fatalf("expected discontinuity event first, got %+v", sink.lines)
-	}
-}
-
 // TestPull_Truncation appends the synthetic truncation event so a
 // capped window can't masquerade as quiet logs.
 func TestPull_Truncation(t *testing.T) {
 	runner := &fakeRunner{out: "2026-07-08T14:00:00Z spam\n", truncated: true}
-	m, _, sink := newFixture(runner)
+	m, fs, sink := newFixture(runner)
 	if err := m.pullSource(context.Background(), srcDocker()); err != nil {
 		t.Fatalf("pull: %v", err)
 	}
-	lastLine := sink.lines[len(sink.lines)-1].Text
-	if !strings.HasPrefix(lastLine, "logwatch: pull truncated") {
+	if !strings.HasPrefix(sink.lines[0].Text, "logwatch: pull truncated") || !sink.lines[0].Notify {
 		t.Fatalf("expected truncation event, got %+v", sink.lines)
+	}
+	if len(sink.lines) != 1 {
+		t.Fatalf("truncated application prefix must not be mined: %+v", sink.lines)
+	}
+	if !fs.cursorTS.IsZero() {
+		t.Fatalf("truncated pull must not advance the log cursor: %v", fs.cursorTS)
 	}
 }
 

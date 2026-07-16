@@ -76,6 +76,9 @@ func Seed(ctx context.Context, r *Registry) error {
 				"file", p, "error", err)
 			return nil
 		}
+		if tmpl.Name == "log-watch" {
+			tmpl.PromptTemplate = HardenedLogWatchPrompt
+		}
 		rel := strings.TrimPrefix(p, "seeds/")
 		dir := path.Dir(rel)
 		author := "system"

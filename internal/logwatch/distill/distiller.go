@@ -70,6 +70,10 @@ type Notification struct {
 	RemoteHostAddr string
 	SourceName     string
 	TemplateID     string
+	// IncidentID distinguishes one episode from its stable TemplateID.
+	// Dispatch throttles may re-arm per episode while tasks still dedupe by
+	// the shape identity exposed as template_id.
+	IncidentID string
 	// Test bypasses the dispatcher's throttles and stamps the title —
 	// the Monitoring UI's "send test notification" path, so operators
 	// can verify channels without burning the hourly budget.
@@ -96,8 +100,10 @@ func TemplateID(sourceID, masked string) string {
 }
 
 type templateAgg struct {
-	tpl   *store.LogTemplate
-	count int64
+	tpl        *store.LogTemplate
+	count      int64
+	notify     bool
+	incidentID string
 }
 
 // aggregateLines masks + classifies each line, grouping by stable
@@ -123,6 +129,10 @@ func aggregateLines(src *store.LogSource, classifier *Classifier, lines []collec
 			order = append(order, id)
 		}
 		agg.count++
+		if line.Notify {
+			agg.notify = true
+			agg.incidentID = line.IncidentID
+		}
 		agg.tpl.LastSeen = line.TS
 		agg.tpl.SampleLast = line.Text
 		rows = append(rows, store.LogLine{
@@ -152,8 +162,9 @@ func (d *Distiller) Ingest(ctx context.Context, src *store.LogSource, host *stor
 		if err != nil {
 			return fmt.Errorf("distill: upsert template: %w", err)
 		}
-		if isNew && store.SeverityRank(agg.tpl.Severity) >= store.SeverityRank(store.SeverityError) {
-			d.fireAnomaly(ctx, src, host, agg)
+		isError := store.SeverityRank(agg.tpl.Severity) >= store.SeverityRank(store.SeverityError)
+		if agg.notify || (isNew && isError) {
+			d.fireAnomaly(ctx, src, host, agg, isNew)
 		}
 	}
 
@@ -171,22 +182,30 @@ func (d *Distiller) Ingest(ctx context.Context, src *store.LogSource, host *stor
 // fireAnomaly reports a never-seen-before error-class template. The
 // dispatcher throttles per (workspace, template), so a storm of new
 // shapes still lands as bounded notifications.
-func (d *Distiller) fireAnomaly(ctx context.Context, src *store.LogSource, host *store.RemoteHost, agg *templateAgg) {
+func (d *Distiller) fireAnomaly(
+	ctx context.Context, src *store.LogSource, host *store.RemoteHost,
+	agg *templateAgg, isNew bool,
+) {
 	if d.notifier == nil {
 		slog.Info("distill: anomaly (no dispatcher wired)",
 			"source", src.Name, "severity", agg.tpl.Severity, "template", agg.tpl.Masked)
 		return
 	}
+	headline := fmt.Sprintf("new %s-class log template on %s/%s (×%d)", agg.tpl.Severity, host.Name, src.Name, agg.count)
+	if agg.notify && !isNew {
+		headline = fmt.Sprintf("observed %s-class monitoring event on %s/%s (×%d)", agg.tpl.Severity, host.Name, src.Name, agg.count)
+	}
 	n := Notification{
 		WorkspaceID:    src.WorkspaceID,
 		Severity:       agg.tpl.Severity,
-		Title:          fmt.Sprintf("new %s-class log template on %s/%s (×%d)", agg.tpl.Severity, host.Name, src.Name, agg.count),
+		Title:          headline,
 		Body:           fmt.Sprintf("Template: %s\nFirst sample: %s", agg.tpl.Masked, agg.tpl.SampleFirst),
-		NewIncident:    true,
+		NewIncident:    isNew || agg.notify,
 		RemoteHostName: host.Name,
 		RemoteHostAddr: host.SSHHost,
 		SourceName:     src.Name,
 		TemplateID:     agg.tpl.ID,
+		IncidentID:     agg.incidentID,
 	}
 	if err := d.notifier.Notify(ctx, n); err != nil {
 		slog.Warn("distill: notify", "source", src.Name, "error", err)
@@ -247,7 +266,8 @@ func (d *Distiller) fireRateSpike(
 	ctx context.Context, src *store.LogSource, host *store.RemoteHost, episodeAt time.Time,
 	current int64, currentRate, baselineRate float64,
 ) error {
-	spikeKey := fmt.Sprintf("ratespike:%s:%x", src.ID, episodeAt.UnixNano())
+	spikeKey := "ratespike:" + src.ID
+	episodeID := fmt.Sprintf("%s:%x", spikeKey, episodeAt.UnixNano())
 	if d.notifier == nil {
 		slog.Info("distill: rate spike (no dispatcher wired)",
 			"source", src.Name, "current", current, "current_rate", currentRate, "baseline_rate", baselineRate)
@@ -265,6 +285,7 @@ func (d *Distiller) fireRateSpike(
 		RemoteHostAddr: host.SSHHost,
 		SourceName:     src.Name,
 		TemplateID:     spikeKey,
+		IncidentID:     episodeID,
 	}
 	if err := d.notifier.Notify(ctx, n); err != nil {
 		return err

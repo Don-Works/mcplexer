@@ -49,6 +49,9 @@ func humanIncidentEvent(workspaceName string, n distill.Notification, at time.Ti
 		body += ". Tap to review Monitoring."
 	}
 	idKind, id := "template", n.TemplateID
+	if n.IncidentID != "" {
+		idKind, id = "incident", n.IncidentID
+	}
 	if n.TaskID != "" {
 		idKind, id = "task", n.TaskID
 	}
@@ -63,6 +66,9 @@ func humanIncidentEvent(workspaceName string, n distill.Notification, at time.Ti
 }
 
 func humanIncidentKey(n distill.Notification) string {
+	if n.IncidentID != "" {
+		return n.WorkspaceID + "/incident/" + n.IncidentID
+	}
 	if n.TemplateID != "" {
 		return n.WorkspaceID + "/" + n.TemplateID
 	}

@@ -85,8 +85,10 @@ type RemoteHost struct {
 // validated against a strict charset at CRUD time AND dial time — it
 // is interpolated into a fixed remote-shell command template only after
 // strict validation and quoting; SSH does not provide a true argv exec.
-// CursorTS/CursorHash track incremental pulls; ConsecutiveFailures
-// drives health surfacing + the source-went-dark anomaly rule.
+// CursorTS tracks the incremental pull boundary. CursorHash is an opaque,
+// versioned continuity/runtime checkpoint; a continuity mismatch is evidence
+// of a gap or non-monotonic stream, never proof of a restart.
+// ConsecutiveFailures drives health surfacing + source-dark observations.
 type LogSource struct {
 	ID                  string     `json:"id"`
 	WorkspaceID         string     `json:"workspace_id"`
@@ -128,7 +130,7 @@ type MonitoringChannel struct {
 // dedup unit. Count is lifetime; WindowCount resets per digest window.
 // Acked templates are excluded from novelty wake-ups.
 type LogTemplate struct {
-	ID          string    `json:"id"` // sha256(source_id, masked)
+	ID          string    `json:"id"` // sha256(source_id, masked shape)
 	SourceID    string    `json:"source_id"`
 	Masked      string    `json:"masked"`
 	Severity    string    `json:"severity"`
@@ -140,6 +142,24 @@ type LogTemplate struct {
 	SampleLast  string    `json:"sample_last"`
 	Acked       bool      `json:"acked"`
 	AckNote     string    `json:"ack_note,omitempty"`
+}
+
+// LogTemplateHistory separates retained raw-line evidence from durable
+// observed-day recurrence. LogTemplate's Count/FirstSeen remain lifetime
+// values even after raw retention pruning; Retained* states exactly what the
+// currently retained slice can prove, while Observed* survives future pruning.
+type LogTemplateHistory struct {
+	RetainedCount          int64         `json:"retained_count"`
+	RetainedDistinctDays   int           `json:"retained_distinct_days"`
+	RetainedFirstSeen      time.Time     `json:"retained_first_seen,omitempty"`
+	RetainedLastSeen       time.Time     `json:"retained_last_seen,omitempty"`
+	AverageRetainedLineGap time.Duration `json:"average_retained_line_gap,omitempty"`
+	// Observed* is durable across future raw-line pruning. An upgrade can
+	// backfill only retained days; it never invents intervening legacy days.
+	ObservedDistinctDays  int           `json:"observed_distinct_days"`
+	ObservedFirstDay      time.Time     `json:"observed_first_day,omitempty"`
+	ObservedLastDay       time.Time     `json:"observed_last_day,omitempty"`
+	AverageObservedDayGap time.Duration `json:"average_observed_day_gap,omitempty"`
 }
 
 // LogLine is one redacted raw line in the bounded ring buffer.

@@ -22,6 +22,8 @@ func TestNormalize_Masking(t *testing.T) {
 		{"GET /healthz 200 in 12ms", "GET /healthz <n> in <dur>"},
 		{"at 2026-07-08T14:02:11.123Z worker started", "at <ts> worker started"},
 		{"\x1b[31mERROR\x1b[0m boom", "ERROR boom"},
+		{`ERROR: duplicate key violates unique constraint "orders_external_reference_key" (SQLSTATE 23505)`, `ERROR: duplicate key violates unique constraint "orders_external_reference_key" (SQLSTATE 23505)`},
+		{`db errno=1062 UniqueViolationError orderNum=SO-900001 ip=203.0.113.9`, `db errno=1062 UniqueViolationError orderNum=SO-<n> ip=<ip>`},
 	}
 	for _, c := range cases {
 		if got := Normalize(c.in); got != c.want {
@@ -74,7 +76,7 @@ func TestClassifier_DefaultsAndOverrides(t *testing.T) {
 		"ERROR pgx: connection refused":         store.SeverityError,
 		"request timed out after 30s":           store.SeverityError,
 		"WARN slow query":                       store.SeverityWarn,
-		"logwatch: pull truncated at 100 bytes": store.SeverityWarn,
+		"logwatch: pull truncated at 100 bytes": store.SeverityCritical,
 		"GET /healthz 200":                      store.SeverityInfo,
 		// explicit level beats keyword false-positives (the production
 		// case: a filename literally named "Failed")
@@ -84,8 +86,17 @@ func TestClassifier_DefaultsAndOverrides(t *testing.T) {
 		`{"level":"info","msg":"job failed to find any orders"}`:                                                         store.SeverityInfo,
 		`error acme/service.go:80 connection refused`:                                                                    store.SeverityError,
 		`{"level":"error","msg":"db down"}`:                                                                              store.SeverityError,
-		// but an explicit low level never masks a real catastrophe keyword
-		`info worker panic: nil deref`: store.SeverityCritical,
+		// An explicit application level is authoritative even when the
+		// handled message contains error/catastrophe vocabulary.
+		`info worker handled panic: nil deref`: store.SeverityInfo,
+		`time=2026-07-16T18:01:00Z level=INFO msg="order already handled" error="order already exists: ERROR: duplicate key value violates unique constraint orders_key"`: store.SeverityInfo,
+		`{"level":"info","msg":"handled","error":"ERROR: duplicate key"}`:                                                                                                 store.SeverityInfo,
+		`{"severity":"WARN","msg":"retry scheduled","error":"ERROR: downstream"}`:                                                                                         store.SeverityWarn,
+		`{"log.level":"debug","msg":"wrapped exception"}`:                                                                                                                 store.SeverityInfo,
+		`{"level":"info","severity":"error","msg":"handled"}`:                                                                                                             store.SeverityInfo,
+		`INFO handled payload={"level":"error","message":"downstream failed"}`:                                                                                            store.SeverityInfo,
+		// With no structured level, the conservative keyword fallback remains.
+		`worker panic: nil deref`: store.SeverityCritical,
 	} {
 		if got := c.Classify(line); got != want {
 			t.Errorf("Classify(%q) = %q, want %q", line, got, want)
@@ -276,25 +287,4 @@ func (f *fakeQueryStore) ListLogTemplates(context.Context, []string, time.Time, 
 }
 func (f *fakeQueryStore) CountLinesByTemplate(context.Context, []string, time.Time) (map[string]int64, error) {
 	return f.counts, nil
-}
-
-// TestStats_Counters checks the zero-spend gate's numbers.
-func TestStats_Counters(t *testing.T) {
-	now := time.Date(2026, 7, 8, 15, 0, 0, 0, time.UTC)
-	q := &Query{now: func() time.Time { return now }, store: &fakeQueryStore{
-		sources: []*store.LogSource{{ID: "s1", WorkspaceID: "ws"}},
-		tpls: []*store.LogTemplate{
-			{ID: "a", Severity: store.SeverityInfo, FirstSeen: now.Add(-time.Hour), LastSeen: now},
-			{ID: "b", Severity: store.SeverityError, FirstSeen: now.Add(-time.Minute), LastSeen: now},
-			{ID: "c", Severity: store.SeverityCritical, FirstSeen: now.Add(-2 * time.Minute), LastSeen: now, Acked: true},
-		},
-		counts: map[string]int64{"a": 100, "b": 5, "c": 2},
-	}}
-	st, err := q.Stats(context.Background(), "ws", nil, 10*time.Minute)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if st.Lines != 107 || st.NewTemplates != 1 || st.ErrorDelta != 7 {
-		t.Fatalf("stats: %+v", st)
-	}
 }

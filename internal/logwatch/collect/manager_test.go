@@ -68,7 +68,7 @@ type concurrencyRunner struct {
 	calls    int32
 }
 
-func (r *concurrencyRunner) Pull(ctx context.Context, _ *store.RemoteHost, _ sshx.Credential, src *store.LogSource, _ time.Time) (sshx.Result, error) {
+func (r *concurrencyRunner) Pull(ctx context.Context, _ *store.RemoteHost, _ sshx.Credential, src *store.LogSource, _ time.Time) (PullResult, error) {
 	atomic.AddInt32(&r.calls, 1)
 	n := atomic.AddInt32(&r.inFlight, 1)
 	defer atomic.AddInt32(&r.inFlight, -1)
@@ -81,12 +81,12 @@ func (r *concurrencyRunner) Pull(ctx context.Context, _ *store.RemoteHost, _ ssh
 	select {
 	case <-time.After(r.delay):
 	case <-ctx.Done():
-		return sshx.Result{}, ctx.Err()
+		return PullResult{}, ctx.Err()
 	}
 	if r.failIDs[src.ID] {
-		return sshx.Result{}, errors.New("simulated pull failure")
+		return PullResult{}, errors.New("simulated pull failure")
 	}
-	return sshx.Result{Stdout: []byte("2026-07-08T14:00:00Z hello from " + src.ID + "\n")}, nil
+	return PullResult{Result: sshx.Result{Stdout: []byte("2026-07-08T14:00:00Z hello from " + src.ID + "\n")}}, nil
 }
 
 // syncSink is a thread-safe Sink fake — tick() pulls sources

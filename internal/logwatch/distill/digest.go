@@ -36,6 +36,7 @@ type Stats struct {
 	Templates    int    `json:"templates"`
 	NewTemplates int    `json:"new_templates"` // unacked, first seen in window
 	ErrorDelta   int64  `json:"error_delta"`   // error+critical lines in window
+	EvidenceGap  bool   `json:"evidence_gap"`  // one or more truncated pulls
 }
 
 // resolveSources maps optional explicit ids onto the workspace's
@@ -89,6 +90,9 @@ func (q *Query) Stats(ctx context.Context, workspaceID string, sourceIDs []strin
 		if store.SeverityRank(t.Severity) >= store.SeverityRank(store.SeverityError) {
 			st.ErrorDelta += n
 		}
+		if isEvidenceGap(t) && n > 0 {
+			st.EvidenceGap = true
+		}
 	}
 	return st, nil
 }
@@ -130,11 +134,14 @@ func (q *Query) Digest(ctx context.Context, opts DigestOptions) (string, error) 
 		return "", err
 	}
 
-	var totalLines int64
+	var totalLines, evidenceGapLines int64
 	newCount := 0
 	entries := tpls[:0]
 	for _, t := range tpls {
 		totalLines += counts[t.ID]
+		if isEvidenceGap(t) {
+			evidenceGapLines += counts[t.ID]
+		}
 		if !t.Acked && !t.FirstSeen.Before(since) {
 			newCount++
 		}
@@ -151,12 +158,16 @@ func (q *Query) Digest(ctx context.Context, opts DigestOptions) (string, error) 
 	})
 
 	var b strings.Builder
+	if evidenceGapLines > 0 {
+		fmt.Fprintf(&b, "EVIDENCE GAP: UNTRUSTWORTHY WINDOW — %d truncated pull event(s); missing lines mean silence is not evidence of health. Triage collection health first; cause unverified.\n", evidenceGapLines)
+	}
 	fmt.Fprintf(&b, "window %s: %d lines → %d templates (%d new)\n",
 		opts.Window, totalLines, len(tpls), newCount)
 	budget := opts.BudgetTokens * 4
 	skipped := 0
 	for _, t := range entries {
-		entry := renderEntry(t, counts[t.ID], byID[t.SourceID], since)
+		evidence := q.templateEvidence(ctx, t, byID[t.SourceID])
+		entry := renderEntry(t, counts[t.ID], byID[t.SourceID], since, evidence)
 		if b.Len()+len(entry) > budget {
 			skipped++
 			continue
@@ -167,6 +178,10 @@ func (q *Query) Digest(ctx context.Context, opts DigestOptions) (string, error) 
 		fmt.Fprintf(&b, "… %d more templates omitted by budget — raise budget_tokens or filter with min_severity/source_ids\n", skipped)
 	}
 	return b.String(), nil
+}
+
+func isEvidenceGap(t *store.LogTemplate) bool {
+	return strings.HasPrefix(strings.ToLower(t.Masked), "logwatch: pull truncated")
 }
 
 // digestPriority: new error/critical (3) → new anything (2) →
@@ -186,7 +201,10 @@ func digestPriority(t *store.LogTemplate, since time.Time) int {
 	}
 }
 
-func renderEntry(t *store.LogTemplate, windowCount int64, src *store.LogSource, since time.Time) string {
+func renderEntry(
+	t *store.LogTemplate, windowCount int64, src *store.LogSource,
+	since time.Time, evidence templateEvidence,
+) string {
 	marks := strings.ToUpper(t.Severity)
 	if !t.Acked && !t.FirstSeen.Before(since) {
 		marks = "NEW ✱ " + marks
@@ -195,11 +213,23 @@ func renderEntry(t *store.LogTemplate, windowCount int64, src *store.LogSource, 
 	if src != nil {
 		srcName = src.Name
 	}
-	return fmt.Sprintf("[%s] ×%d %s %q %s→%s\n    template_id: %s\n    sample: %s\n",
+	var b strings.Builder
+	fmt.Fprintf(&b, "[%s] ×%d %s %q %s→%s\n    template_id: %s\n    history: %s\n",
 		srcName, windowCount, marks, t.Masked,
 		t.FirstSeen.UTC().Format("15:04:05"), t.LastSeen.UTC().Format("15:04:05"),
 		t.ID,
-		truncate(t.SampleLast, 200))
+		renderHistory(t, evidence))
+	if evidence.correlationKey != "" {
+		fmt.Fprintf(&b, "    correlation_key: %s\n", evidence.correlationKey)
+	}
+	if evidence.cardinality != "" {
+		fmt.Fprintf(&b, "    masked_value_cardinality (sampled %d retained lines): %s\n",
+			evidence.cardinalityRows, evidence.cardinality)
+	}
+	for i, sample := range evidence.samples {
+		fmt.Fprintf(&b, "    sample[%d]: %s\n", i+1, truncate(sample, 240))
+	}
+	return b.String()
 }
 
 func truncate(s string, n int) string {

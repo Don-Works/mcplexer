@@ -61,6 +61,41 @@ func TestPruneLogLines_ByAge(t *testing.T) {
 	}
 }
 
+func TestLogTemplateHistory_ReportsRetainedRecurrence(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	wsID, scopeID := seedWorkspaceAndScope(t, db, ctx)
+	h := seedRemoteHost(t, db, ctx, wsID, scopeID)
+	s, tpl := seedSourceWithTemplate(t, db, ctx, wsID, h.ID)
+
+	base := time.Date(2026, 7, 1, 18, 0, 0, 0, time.UTC)
+	lines := []store.LogLine{
+		{SourceID: s.ID, TemplateID: tpl.ID, TS: base, Line: "first"},
+		{SourceID: s.ID, TemplateID: tpl.ID, TS: base.Add(24 * time.Hour), Line: "second"},
+		{SourceID: s.ID, TemplateID: tpl.ID, TS: base.Add(48 * time.Hour), Line: "third"},
+	}
+	if err := db.InsertLogLines(ctx, lines); err != nil {
+		t.Fatalf("insert lines: %v", err)
+	}
+
+	history, err := db.GetLogTemplateHistory(ctx, tpl.ID)
+	if err != nil {
+		t.Fatalf("history: %v", err)
+	}
+	if history.RetainedCount != 3 || history.RetainedDistinctDays != 3 ||
+		history.AverageRetainedLineGap.Round(time.Second) != 24*time.Hour ||
+		history.ObservedDistinctDays != 3 ||
+		history.AverageObservedDayGap.Round(time.Second) != 24*time.Hour ||
+		!history.RetainedFirstSeen.Equal(base) ||
+		!history.RetainedLastSeen.Equal(base.Add(48*time.Hour)) {
+		t.Fatalf("history mismatch: %+v", history)
+	}
+	evidence, err := db.ListLogLinesForTemplateEvidence(ctx, tpl.ID, 2)
+	if err != nil || len(evidence) != 2 || evidence[0].Line != "third" || evidence[1].Line != "second" {
+		t.Fatalf("bounded evidence slice: %v %+v", err, evidence)
+	}
+}
+
 // TestPruneLogLines_ByBytes asserts repeated pruning converges under
 // the byte budget rather than looping forever.
 func TestPruneLogLines_ByBytes(t *testing.T) {

@@ -35,6 +35,41 @@ func TestDockerLogsCommand_Shape(t *testing.T) {
 	}
 }
 
+func TestDockerObservationCommands_AreBoundedReadOnlyShapes(t *testing.T) {
+	state, err := DockerStateCommand("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantState := "docker inspect --type container --format '{{.Id}}|{{.RestartCount}}|{{.State.StartedAt}}' 'api'"
+	if state != wantState {
+		t.Fatalf("state command:\n got %q\nwant %q", state, wantState)
+	}
+	since := time.Date(2026, 7, 16, 10, 0, 0, 0, time.UTC)
+	until := since.Add(2 * time.Minute)
+	events, err := DockerRestartEventsCommand("api", since, until)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantEvents := "docker events --since '2026-07-16T10:00:00Z' --until '2026-07-16T10:02:00Z' --filter 'type=container' --filter container='api' --filter 'event=restart' --format '{{.TimeNano}}|{{.Action}}|{{.Actor.ID}}'"
+	if events != wantEvents {
+		t.Fatalf("events command:\n got %q\nwant %q", events, wantEvents)
+	}
+	if got := DockerPortInventoryCommand(); got != "docker ps --no-trunc --format '{{.ID}}|{{.Names}}|{{.Ports}}'" {
+		t.Fatalf("port inventory command: %q", got)
+	}
+	if _, err := DockerRestartEventsCommand("api", until, since); err == nil {
+		t.Fatal("reversed event range must fail")
+	}
+	for _, bad := range []string{"--all", "api;id", "api name"} {
+		if _, err := DockerStateCommand(bad); err == nil {
+			t.Errorf("state selector %q was accepted", bad)
+		}
+		if _, err := DockerRestartEventsCommand(bad, since, until); err == nil {
+			t.Errorf("event selector %q was accepted", bad)
+		}
+	}
+}
+
 // TestDockerLogsCommand_InjectionRejected is the security gate: every
 // shell-metacharacter selector must fail BEFORE any wire activity.
 func TestDockerLogsCommand_InjectionRejected(t *testing.T) {

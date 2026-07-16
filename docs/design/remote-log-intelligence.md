@@ -57,8 +57,8 @@ install, no log shipper — just SSH reachability.
 |---|---|---|
 | `remote_host` | workspace | SSH target (user@host:port), auth ref, host-key pin, health |
 | `log_source` | workspace | one stream on a host: docker container / compose project / journald unit / file path, poll cadence, retention caps |
-| `log_template` | per source | masked line shape ("pgx: connection refused host=…") + count, first/last seen, severity class, sample raw line |
-| `log_pull` | per source | cursor state + pull stats (lines, bytes, new templates) |
+| `log_template` | per source | stable masked line shape + lifetime count/first/last seen, structured severity, retained recurrence/cardinality evidence, and redacted samples |
+| `log_pull` | per source | cursor continuity + explicit Docker runtime evidence (`RestartCount`, identity, `StartedAt`, restart events) + pull stats |
 | `monitoring_channel` | workspace | one alert output: gchat webhook / telegram / whatsapp / mesh, config (secret refs), `min_severity`, enabled |
 | digest | computed | budget-bounded render of a window: new templates first, then error classes, then count deltas |
 | watch worker | workspace | built-in Worker wired to the digest; zero-spend gate on quiet ticks |
@@ -100,12 +100,19 @@ and 50-line function cap apply as usual.
   carried as one command string over a host-key-pinned SSH connection. SSH has
   no protocol-level argv exec, so fixed literals plus strict validation and
   single-quoting of every variable token are the injection boundary.
-- Cursor = last-pulled timestamp + a rolling hash of the tail line to detect
-  container restarts / log rotation (restart ⇒ cursor reset + `event`
-  template noting the restart — that itself is signal).
+- Cursor = last-pulled timestamp + a rolling hash of the tail line. The hash
+  checks continuity only. A mismatch emits the observation `log cursor
+  discontinuity` or `log stream non-monotonic`; it never diagnoses a restart,
+  rotation, recreation, or application cause. Docker lifecycle signals are
+  collected separately from bounded `docker events` restart records and
+  minimal `docker inspect` fields (`Id`, `RestartCount`, `StartedAt`).
+- Every Docker-backed host also gets a host-wide published-port inventory from
+  `docker ps`. Non-loopback bindings are surfaced as observed exposure; the
+  monitor does not assert that a binding is internet-reachable or vulnerable.
 - Caps per pull: max bytes (default 4 MiB), max wall clock (default 30s),
-  truncation is recorded as a synthetic template (`logwatch: pull truncated`)
-  so silent gaps can't hide.
+  truncation is recorded as a critical evidence-gap template (`logwatch: pull
+  truncated`). A truncated window is marked untrustworthy, bypasses the quiet
+  worker gate, and does not advance the log cursor.
 - Health: consecutive failed scheduled pulls surface on the dashboard. The
   third failure opens one critical incident through the normal dispatcher and
   retries that episode until a route accepts it; an SSH host-key mismatch does
@@ -125,16 +132,22 @@ triage.
 
 ### 5.3 Distiller — the token-cost engine
 
-1. **Normalize**: strip ANSI, ISO timestamps, then mask volatile atoms:
-   uuids, hex ≥8, ints ≥3 digits, IPs, quoted strings > 24 chars, durations,
-   paths with digits. Result = template text.
-2. **Template identity** = SHA-256 of (source_id, masked text). Upsert:
+1. **Normalize**: strip ANSI and mask volatile values: UUIDs, order/request
+   numbers, long hex, IPs, quoted payloads, durations, and ordinary integers.
+   Preserve taxonomy identifiers: code `file:line`, constraint/index/schema
+   names, SQLSTATE/error codes, and exception types. Those identify the shape;
+   masking them merges unrelated problems.
+2. **Template identity** = SHA-256 of (stable source identity, masked
+   text). The ID is permanent for the shape. A separate episode/incident ID
+   re-arms delivery for a recurrence without breaking task dedupe. Upsert:
    `count += n`, `last_seen = now`, keep first-seen raw line as sample and
    most recent raw line as `last_sample`.
-3. **Severity class** per template via ordered regex rules (fixed defaults +
-   per-source overrides): `panic|fatal|OOM|SIGSEGV|data race` → critical-class,
-   `error|exception|traceback|refused|timeout` → error-class,
-   `warn` → warn-class, else info-class.
+3. **Severity class** reads an explicit structured application level first
+   (`level`, `log.level`, `severity`, or `lvl`, including JSON). That field is
+   authoritative even when the handled message body contains words such as
+   `ERROR`, `panic`, or `duplicate key`. Per-source operator overrides remain
+   highest priority; keyword fallback applies only when no explicit level is
+   present. Monitor-authored truncation remains critical.
 4. **Novelty**: template never seen before on this source ⇒ `new=true` for
    the next digest window; new **error-class** templates are the primary wake
    signal.
@@ -147,10 +160,21 @@ triage.
      pull re-arms the next outage.
    Each enters the deterministic dispatcher once; configured channels receive
    it by severity, and a mesh channel can wake the AI worker for triage.
-6. **Digest renderer** — `logs.digest({source_ids?, window, budget_tokens})`
+   A truncated pull is a collection-health alarm that gates conclusions about
+   the affected window; it is not an ordinary application warning.
+6. **Digest renderer** — `monitoring.digest({source_ids?, window, budget_tokens})`
    fills the budget in priority order: new critical/error templates → rate
    spikes → new info templates → top count deltas → steady-state summary
-   line. Every entry is `count × template + first/last ts + one sample line`.
+   line. Every entry includes the stable template ID, true lifetime first-seen
+   and count, persistently observed distinct days/day cadence, retained-slice
+   scope, a `(source,file:line)`
+   correlation key when available, distinct-value cardinality for masked
+   fields, and up to three redacted samples. Upgrade backfill never invents
+   pruned legacy days: a first-seen baseline is kept separate from observed-day
+   cadence. Low-cardinality business values
+   may be listed; UUID/token-like values are counted but not expanded. This
+   makes replicated tasks useful even when `monitoring.raw` is available only
+   on the owning gateway.
    A 12,481-line window typically renders in ~600–900 tokens:
 
    ```
@@ -168,7 +192,7 @@ Named to match the UI feature ("Monitoring", ratified 2026-07-08).
 |---|---|
 | `monitoring.hosts` / `monitoring.sources` | list config + health |
 | `monitoring.channels` | list configured alert channels (kind, min_severity, enabled — config secret refs redacted) |
-| `monitoring.stats({source_ids?, window})` | cheap counters: lines, new_templates, error_delta — **the zero-spend gate reads this** |
+| `monitoring.stats({source_ids?, window})` | cheap counters: lines, new_templates, error_delta, evidence_gap — **the zero-spend gate reads this** |
 | `monitoring.digest({source_ids?, window, budget_tokens, min_severity?})` | budget-bounded digest |
 | `monitoring.search({source_id, q, limit})` | grep the ring buffer (regex), capped output |
 | `monitoring.raw({template_id, limit})` | recent raw lines for one template (drill-down) |
@@ -196,17 +220,22 @@ Exactly the `memory-consolidator` pattern (`cmd/mcplexer/consolidator_autoinstal
   ```js
   const s = monitoring.stats({window: "10m"});
   const forced = hook.run.trigger_kind === "mesh" || hook.run.trigger_kind === "manual";
-  if (s.new_templates === 0 && !forced) abort("quiet");
+  if (s.new_templates === 0 && !s.evidence_gap && !forced) abort("quiet");
   ```
   Quiet tick ⇒ status=blocked, zero model spend. Chronic known errors no longer
   wake the model every sweep; deterministic anomaly mesh triggers still force
   triage immediately.
-- Prompt: triage skill + `monitoring.digest({budget_tokens: 2000})`. The
-  worker classifies severity (can raise/lower the deterministic floor),
-  writes a one-paragraph incident summary, then calls `monitoring.notify`
-  ONCE — the daemon owns formatting and channel fan-out.
-- `exec_mode: autonomous` with tool allowlist exactly:
-  `["monitoring__*", "task__create", "task__list", "mesh__send"]`.
+- Prompt: one canonical, startup-converged evidence contract. It reads a
+  budgeted digest, treats monitor text as observations/hypotheses rather than
+  diagnoses, handles evidence gaps first, and clusters by the digest's
+  deterministic correlation key (normally `source/file:line`, or a host key
+  for host-wide checks) before filing. A benign disposition is acknowledged
+  into digest history and creates no work-queue task or notification. Actionable or
+  uncertain findings produce one self-contained canonical task with lifetime,
+  cadence, cardinality, samples, verified evidence, and separately labelled
+  hypotheses, followed by at most one `monitoring.notify` call.
+- `exec_mode: autonomous` with a narrow allowlist: monitoring read/ack/notify,
+  task create/list/append-note/update, and mesh send.
   The worker holds NO channel tools (no telegram/openwa/fetch) — it cannot
   send anywhere except through the deterministic dispatcher. Anything beyond
   notify-and-file (e.g. restarting a service) is downstream agents'
@@ -304,14 +333,17 @@ Channel kinds (v1):
   canonical task. Lock-screen text contains only system/source context, never
   a raw log sample, and clicking opens the canonical task (or Monitoring while
   the first deterministic observation is still awaiting triage).
-- **task filing** is not a channel — it's the worker's own `task.create`
-  action governed by the `task` knob above (dedupe: if an open task already
-  references the template id via meta key `logwatch_template`, append a note
-  instead of filing a duplicate).
+- **task filing** is not a channel — it is the worker's own `task.create`
+  action. Before creating anything, the worker lists open log-watch tasks and
+  matches the stable template-ID array or deterministic correlation key.
+  Related templates and severity updates are folded into that canonical
+  incident instead of producing new tasks. Benign shapes are acknowledged and
+  never enter the work queue.
 
 **Storm-proofing is layered**: mesh-trigger `throttle_seconds` (per-source),
-severity-aware per-template cooldown, and independent hourly budgets. A higher
-severity bypasses the existing template cooldown; lower-severity traffic gets
+stable template identity plus separate episode IDs, correlation-aware task
+dedupe, and independent hourly budgets. A higher severity can re-arm the
+episode without changing the shape ID; lower-severity traffic gets
 6 channel notifications/hour and cannot consume the separate critical budget
 (12/hour). Durable Signal history records every new critical incident, while
 lock-screen interruptions are capped at 6/hour. Transient channel and Web Push
@@ -365,7 +397,7 @@ CREATE TABLE log_sources (
 );
 
 CREATE TABLE log_templates (
-  id           TEXT PRIMARY KEY,           -- sha256(source_id, masked)
+  id           TEXT PRIMARY KEY,           -- sha256(source_id, masked shape)
   source_id    TEXT NOT NULL REFERENCES log_sources(id),
   masked       TEXT NOT NULL,
   severity     TEXT NOT NULL,              -- info|warn|error|critical
@@ -389,6 +421,14 @@ CREATE TABLE log_lines (
 );
 CREATE INDEX idx_lines_source_ts ON log_lines(source_id, ts);
 
+-- durable recurrence evidence; raw-line pruning does not delete observed days
+CREATE TABLE log_template_days (
+  template_id  TEXT NOT NULL REFERENCES log_templates(id) ON DELETE CASCADE,
+  observed_day TEXT NOT NULL,
+  basis        TEXT NOT NULL,               -- observed | first_seen_baseline
+  PRIMARY KEY (template_id, observed_day)
+);
+
 CREATE TABLE monitoring_channels (
   id           TEXT PRIMARY KEY,
   workspace_id TEXT NOT NULL REFERENCES workspaces(id),
@@ -402,8 +442,9 @@ CREATE TABLE monitoring_channels (
 );
 ```
 
-Templates are tiny and persist past raw retention — long-term novelty memory
-costs ~nothing.
+Templates and one-row-per-observed-day recurrence history persist past raw
+retention. Upgrade backfill records only days that retained rows can prove;
+the lifetime first-seen baseline is explicitly excluded from cadence math.
 
 ## 7. SSH security model (→ ADR 0007)
 
@@ -418,7 +459,8 @@ costs ~nothing.
    raises a `critical` mesh alert. No `InsecureIgnoreHostKey`, ever.
 3. **Fixed shell command**: SSH exec carries one command string interpreted by
    the remote login shell (there is no protocol-level argv exec). Commands use
-   fixed per-kind templates, and selectors are validated against
+   fixed read-only templates (`docker logs`, minimal `docker inspect`, bounded
+   `docker events`, `docker ps`, and `journalctl`), and selectors are validated against
    `^[A-Za-z0-9._/][A-Za-z0-9._/-]*$` then single-quoted at CRUD and dial time.
 4. **Bounded reads**: byte + wall-clock caps per pull; the SSH session is
    killed past deadline.
@@ -470,8 +512,9 @@ fixture corpora without SSH).
    `/etc/docker/daemon.json` (`max-size`/`max-file`) so chatty containers
    can't fill disks — note `docker logs` does not work with remote drivers
    (`awslogs`/`syslog`/`gelf`). Pulls use `docker logs --timestamps --since
-   <cursor>` against the stable name; redeploys surface as restart-detection
-   event templates (deploy boundary = signal). Consequence for M6:
+   <cursor>` against the stable name. Redeploys surface only through explicit
+   runtime-identity/start/restart observations; cursor discontinuity remains a
+   separate ingestion signal and never proves the cause. Consequence for M6:
    journald/file kinds are demoted to "third-party boxes we don't control
    only" — they are not part of our own deploy story.
 8. **UI feature = "Monitoring", per workspace** (ratified 2026-07-08): one
@@ -505,7 +548,7 @@ fixture corpora without SSH).
   template cap with overflow bucket template + M6 embeddings.
 - **SSH flakiness** → cursored pulls make every pull idempotent-ish; health
   counter + `source went dark` rule turns silence into signal.
-- **Notification fatigue** → three throttle layers + `logs.ack` to retire
-  known-noisy templates; the lever default for `warn` is task-only.
+- **Notification fatigue** → stable shape IDs, correlation-aware canonical
+  tasks, bounded episode delivery, and `monitoring.ack` for benign/known shapes.
 - **Scope creep toward remediation** — this epic ends at *notify + file
   task with drill-down pointers*. Auto-fix workers are a follow-up epic.

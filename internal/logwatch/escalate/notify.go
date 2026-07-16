@@ -43,7 +43,7 @@ func (d *Dispatcher) Notify(ctx context.Context, n distill.Notification) error {
 	}
 	d.deliverChannels(ctx, workspace.Name, n, channels, outcome)
 	if outcome.sent > 0 && !n.Test {
-		d.recordNotify(n.WorkspaceID, n.TemplateID, n.Severity)
+		d.recordNotify(n.WorkspaceID, notificationDeliveryKey(n), n.Severity)
 	}
 	return d.deliveryResult(n, outcome.delivered, outcome.failures)
 }
@@ -53,7 +53,14 @@ func (d *Dispatcher) prepareNotification(n *distill.Notification) string {
 		n.Title = "[test] " + n.Title
 		return ""
 	}
-	return d.throttled(n.WorkspaceID, n.TemplateID, n.Severity)
+	return d.throttled(n.WorkspaceID, notificationDeliveryKey(*n), n.Severity)
+}
+
+func notificationDeliveryKey(n distill.Notification) string {
+	if n.IncidentID != "" {
+		return n.IncidentID
+	}
+	return n.TemplateID
 }
 
 func (d *Dispatcher) deliverHuman(

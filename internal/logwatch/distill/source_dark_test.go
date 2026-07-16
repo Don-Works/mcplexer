@@ -27,7 +27,8 @@ func TestNotifyCollectionFailureIsCriticalAndPropagatesDeliveryFailure(t *testin
 	}
 	note := notifier.notes[0]
 	if note.Severity != store.SeverityCritical || !note.NewIncident ||
-		note.TemplateID != "source-dark:source-1:episode-a" {
+		note.TemplateID != "source-dark:source-1:collection_unavailable" ||
+		note.IncidentID != "source-dark:source-1:episode-a" {
 		t.Fatalf("source-dark notification: %+v", note)
 	}
 	if strings.Contains(note.Body, "password") {

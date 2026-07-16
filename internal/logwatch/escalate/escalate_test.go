@@ -253,3 +253,26 @@ func TestDispatcher_StormThrottled(t *testing.T) {
 		t.Fatalf("cap must reset next hour: got %d", len(sender.got))
 	}
 }
+
+func TestDispatcher_StableTemplateCanRearmWithDistinctIncidentIDs(t *testing.T) {
+	sender := &captureSender{}
+	d, _ := newTestDispatcher([]*store.MonitoringChannel{{
+		Name: "feed", Kind: store.ChannelKindMesh, MinSeverity: store.SeverityInfo,
+		Enabled: true, WorkspaceID: "ws",
+	}}, map[string]Sender{store.ChannelKindMesh: sender})
+	n := testNotification(store.SeverityError, "ratespike:source-1")
+	n.IncidentID = "ratespike:source-1:episode-a"
+	if err := d.Notify(context.Background(), n); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.Notify(context.Background(), n); err != nil {
+		t.Fatal(err)
+	}
+	n.IncidentID = "ratespike:source-1:episode-b"
+	if err := d.Notify(context.Background(), n); err != nil {
+		t.Fatal(err)
+	}
+	if len(sender.got) != 2 {
+		t.Fatalf("stable template episodes sent=%d, want 2", len(sender.got))
+	}
+}

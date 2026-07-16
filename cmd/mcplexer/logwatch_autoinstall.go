@@ -3,8 +3,8 @@
 // enabled log sources. Same contract as consolidator_autoinstall.go:
 //
 //   - Gated behind MCPLEXER_AUTO_INSTALL_LOG_WATCH=1
-//   - Idempotent: skips workspaces that already have a "log-watch"
-//     worker (operator tuning is never clobbered)
+//   - Idempotent: installs missing workers and converges the fleet-wide
+//     evidence/safety contract while preserving operator state/model/schedule
 //   - Skips workspaces with no ENABLED log sources — nothing to watch
 //   - Skips entirely when no auth scope exists yet
 //
@@ -21,6 +21,7 @@ import (
 
 	"github.com/don-works/mcplexer/internal/store"
 	workersadmin "github.com/don-works/mcplexer/internal/workers/admin"
+	"github.com/don-works/mcplexer/internal/workertemplates"
 )
 
 const (
@@ -51,7 +52,7 @@ const (
 	// worker's canonical-task dedupe (task__list meta_match), not re-filed.
 	logWatchGate = `const s = monitoring.stats({window: "10m"});
 const forced = hook.run.trigger_kind === "mesh" || hook.run.trigger_kind === "manual";
-if (s.new_templates === 0 && !forced) abort("quiet");`
+if (s.new_templates === 0 && !s.evidence_gap && !forced) abort("quiet");`
 )
 
 func autoInstallLogWatchEnabled() bool {
@@ -98,8 +99,9 @@ func autoInstallLogWatch(ctx context.Context, db store.Store, workers *workersad
 	}
 }
 
-// convergeLogWatchWorker upgrades safety/cost invariants without changing an
-// operator's enabled state, schedule, model, prompt, or positive monthly cap.
+// convergeLogWatchWorker upgrades the fleet-wide evidence/task contract and
+// safety/cost invariants without changing an operator's enabled state,
+// schedule, model, or positive monthly cap.
 func convergeLogWatchWorker(
 	ctx context.Context, workers *workersadmin.Service, worker *store.Worker,
 ) error {
@@ -108,6 +110,10 @@ func convergeLogWatchWorker(
 	if worker.PreExecuteScript != logWatchGate {
 		gate := logWatchGate
 		in.PreExecuteScript, dirty = &gate, true
+	}
+	if worker.PromptTemplate != workertemplates.HardenedLogWatchPrompt {
+		prompt := workertemplates.HardenedLogWatchPrompt
+		in.PromptTemplate, dirty = &prompt, true
 	}
 	setCappedInt(&in.MaxToolCalls, worker.MaxToolCalls, autoLogWatchMaxToolCalls, &dirty)
 	setCappedInt(&in.MaxWallClockSeconds, worker.MaxWallClockSeconds, 300, &dirty)

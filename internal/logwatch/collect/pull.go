@@ -3,8 +3,6 @@ package collect
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"strings"
 	"time"
@@ -58,7 +56,7 @@ func validateCollectedKind(kind string) error {
 
 func (m *Manager) executePull(
 	ctx context.Context, host *store.RemoteHost, cred sshx.Credential, src *store.LogSource,
-) (sshx.Result, error) {
+) (PullResult, error) {
 	since := time.Time{}
 	if src.CursorTS != nil {
 		since = *src.CursorTS
@@ -79,28 +77,63 @@ func (m *Manager) persistObservedPin(ctx context.Context, hostID, pin string) er
 }
 
 func (m *Manager) ingestPull(
-	ctx context.Context, src *store.LogSource, host *store.RemoteHost, result sshx.Result,
+	ctx context.Context, src *store.LogSource, host *store.RemoteHost, result PullResult,
 ) error {
 	lines, firstRaw, lastRaw := parseLogLines(result.Stdout, result.Stderr)
-	lines, discontinuity := reconcileCursor(lines, firstRaw, src)
+	state := decodeCursorState(src.CursorHash)
+	lines, discontinuity := reconcileCursor(lines, firstRaw, src, state)
+	var signals []Line
+	if result.Docker != nil {
+		var lifecycle []Line
+		lifecycle, state = m.lifecycleLines(src, state, result.Docker)
+		signals = append(signals, lifecycle...)
+		var portLines []Line
+		portLines, state.PortState = m.portExposureLines(host, result.Docker, state.PortState)
+		signals = append(signals, portLines...)
+	}
+	// Continuity is independent evidence. Even when Docker separately proves a
+	// lifecycle transition, preserving this observation exposes interleaved or
+	// duplicate logging rather than laundering it into a restart diagnosis.
 	if discontinuity {
-		lines = append([]Line{{TS: m.now().UTC(),
-			Text: "logwatch: source discontinuity — container/service restarted, recreated, or logs rotated"}}, lines...)
+		signals = append(signals, cursorDiscontinuityLine(src, firstRaw, m.now().UTC()))
 	}
+	truncationIncidentID := m.truncationEpisode(src.ID, result.Truncated)
 	if result.Truncated {
-		lines = append(lines, Line{TS: m.now().UTC(),
-			Text: fmt.Sprintf("logwatch: pull truncated at %d bytes — window incomplete, raise max_pull_bytes or shorten schedule_spec", src.MaxPullBytes)})
+		now := m.now().UTC()
+		signals = append(signals, Line{TS: now, Notify: true,
+			IncidentID: truncationIncidentID,
+			Text:       fmt.Sprintf("logwatch: pull truncated at %d bytes — window incomplete and untrustworthy; silence is not evidence of health", src.MaxPullBytes)})
+		// Do not mine an arbitrary prefix as application evidence. The cursor is
+		// deliberately held, so retaining these rows would duplicate them on
+		// every retry and manufacture counts from an untrustworthy window.
+		lines = nil
 	}
+	lines = append(signals, lines...)
 	if len(lines) == 0 {
-		return nil
+		return m.persistCursorState(ctx, src, state, lastRaw, result.Truncated)
 	}
 	if err := m.sink.Ingest(ctx, src, host, lines); err != nil {
 		return fmt.Errorf("logwatch: ingest: %w", err)
 	}
-	if lastRaw.ts.IsZero() {
+	return m.persistCursorState(ctx, src, state, lastRaw, result.Truncated)
+}
+
+func (m *Manager) persistCursorState(
+	ctx context.Context, src *store.LogSource, state sourceCursorState,
+	lastRaw rawLine, truncated bool,
+) error {
+	cursorTS := time.Time{}
+	if src.CursorTS != nil {
+		cursorTS = *src.CursorTS
+	}
+	if !truncated && !lastRaw.ts.IsZero() {
+		cursorTS = lastRaw.ts
+		state.TailHash = lineHash(lastRaw.raw)
+	}
+	if cursorTS.IsZero() {
 		return nil
 	}
-	return m.store.UpdateLogSourceCursor(ctx, src.ID, lastRaw.ts, lineHash(lastRaw.raw))
+	return m.store.UpdateLogSourceCursor(ctx, src.ID, cursorTS, state.encode())
 }
 
 // credential resolves the host's auth scope into dial material. PEM
@@ -229,41 +262,22 @@ func splitLeadingTimestamp(raw string) (time.Time, string) {
 	return time.Time{}, raw
 }
 
-// reconcileCursor implements continuity checking: the pull requests
-// --since <cursor_ts> (inclusive), so a continuous stream re-returns
-// the previous tail line first. Hash match → drop the duplicate and
-// carry on; anything else with a recorded cursor → discontinuity
-// (restart / recreation / rotation), which is itself signal.
-func reconcileCursor(lines []Line, firstRaw rawLine, src *store.LogSource) ([]Line, bool) {
-	if src.CursorTS == nil || src.CursorHash == "" || len(lines) == 0 {
-		return lines, false
-	}
-	if lineHash(firstRaw.raw) == src.CursorHash {
-		return lines[1:], false
-	}
-	return lines, true
-}
-
-func lineHash(raw string) string {
-	sum := sha256.Sum256([]byte(raw))
-	return hex.EncodeToString(sum[:8])
-}
-
 // sshRunner is the production Runner: fixed per-kind command builder +
 // bounded sshx run.
 type sshRunner struct{}
 
-func (sshRunner) Pull(ctx context.Context, host *store.RemoteHost, cred sshx.Credential, src *store.LogSource, since time.Time) (sshx.Result, error) {
+func (sshRunner) Pull(ctx context.Context, host *store.RemoteHost, cred sshx.Credential, src *store.LogSource, since time.Time) (PullResult, error) {
 	cmd, err := sshx.CommandForSource(src, since)
 	if err != nil {
-		return sshx.Result{}, err
+		return PullResult{}, err
 	}
 	client, err := sshx.Dial(ctx, host, cred)
 	if err != nil {
-		return sshx.Result{}, err
+		return PullResult{}, err
 	}
 	defer client.Close()
+	observation := collectDockerObservation(ctx, client, src, since)
 	res, err := client.Run(ctx, cmd, src.MaxPullBytes)
 	res.NewPin = client.NewPin()
-	return res, err
+	return PullResult{Result: res, Docker: observation}, err
 }

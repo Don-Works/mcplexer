@@ -38,6 +38,7 @@ func TestSeedEmbeddedTemplates(t *testing.T) {
 	required := []string{
 		"memory-consolidator",
 		"nightly-bulletproof",
+		"log-watch",
 		"consolidator-echo",
 	}
 	got := map[string]bool{}
@@ -48,6 +49,34 @@ func TestSeedEmbeddedTemplates(t *testing.T) {
 		if !got[name] {
 			t.Errorf("expected bundled seed %q to be published, not in heads", name)
 		}
+	}
+}
+
+// TestLogWatchPromptIsCanonical proves the compact embedded seed sentinel is
+// replaced before publication. Existing workers are converged to this same
+// constant on daemon startup, so fresh and upgraded installs share one policy.
+func TestLogWatchPromptIsCanonical(t *testing.T) {
+	db, err := sqlite.New(context.Background(), filepath.Join(t.TempDir(), "seed.db"))
+	if err != nil {
+		t.Fatalf("sqlite.New: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	reg := workertemplates.New(db)
+	if err := workertemplates.Seed(context.Background(), reg); err != nil {
+		t.Fatalf("Seed: %v", err)
+	}
+
+	entry, err := reg.Get(context.Background(), workertemplates.AdminScope(),
+		"log-watch", workertemplates.VersionRef{Latest: true})
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	tmpl, err := workertemplates.Unmarshal(entry.Body)
+	if err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if tmpl.PromptTemplate != workertemplates.HardenedLogWatchPrompt {
+		t.Fatal("published log-watch template did not receive canonical prompt")
 	}
 }
 
