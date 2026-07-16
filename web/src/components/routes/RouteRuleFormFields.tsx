@@ -147,7 +147,7 @@ export function RouteRuleFormFields({
           <Label
             className={`text-xs text-muted-foreground ${form.policy === 'deny' ? 'opacity-50' : ''}`}
           >
-            Downstream Server
+            Server
           </Label>
           <Select
             value={form.downstream_server_id}
@@ -176,7 +176,7 @@ export function RouteRuleFormFields({
         <Label
           className={`text-xs text-muted-foreground ${form.policy === 'deny' ? 'opacity-50' : ''}`}
         >
-          Auth Scope
+          Credential
         </Label>
         <Select
           value={form.auth_scope_id || 'none'}

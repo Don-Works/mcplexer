@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -30,6 +31,9 @@ func TestSetupClientURLFromAddr(t *testing.T) {
 }
 
 func TestReadLaunchdAddr(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("launchd paths are available only in darwin builds")
+	}
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	dir := filepath.Join(home, "Library", "LaunchAgents")

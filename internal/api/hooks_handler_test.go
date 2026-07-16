@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/don-works/mcplexer/internal/store"
@@ -30,10 +31,13 @@ type fakeApprovalRequester struct {
 // can assert that the right status/tool_name/params land for each
 // decision path (cheap-block, approve, deny, error).
 type fakeAuditor struct {
+	mu      sync.Mutex
 	records []*store.AuditRecord
 }
 
 func (f *fakeAuditor) Record(_ context.Context, rec *store.AuditRecord) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.records = append(f.records, rec)
 	return nil
 }

@@ -48,6 +48,15 @@ export interface Task {
   updated_by_session_id?: string
   origin_peer_id?: string
 
+  // A workspace grant and this task-level visibility must both allow a
+  // principal before a safe projection is sent to another device.
+  owner_principal_id?: string
+  visibility?: 'private' | 'restricted' | 'workspace'
+  visibility_epoch?: number
+  visibility_updated_by_principal_id?: string
+  visibility_updated_at?: string | null
+  audience_principal_ids?: string[]
+
   status_history?: TaskStatusHistoryEntry[] | null
 
   pinned?: boolean

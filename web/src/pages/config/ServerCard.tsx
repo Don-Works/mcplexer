@@ -5,7 +5,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import type { CatalogEntry } from '@/data/server-catalog'
 import { CATEGORY_LABELS } from '@/data/server-catalog'
 import type { AuthScope, DownstreamOAuthStatusEntry, DownstreamServer } from '@/api/types'
-import { Copy, Key, Link, Pencil, Plus, Trash2 } from 'lucide-react'
+import { Copy, Key, Link, Pencil, Plus, PowerOff, Trash2 } from 'lucide-react'
 import { getOAuthBadges } from './DownstreamOAuthBadges'
 import { HammerspoonStatusButton } from './HammerspoonPanel'
 
@@ -19,6 +19,7 @@ interface ServerCardProps {
   serverAuthScopes: Record<string, AuthScope>
   onAdd: (catalog: CatalogEntry) => void
   onEnable: (ds: DownstreamServer) => void
+  onDisable: (ds: DownstreamServer) => void
   onEdit: (ds: DownstreamServer) => void
   onDuplicate: (ds: DownstreamServer) => void
   onDelete: (ds: DownstreamServer) => void
@@ -55,6 +56,7 @@ export function ServerCard({
   serverAuthScopes,
   onAdd,
   onEnable,
+  onDisable,
   onEdit,
   onDuplicate,
   onDelete,
@@ -141,7 +143,7 @@ export function ServerCard({
             )}
             {status === 'active' && (
               <Badge className="border-0 bg-emerald-500/15 text-emerald-600 text-xs">
-                Active
+                Enabled globally
               </Badge>
             )}
             {status === 'needs-auth' && db && (
@@ -163,6 +165,23 @@ export function ServerCard({
           {/* Management icons — only for servers in DB */}
           {db && (
             <div className="flex gap-0.5">
+              {!db.disabled && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 w-7 p-0"
+                      aria-label={`Disable ${name} globally`}
+                      data-testid={`server-disable-${db.id}`}
+                      onClick={() => onDisable(db)}
+                    >
+                      <PowerOff className="h-3.5 w-3.5" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>Disable globally</TooltipContent>
+                </Tooltip>
+              )}
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Button

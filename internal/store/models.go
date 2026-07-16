@@ -1647,6 +1647,7 @@ const (
 	TaskOfferAutoAccepted     = "auto_accepted"
 	TaskOfferRejectedThrottle = "rejected_throttle"
 	TaskOfferRejectedUnscoped = "rejected_unscoped"
+	TaskOfferConflict         = "conflict"
 )
 
 // Task is one row in the tasks table (migration 061). The operational
@@ -1696,6 +1697,16 @@ type Task struct {
 
 	StatusHistoryJSON json.RawMessage `json:"status_history,omitempty"`
 
+	// Collaboration visibility is independent of task content and assignment.
+	// Generic task updates preserve these fields; widening or narrowing goes
+	// through the dedicated authorization path so a normal edit cannot bypass
+	// workspace policy.
+	OwnerPrincipalID               string     `json:"owner_principal_id,omitempty"`
+	Visibility                     string     `json:"visibility"`
+	VisibilityEpoch                int64      `json:"visibility_epoch"`
+	VisibilityUpdatedByPrincipalID string     `json:"visibility_updated_by_principal_id,omitempty"`
+	VisibilityUpdatedAt            *time.Time `json:"visibility_updated_at,omitempty"`
+
 	// HlcAt is the per-row Hybrid Logical Clock stamp written on every
 	// mutation. 32-char lowercase hex string (wall_ms + counter; see
 	// internal/clock/hlc.go). Sorts lexicographically by HLC order so
@@ -1703,6 +1714,10 @@ type Task struct {
 	// Empty only on the brief window between row construction and the
 	// first store write — production rows always carry a value.
 	HlcAt string `json:"hlc_at,omitempty"`
+	// RemoteBaseHLC is the last canonical home revision observed by a task
+	// mirror. Local edits preserve it until a later home sync advances it.
+	// Home-owned tasks leave it empty.
+	RemoteBaseHLC string `json:"remote_base_hlc,omitempty"`
 
 	Pinned    bool       `json:"pinned,omitempty"`
 	DeletedAt *time.Time `json:"deleted_at,omitempty"`
@@ -1874,6 +1889,11 @@ type TaskOffer struct {
 	ID                  string `json:"id"`
 	TaskID              string `json:"task_id,omitempty"` // null until accepted
 	RemoteTaskID        string `json:"remote_task_id"`
+	ShareID             string `json:"share_id,omitempty"`
+	SenderPrincipalID   string `json:"sender_principal_id,omitempty"`
+	AccessEpoch         int64  `json:"access_epoch,omitempty"`
+	VisibilityEpoch     int64  `json:"visibility_epoch,omitempty"`
+	BaseHLC             string `json:"base_hlc,omitempty"`
 	FromPeerID          string `json:"from_peer_id"`
 	ToPeerID            string `json:"to_peer_id"`
 	RemoteWorkspaceID   string `json:"remote_workspace_id"`

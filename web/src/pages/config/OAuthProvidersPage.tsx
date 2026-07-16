@@ -123,7 +123,7 @@ export function OAuthProvidersPage() {
         <Info className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
         <p className="text-sm text-muted-foreground">
           OAuth providers are typically managed automatically through{' '}
-          <Link to="/setup" className="text-primary hover:underline">Add a Tool Server</Link>.
+          <Link to="/workspaces?view=add-server" className="text-primary hover:underline">Add a tool server</Link>.
           Edit these only if you need custom OAuth configurations.
         </p>
       </div>

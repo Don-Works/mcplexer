@@ -191,6 +191,26 @@ features:
     owner: "01KSK91Q4W8TNED9MAF0CTRVKC"
     scenario_functions: [scenario_tier3_cross_org_pair, pair_cross_org]
 
+  - id: p2p.collaboration.ssh_identity
+    surface: rest
+    owner: "01KXN49WJM54BQ7HWWC268WTFY"
+    scenario_functions: [scenario_collaboration_identity_and_permissions]
+
+  - id: p2p.collaboration.workspace_permissions
+    surface: rest
+    owner: "01KXN49WJM54BQ7HWWC268WTFY"
+    scenario_functions: [scenario_collaboration_identity_and_permissions, scenario_collaboration_task_flow]
+
+  - id: p2p.collaboration.safe_task_mirror
+    surface: scheduler
+    owner: "01KXN49WJM54BQ7HWWC268WTFY"
+    scenario_functions: [scenario_collaboration_task_flow]
+
+  - id: p2p.collaboration.machine_publish
+    surface: mcp_tool
+    owner: "01KXN49WJM54BQ7HWWC268WTFY"
+    scenario_functions: [scenario_collaboration_task_flow]
+
   # ---- Skill registry -----------------------------------------------------
   - id: skills.publish
     surface: rest

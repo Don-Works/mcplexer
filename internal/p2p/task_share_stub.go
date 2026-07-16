@@ -20,6 +20,7 @@ var (
 	ErrTaskNotFound    = errors.New("p2p: task not found on peer")
 	ErrTaskExpired     = errors.New("p2p: task envelope too old")
 	ErrTaskTooLarge    = errors.New("p2p: task payload exceeds size cap")
+	ErrTaskConflict    = errors.New("p2p: task edit conflicts with current home revision")
 )
 
 // Envelope kind discriminator constants — mirror the p2p-build values.
@@ -33,20 +34,26 @@ const (
 
 // TaskOfferEnvelope mirrors the p2p-build shape so import sites compile.
 type TaskOfferEnvelope struct {
-	EnvelopeKind        string          `json:"envelope_kind"`
-	EnvelopeNonce       string          `json:"envelope_nonce"`
-	EnvelopeCreatedAt   time.Time       `json:"envelope_created_at"`
-	IsDirectAssign      bool            `json:"is_direct_assign"`
-	RemoteTaskID        string          `json:"remote_task_id"`
-	RemoteWorkspaceID   string          `json:"remote_workspace_id"`
-	RemoteWorkspaceName string          `json:"remote_workspace_name"`
-	Title               string          `json:"title"`
-	DescriptionPreview  string          `json:"description_preview,omitempty"`
-	MetaPreview         string          `json:"meta_preview,omitempty"`
-	StatusPreview       string          `json:"status_preview,omitempty"`
-	PriorityPreview     string          `json:"priority_preview,omitempty"`
-	Tags                json.RawMessage `json:"tags,omitempty"`
-	Message             string          `json:"message,omitempty"`
+	EnvelopeKind         string          `json:"envelope_kind"`
+	EnvelopeNonce        string          `json:"envelope_nonce"`
+	EnvelopeCreatedAt    time.Time       `json:"envelope_created_at"`
+	IsDirectAssign       bool            `json:"is_direct_assign"`
+	RemoteTaskID         string          `json:"remote_task_id"`
+	ShareID              string          `json:"share_id"`
+	AccessEpoch          int64           `json:"access_epoch"`
+	Visibility           string          `json:"visibility"`
+	VisibilityEpoch      int64           `json:"visibility_epoch"`
+	BaseHLC              string          `json:"base_hlc,omitempty"`
+	AudiencePrincipalIDs []string        `json:"audience_principal_ids,omitempty"`
+	RemoteWorkspaceID    string          `json:"remote_workspace_id"`
+	RemoteWorkspaceName  string          `json:"remote_workspace_name"`
+	Title                string          `json:"title"`
+	DescriptionPreview   string          `json:"description_preview,omitempty"`
+	MetaPreview          string          `json:"meta_preview,omitempty"`
+	StatusPreview        string          `json:"status_preview,omitempty"`
+	PriorityPreview      string          `json:"priority_preview,omitempty"`
+	Tags                 json.RawMessage `json:"tags,omitempty"`
+	Message              string          `json:"message,omitempty"`
 }
 
 // TaskRequestEnvelope mirrors the p2p-build shape so import sites compile.
@@ -58,15 +65,21 @@ type TaskRequestEnvelope struct {
 
 // TaskPayloadEnvelope mirrors the p2p-build shape so import sites compile.
 type TaskPayloadEnvelope struct {
-	EnvelopeKind string          `json:"envelope_kind"`
-	RemoteTaskID string          `json:"remote_task_id"`
-	Title        string          `json:"title"`
-	Description  string          `json:"description"`
-	Status       string          `json:"status"`
-	Priority     string          `json:"priority"`
-	DueAt        *time.Time      `json:"due_at,omitempty"`
-	Meta         string          `json:"meta,omitempty"`
-	Tags         json.RawMessage `json:"tags,omitempty"`
+	EnvelopeKind         string          `json:"envelope_kind"`
+	RemoteTaskID         string          `json:"remote_task_id"`
+	ShareID              string          `json:"share_id"`
+	AccessEpoch          int64           `json:"access_epoch"`
+	Visibility           string          `json:"visibility"`
+	VisibilityEpoch      int64           `json:"visibility_epoch"`
+	BaseHLC              string          `json:"base_hlc,omitempty"`
+	AudiencePrincipalIDs []string        `json:"audience_principal_ids,omitempty"`
+	Title                string          `json:"title"`
+	Description          string          `json:"description"`
+	Status               string          `json:"status"`
+	Priority             string          `json:"priority"`
+	DueAt                *time.Time      `json:"due_at,omitempty"`
+	Meta                 string          `json:"meta,omitempty"`
+	Tags                 json.RawMessage `json:"tags,omitempty"`
 }
 
 // TaskAckEnvelope mirrors the p2p-build shape so import sites compile.
@@ -78,7 +91,7 @@ type TaskAckEnvelope struct {
 
 // TaskShareProvider declared here for compile-time binary parity.
 type TaskShareProvider interface {
-	GetTaskPayload(ctx context.Context, remoteTaskID string) (*TaskPayloadEnvelope, error)
+	GetTaskPayload(ctx context.Context, requesterPeerID, requestNonce, remoteTaskID string) (*TaskPayloadEnvelope, error)
 }
 
 // TaskShareReceiver declared here for compile-time binary parity.

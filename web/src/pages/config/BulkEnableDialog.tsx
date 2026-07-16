@@ -44,7 +44,7 @@ export function BulkEnableDialog({
   const [saving, setSaving] = useState(false)
   const [showDefaults, setShowDefaults] = useState(false)
   const [priority, setPriority] = useState(100)
-  const [approvalMode, setApprovalMode] = useState<'none' | 'write' | 'all'>('none')
+  const [approvalMode, setApprovalMode] = useState<'none' | 'write' | 'all'>('write')
 
   const available = downstreams.filter((d) => !d.disabled)
 
@@ -94,7 +94,7 @@ export function BulkEnableDialog({
     if (!open) return
     setSelected(new Set())
     setPriority(100)
-    setApprovalMode('none')
+    setApprovalMode('write')
     setShowDefaults(false)
   }, [open])
 

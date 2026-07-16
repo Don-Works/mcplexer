@@ -52,14 +52,15 @@ wait_for_runs() {
 }
 
 # Create a Worker on the named node, reusing scenario_provision's
-# auth scope. Echoes the worker_id on success, empty on failure.
+# auth scope. Trigger fixtures are enabled because the dispatcher
+# deliberately rejects paused workers. Echoes the worker_id on success.
 make_trigger_worker() {
     local node="$1"
     local name="$2"
     local ws="${WS_CHARLIE:-}"
     local scope="${SCOPE_CHARLIE:-}"
     local create_body
-    create_body=$(build_worker_body "$name" "$ws" "$scope")
+    create_body=$(build_worker_body "$name" "$ws" "$scope" true)
     local cresp
     cresp=$(api POST "$node/api/v1/workers" "$create_body" 2>/dev/null) || return 1
     echo "$cresp" | jq -r '.id // .ID // empty'
@@ -269,7 +270,7 @@ scenario_mesh_trigger_unauthorized() {
     # so the dispatcher's peer-scope gate denies it.
     local wname="locked-worker-$$"
     local create_body wresp wid
-    create_body=$(build_worker_body "$wname" "$WS_BRAVO" "$SCOPE_BRAVO")
+    create_body=$(build_worker_body "$wname" "$WS_BRAVO" "$SCOPE_BRAVO" true)
     wresp=$(api POST "$NODE_B/api/v1/workers" "$create_body" 2>/dev/null) || {
         fail "unauth-trigger worker create on node-b"; return
     }

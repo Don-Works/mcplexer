@@ -69,6 +69,6 @@ export function routeFormForConnection({
     downstream_server_id: server?.id ?? '',
     tool_match: server?.tool_namespace ? [`${server.tool_namespace}__*`] : [],
     approval_mode: 'write',
-    approval_timeout: 0,
+    approval_timeout: 300,
   }
 }

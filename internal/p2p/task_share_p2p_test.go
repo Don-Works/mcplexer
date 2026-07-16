@@ -17,7 +17,7 @@ type fakeTaskProvider struct {
 	payload  *TaskPayloadEnvelope
 }
 
-func (f *fakeTaskProvider) GetTaskPayload(_ context.Context, id string) (*TaskPayloadEnvelope, error) {
+func (f *fakeTaskProvider) GetTaskPayload(_ context.Context, _, _ string, id string) (*TaskPayloadEnvelope, error) {
 	if id != f.remoteID {
 		return nil, ErrTaskNotFound
 	}

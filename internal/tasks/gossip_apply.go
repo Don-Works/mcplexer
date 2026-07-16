@@ -84,6 +84,19 @@ type RemoteTaskPatch struct {
 // conflict tiebreaks and as the by_peer attribution if the event
 // carries none.
 func (s *Service) ApplyRemoteEvent(ctx context.Context, fromPeerID string, evt p2p.TaskSyncEvent) error {
+	return s.applyRemoteEvent(ctx, fromPeerID, evt, false)
+}
+
+// ApplyAuthoritativeRemoteEvent applies a revision received from the active
+// home of a local workspace membership. The wiring layer verifies that role
+// before calling this method. Home state wins over accidental local mirror
+// edits regardless of wall-clock/HLC ordering; writers use the separate
+// mutation/ack path rather than turning a mirror row into a competing source.
+func (s *Service) ApplyAuthoritativeRemoteEvent(ctx context.Context, fromPeerID string, evt p2p.TaskSyncEvent) error {
+	return s.applyRemoteEvent(ctx, fromPeerID, evt, true)
+}
+
+func (s *Service) applyRemoteEvent(ctx context.Context, fromPeerID string, evt p2p.TaskSyncEvent, authoritative bool) error {
 	if evt.TaskID == "" || evt.HLC == "" {
 		return errors.New("gossip apply: task_id + hlc required")
 	}
@@ -113,7 +126,7 @@ func (s *Service) ApplyRemoteEvent(ctx context.Context, fromPeerID string, evt p
 
 	existing, err := s.store.GetTask(ctx, evt.TaskID)
 	if err == nil {
-		return s.applyToExisting(ctx, existing, evt, &patch, byPeer)
+		return s.applyToExisting(ctx, existing, evt, &patch, byPeer, authoritative)
 	}
 	if !errors.Is(err, store.ErrNotFound) {
 		return fmt.Errorf("gossip apply: load existing: %w", err)
@@ -128,20 +141,24 @@ func (s *Service) ApplyRemoteEvent(ctx context.Context, fromPeerID string, evt p
 // which mutation came from gossip).
 func (s *Service) applyToExisting(
 	ctx context.Context, existing *store.Task,
-	evt p2p.TaskSyncEvent, patch *RemoteTaskPatch, byPeer string,
+	evt p2p.TaskSyncEvent, patch *RemoteTaskPatch, byPeer string, authoritative bool,
 ) error {
 	if existing.WorkspaceID != evt.WorkspaceID {
 		// Cross-workspace event — drop. The peer probably has a
 		// stale workspace binding; we don't try to migrate here.
 		return nil
 	}
-	cmp := compareHLCWithTiebreak(evt.HLC, byPeer, existing.HlcAt, existing.AssigneePeerID)
-	switch {
-	case cmp < 0:
-		// Local is newer — drop.
-		return nil
-	case cmp == 0:
-		// Exact duplicate by (hlc, by_peer) — idempotent no-op.
+	if !authoritative {
+		cmp := compareHLCWithTiebreak(evt.HLC, byPeer, existing.HlcAt, existing.AssigneePeerID)
+		switch {
+		case cmp < 0:
+			// Local is newer — drop.
+			return nil
+		case cmp == 0:
+			// Exact duplicate by (hlc, by_peer) — idempotent no-op.
+			return nil
+		}
+	} else if evt.HLC == existing.HlcAt && byPeer == existing.OriginPeerID {
 		return nil
 	}
 	now := time.Now().UTC()
@@ -149,6 +166,7 @@ func (s *Service) applyToExisting(
 	mergeFields(existing, patch)
 	applyClears(existing, patch)
 	existing.HlcAt = evt.HLC
+	existing.RemoteBaseHLC = evt.HLC
 	existing.UpdatedBySessionID = evt.BySession
 	existing.OriginPeerID = firstNonEmptyStr(patch.OriginPeerID, existing.OriginPeerID, byPeer)
 	appendGossipHistory(existing, evt, byPeer, now)
@@ -203,6 +221,7 @@ func (s *Service) applyMaterialize(
 		SourceKind:         store.TaskSourcePeerImport,
 		UpdatedBySessionID: evt.BySession,
 		HlcAt:              evt.HLC,
+		RemoteBaseHLC:      evt.HLC,
 		CreatedAt:          now,
 		UpdatedAt:          now,
 	}

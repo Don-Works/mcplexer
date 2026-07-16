@@ -3,8 +3,10 @@
 #
 # The Shell Guard sits at POST /v1/hooks/pretool. It receives Claude
 # Code's PreToolUse webhook (Bash invocations only), runs cheap-block
-# validation (metachars, shell interpreters, eval flags), then routes
-# the request through the approval pipeline with Surface="shell".
+# validation (metachars and protected gateway paths), then routes the
+# request through the approval pipeline with Surface="shell". Local shell
+# interpreters and eval-like flags intentionally reach approval because
+# flags such as -c are legitimate for grep, curl, tar, Python, and Node.
 #
 # Per-workspace behaviour is driven by approval_rules rows: a rule with
 # Directory set to a workspace's root_path matches hook invocations
@@ -14,7 +16,8 @@
 #
 # Layers exercised here:
 #   - hook surface contract (non-Bash, missing cmd, malformed JSON)
-#   - cheap-blocks (metachars / shell interpreters / eval flags)
+#   - cheap-blocks (metachars + protected paths)
+#   - interpreter / eval-like local commands reach the approval path
 #   - per-workspace allow + deny rules (with prefix-directory match)
 #   - rule priority ordering
 #   - rule expiry
@@ -208,7 +211,7 @@ sg_count_audit_shell() {
     local url="$1"
     local body
     body=$(api GET "$url/api/v1/audit?limit=1000" 2>/dev/null || echo "{}")
-    echo "$body" | jq '[(.records // .audit // .[] // empty)
+    echo "$body" | jq '[(.data // .records // .audit // [])[]?
         | select(.tool_name? // "" | startswith("shell:"))] | length' 2>/dev/null \
         || echo "0"
 }
@@ -222,7 +225,7 @@ sg_latest_shell_audit() {
     local body
     body=$(api GET "$url/api/v1/audit?limit=200" 2>/dev/null || echo "{}")
     echo "$body" | jq -c '
-        ([.records // .audit // empty]
+        ([.data // .records // .audit // empty]
             | if type == "array" then . else [.] end
             | flatten
             | map(select(.tool_name? // "" | startswith("shell:")))
@@ -255,6 +258,40 @@ sg_delete_workspace() {
     local id="$2"
     if [ -n "$id" ]; then
         api_status DELETE "$url/api/v1/workspaces/$id" >/dev/null 2>&1 || true
+    fi
+}
+
+# sg_set_chaining toggles ShellGuardAllowChaining on a node via the
+# settings API. The setting governs whether metacharacter cheap-blocks
+# fire (false) or are lifted to the approval path (true, the default).
+# Fetches the current settings, patches the one flag, and PUTs back so
+# unrelated settings are preserved.
+#
+# Usage: sg_set_chaining <node_url> <true|false>
+sg_set_chaining() {
+    local node="$1"
+    local value="$2"
+    local settings_body
+    if ! settings_body=$(api GET "$node/api/v1/settings" 2>/dev/null); then
+        fail "shell guard chaining setting read" "GET $node/api/v1/settings failed"
+        return 1
+    fi
+    local settings
+    if ! settings=$(echo "$settings_body" \
+        | jq -ce --argjson v "$value" '.settings | .shell_guard_allow_chaining = $v')
+    then
+        fail "shell guard chaining setting parse" "response=$(echo "$settings_body" | head -c 200)"
+        return 1
+    fi
+    local saved
+    if ! saved=$(api PUT "$node/api/v1/settings" "$settings" 2>/dev/null); then
+        fail "shell guard chaining setting write" "PUT $node/api/v1/settings failed"
+        return 1
+    fi
+    if [ "$(echo "$saved" | jq -r '.settings.shell_guard_allow_chaining')" != "$value" ]; then
+        fail "shell guard chaining setting verify" \
+            "wanted=$value response=$(echo "$saved" | head -c 200)"
+        return 1
     fi
 }
 
@@ -327,9 +364,16 @@ scenario_shellguard_hook_surface() {
 scenario_shellguard_cheap_blocks() {
     step 18 "shell guard cheap-blocks — instant rejection without approval"
 
-    # Every case here must return in <2s — the handler must reject
-    # BEFORE invoking the approval manager. The reason substring
-    # confirms which rule fired (metachar, shell interpreter, eval flag).
+    # ShellGuardAllowChaining defaults to true (metachars flow through to
+    # the approval path). Cheap-block tests require it OFF so metachars
+    # are hard-blocked at the hook layer. Restore after teardown.
+    if ! sg_set_chaining "$NODE_A" false; then
+        return
+    fi
+
+    # Hard-block cases return in <2s before invoking the approval manager.
+    # Interpreter/eval-like cases below intentionally time out because
+    # they must reach the approval path instead of false-positive locally.
 
     local body
 
@@ -362,29 +406,20 @@ rm /etc" '{session_id:"s18.5", hook_event_name:"PreToolUse",
         --data "$nl_body" 2>/dev/null || echo "")
     sg_assert_decision "18.5 newline metachar" "$body" "block" "metacharacter"
 
-    # 18.6 — bash interpreter as the command itself → block.
+    # 18.6–18.9 — interpreters and eval-like flags are valid for local Bash
+    # invocations. With no matching rule they must stay pending, proving the
+    # downstream-registration cmdguard did not false-positive at this hook.
     body=$(sg_post_hook "$NODE_A" 2 "Bash" "/tmp" "bash -c 'echo x'")
-    # Metachar check fires first on the quotes' surroundings? No — single
-    # quotes aren't metachars. Path lands at the shell-interpreter check.
-    # Tolerate either message.
-    if echo "$body" | jq -r '.reason // ""' 2>/dev/null \
-        | grep -qE 'interpreter|metacharacter'; then
-        sg_assert_decision "18.6 bash interpreter" "$body" "block" ""
-    else
-        fail "18.6 bash interpreter" "unexpected reason in $(echo "$body" | head -c 200)"
-    fi
+    sg_assert_timeout "18.6 bash interpreter reaches approval" "$body"
 
-    # 18.7 — sh -c → block.
     body=$(sg_post_hook "$NODE_A" 2 "Bash" "/tmp" "sh -c 'echo x'")
-    sg_assert_decision "18.7 sh interpreter" "$body" "block" ""
+    sg_assert_timeout "18.7 sh interpreter reaches approval" "$body"
 
-    # 18.8 — node --eval flag → eval-flag block.
     body=$(sg_post_hook "$NODE_A" 2 "Bash" "/tmp" "node --eval 'require(\"fs\")'")
-    sg_assert_decision "18.8 node --eval" "$body" "block" ""
+    sg_assert_timeout "18.8 node --eval reaches approval" "$body"
 
-    # 18.9 — python -c → eval-flag block.
     body=$(sg_post_hook "$NODE_A" 2 "Bash" "/tmp" "python -c 'import os'")
-    sg_assert_decision "18.9 python -c" "$body" "block" ""
+    sg_assert_timeout "18.9 python -c reaches approval" "$body"
 
     # 18.10 — protected mcplexer path in argv → block (cmdguard fragment).
     body=$(sg_post_hook "$NODE_A" 2 "Bash" "/tmp" "cat /root/.mcplexer/mcplexer.db")
@@ -750,11 +785,11 @@ scenario_shellguard_audit() {
 
     local audit_body
     audit_body=$(api GET "$NODE_A/api/v1/audit?limit=200" 2>/dev/null || echo "{}")
-    # The audit endpoint returns either an array or an object with
-    # .records / .audit — tolerate both shapes.
+    # The audit endpoint returns an object with .data (primary) or
+    # .records / .audit (legacy shapes) — tolerate all three.
     local found
     found=$(echo "$audit_body" | jq --arg sub "shellguard-audit-marker" '
-        ([.records // .audit // empty]
+        ([.data // .records // .audit // empty]
             | if type == "array" then . else [.] end
             | flatten
             | map(select(
@@ -778,7 +813,7 @@ scenario_shellguard_audit() {
     audit_body=$(api GET "$NODE_A/api/v1/audit?limit=200" 2>/dev/null || echo "{}")
     local blocked_found
     blocked_found=$(echo "$audit_body" | jq --arg sub "shellguard-block-marker" '
-        ([.records // .audit // empty]
+        ([.data // .records // .audit // empty]
             | if type == "array" then . else [.] end
             | flatten
             | map(select(
@@ -828,7 +863,7 @@ scenario_shellguard_workspace_tagging() {
     local audit_row
     audit_row=$(api GET "$NODE_A/api/v1/audit?limit=200" 2>/dev/null \
         | jq -c --arg sub "shellguard-ws-tag-marker" '
-            ([.records // .audit // empty]
+            ([.data // .records // .audit // empty]
                 | if type == "array" then . else [.] end
                 | flatten
                 | map(select(
@@ -859,7 +894,7 @@ scenario_shellguard_workspace_tagging() {
     local nows_row
     nows_row=$(api GET "$NODE_A/api/v1/audit?limit=200" 2>/dev/null \
         | jq -c --arg sub "shellguard-ws-noid-marker" '
-            ([.records // .audit // empty]
+            ([.data // .records // .audit // empty]
                 | if type == "array" then . else [.] end
                 | flatten
                 | map(select(
@@ -914,5 +949,9 @@ scenario_shellguard_teardown() {
     sg_delete_workspace "$NODE_A" "$SG_WS_ALPHA_ID"
     sg_delete_workspace "$NODE_A" "$SG_WS_BETA_ID"
     sg_delete_workspace "$NODE_B" "$SG_WS_GAMMA_ID"
-    pass "28 shellguard rules + workspaces removed from node-a + node-b"
+    # Restore ShellGuardAllowChaining to its default (true) so subsequent
+    # scenarios / harness runs see the product-default behaviour.
+    if sg_set_chaining "$NODE_A" true; then
+        pass "28 shellguard rules + workspaces removed; chaining default restored"
+    fi
 }

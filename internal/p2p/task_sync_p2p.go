@@ -86,10 +86,11 @@ const taskSyncWriteDeadline = 30 * time.Second
 // Frame "type" discriminators. Stable wire constants — bumping requires
 // a protocol-version bump too.
 const (
-	taskSyncFrameHello = "hello"
-	taskSyncFrameEvent = "task_event"
-	taskSyncFrameBye   = "bye"
-	taskSyncFrameError = "error"
+	taskSyncFrameHello  = "hello"
+	taskSyncFrameAccess = "workspace_access"
+	taskSyncFrameEvent  = "task_event"
+	taskSyncFrameBye    = "bye"
+	taskSyncFrameError  = "error"
 )
 
 // TaskSyncHelloWorkspace names one workspace + watermark the client
@@ -97,6 +98,10 @@ const (
 type TaskSyncHelloWorkspace struct {
 	WorkspaceID string `json:"workspace_id"`
 	SinceHLC    string `json:"since_hlc"`
+	// LocalWorkspaceID is receiver-only routing metadata. The server never
+	// trusts or uses it; the client maps the authenticated home workspace
+	// into its local mirror immediately before applying each event.
+	LocalWorkspaceID string `json:"local_workspace_id,omitempty"`
 }
 
 // TaskSyncHello is the first frame on the stream, sent by the dialing
@@ -123,6 +128,21 @@ type TaskSyncEvent struct {
 	BySession        string          `json:"by_session,omitempty"`
 	ByPeer           string          `json:"by_peer,omitempty"`
 	FieldPatchesJSON json.RawMessage `json:"field_patches_json"`
+}
+
+// TaskSyncWorkspaceAccess is the home-authoritative membership receipt sent
+// before task data for each requested workspace. It keeps a joined daemon's
+// cached capability set and access epoch fresh after an owner edits the
+// permissions matrix. LocalWorkspaceID is receiver-only routing metadata and
+// is never accepted from the wire.
+type TaskSyncWorkspaceAccess struct {
+	Type             string   `json:"type"`
+	ShareID          string   `json:"share_id"`
+	WorkspaceID      string   `json:"workspace_id"`
+	LocalWorkspaceID string   `json:"-"`
+	AccessEpoch      int64    `json:"access_epoch"`
+	Capabilities     []string `json:"capabilities"`
+	Status           string   `json:"status"`
 }
 
 // TaskSyncBye is the server's signal that the catch-up is complete.
@@ -153,7 +173,7 @@ type TaskSyncSource interface {
 	// hlc_at > sinceHLC, ascending. The wiring adapter is a thin
 	// pass-through to store.ListTasksSinceHLC.
 	ListTasksSinceHLC(
-		ctx context.Context, workspaceID, sinceHLC string, limit int,
+		ctx context.Context, recipientPeerID, workspaceID, sinceHLC string, limit int,
 	) ([]TaskSyncEvent, error)
 	// MaxHLCForWorkspace returns the workspace's current high-water
 	// HLC — sent in the Bye frame so a caught-up receiver can persist
@@ -166,6 +186,17 @@ type TaskSyncSource interface {
 // stream remains open (the next event tries fresh).
 type TaskSyncSink interface {
 	ApplyRemoteEvent(ctx context.Context, fromPeerID string, evt TaskSyncEvent) error
+}
+
+// TaskSyncAccessSource and TaskSyncAccessSink are optional extensions. Keeping
+// them separate preserves wire compatibility for older/test adapters while a
+// collaboration-aware daemon refreshes membership state on every sync.
+type TaskSyncAccessSource interface {
+	WorkspaceAccess(ctx context.Context, recipientPeerID, workspaceID string) (*TaskSyncWorkspaceAccess, error)
+}
+
+type TaskSyncAccessSink interface {
+	ApplyWorkspaceAccess(ctx context.Context, fromPeerID string, access TaskSyncWorkspaceAccess) error
 }
 
 // TaskSyncScopeChecker gates the server-side stream by per-workspace
@@ -331,10 +362,14 @@ func (s *TaskSyncService) ConnectToPeer(
 	// workspace_id it likes; without this set the receiver would apply
 	// it blindly and a hostile/buggy peer could inject or mutate task
 	// rows in workspaces it was never granted. See readEventStream.
-	allowed := make(map[string]struct{}, len(workspaces))
+	allowed := make(map[string]string, len(workspaces))
 	for _, ws := range workspaces {
 		if ws.WorkspaceID != "" {
-			allowed[ws.WorkspaceID] = struct{}{}
+			localWorkspaceID := ws.LocalWorkspaceID
+			if localWorkspaceID == "" {
+				localWorkspaceID = ws.WorkspaceID
+			}
+			allowed[ws.WorkspaceID] = localWorkspaceID
 		}
 	}
 	return s.readEventStream(ctx, stream, peerID, allowed)
@@ -345,7 +380,7 @@ func (s *TaskSyncService) ConnectToPeer(
 // any wire / sink failure (logged + audited).
 func (s *TaskSyncService) readEventStream(
 	ctx context.Context, stream network.Stream, peerID string,
-	allowedWorkspaces map[string]struct{},
+	allowedWorkspaces map[string]string,
 ) error {
 	br := bufio.NewReaderSize(stream, MaxTaskSyncFrameBytes)
 	for {
@@ -366,6 +401,25 @@ func (s *TaskSyncService) readEventStream(
 			return fmt.Errorf("task-sync: parse frame head: %w", err)
 		}
 		switch head.Type {
+		case taskSyncFrameAccess:
+			var access TaskSyncWorkspaceAccess
+			if err := json.Unmarshal(line, &access); err != nil {
+				return fmt.Errorf("task-sync: parse workspace access: %w", err)
+			}
+			localWorkspaceID, ok := allowedWorkspaces[access.WorkspaceID]
+			if !ok || access.ShareID == "" || access.AccessEpoch < 1 {
+				s.recordAudit(ctx, "reject_unbound_access", peerID,
+					access.WorkspaceID, "denied", "workspace not requested in hello")
+				continue
+			}
+			access.LocalWorkspaceID = localWorkspaceID
+			if sink, ok := s.sink.(TaskSyncAccessSink); ok {
+				if applyErr := sink.ApplyWorkspaceAccess(ctx, peerID, access); applyErr != nil {
+					s.recordAudit(ctx, "apply_access", peerID, access.WorkspaceID, "error", applyErr.Error())
+					return applyErr
+				}
+			}
+			s.recordAudit(ctx, "apply_access", peerID, access.WorkspaceID, "ok", "")
 		case taskSyncFrameEvent:
 			var evt TaskSyncEvent
 			if err := json.Unmarshal(line, &evt); err != nil {
@@ -378,13 +432,15 @@ func (s *TaskSyncService) readEventStream(
 			// buggy or hostile; drop it WITHOUT applying so it can't
 			// inject/mutate local task rows in a workspace we never bound
 			// to. Non-fatal: keep reading so legitimate events still flow.
-			if _, ok := allowedWorkspaces[evt.WorkspaceID]; !ok {
+			localWorkspaceID, ok := allowedWorkspaces[evt.WorkspaceID]
+			if !ok {
 				s.logger.Warn("task-sync: dropping event for unbound workspace",
 					"peer", peerID, "workspace", evt.WorkspaceID, "task", evt.TaskID)
 				s.recordAudit(ctx, "reject_unbound", peerID,
 					evt.WorkspaceID, "denied", "workspace not requested in hello")
 				continue
 			}
+			evt.WorkspaceID = localWorkspaceID
 			if s.sink != nil {
 				if applyErr := s.sink.ApplyRemoteEvent(ctx, peerID, evt); applyErr != nil {
 					s.logger.Warn("task-sync: sink apply failed",
@@ -507,6 +563,27 @@ func (s *TaskSyncService) serveCatchup(
 		if ws.WorkspaceID == "" {
 			continue
 		}
+		if accessSource, ok := s.source.(TaskSyncAccessSource); ok {
+			access, err := accessSource.WorkspaceAccess(ctx, remote, ws.WorkspaceID)
+			if err != nil || access == nil {
+				s.recordAudit(ctx, "workspace_denied", remote, ws.WorkspaceID, "denied", ErrTaskSyncWorkspaceDenied.Error())
+				if writeErr := s.writeFrame(stream, TaskSyncError{
+					Type: taskSyncFrameError, Code: "workspace_denied",
+					Message: ErrTaskSyncWorkspaceDenied.Error(), WorkspaceID: ws.WorkspaceID,
+				}); writeErr != nil {
+					return
+				}
+				continue
+			}
+			access.Type = taskSyncFrameAccess
+			access.WorkspaceID = ws.WorkspaceID
+			if err := s.writeFrame(stream, access); err != nil {
+				return
+			}
+			if access.Status != "active" {
+				continue
+			}
+		}
 		if err := s.checkWorkspaceScope(ctx, remote, ws.WorkspaceID); err != nil {
 			s.recordAudit(ctx, "workspace_denied", remote, ws.WorkspaceID, "denied", err.Error())
 			if writeErr := s.writeFrame(stream, TaskSyncError{
@@ -555,7 +632,7 @@ func (s *TaskSyncService) streamWorkspace(
 	watermark := ws.SinceHLC
 	highest := watermark
 	for {
-		evts, err := s.source.ListTasksSinceHLC(ctx, ws.WorkspaceID, watermark, taskSyncBatchSize)
+		evts, err := s.source.ListTasksSinceHLC(ctx, remote, ws.WorkspaceID, watermark, taskSyncBatchSize)
 		if err != nil {
 			return highest, fmt.Errorf("list tasks since: %w", err)
 		}

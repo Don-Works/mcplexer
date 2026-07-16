@@ -2,7 +2,7 @@
 # introduced. Prefer `task --list-all` for the task-native command surface.
 $(warning Makefile is deprecated; prefer Taskfile.yml via `task --list-all`)
 
-.PHONY: build build-p2p build-all install upgrade install-cli run dev start stop setup test test-integration test-integration-up test-integration-down test-integration-overnight lint clean uninstall web-build go-build go-build-p2p secret go-build-platforms rules-sync check-deadcode test-upgrade-smoke preflight
+.PHONY: build build-p2p build-all install upgrade install-cli run dev start stop setup test test-integration test-collaboration-integration test-integration-up test-integration-down test-integration-overnight lint clean uninstall web-build go-build go-build-p2p secret go-build-platforms rules-sync check-deadcode test-upgrade-smoke preflight
 
 GIT_VERSION ?= $(shell git describe --tags --dirty --always --abbrev=12 2>/dev/null || echo dev)
 GIT_COMMIT ?= $(shell git rev-parse --short=12 HEAD 2>/dev/null || echo unknown)
@@ -117,6 +117,9 @@ test:
 # for debugging.
 test-integration:
 	@bash test/integration/run.sh
+
+test-collaboration-integration:
+	@SCENARIO_MODE=collaboration bash test/integration/run.sh
 
 test-integration-up:
 	@docker compose -f test/integration/docker-compose.yml up --build -d

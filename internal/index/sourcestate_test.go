@@ -193,19 +193,6 @@ func TestNonGitWorkspaceStaleNewFile(t *testing.T) {
 	}
 }
 
-func seedIndexedFileStat(t *testing.T, ms *memStore, ws, path string, size int, mtime int64, hash string) {
-	t.Helper()
-	err := ms.UpsertCodeIndexedFiles(context.Background(), ws, []store.IndexedFile{{
-		File: store.CodeIndexFile{
-			WorkspaceID: ws, Path: path, PathTokens: tokenString(path),
-			SizeBytes: size, MtimeUnix: mtime, ContentHash: hash, IndexedAt: time.Now().UTC(),
-		},
-	}})
-	if err != nil {
-		t.Fatal(err)
-	}
-}
-
 func TestFileStatStaleContentHash(t *testing.T) {
 	dir := t.TempDir()
 	rel := "a.go"

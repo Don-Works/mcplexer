@@ -5,6 +5,20 @@ set -eu
 
 mkdir -p /data/p2p
 
+# Every container is a genuinely independent collaboration identity. The
+# private Ed25519 key stays in its own named volume and is exposed to the
+# daemon only through a private ssh-agent socket; scenarios read only .pub.
+if [ ! -f /data/identity_ed25519 ]; then
+    ssh-keygen -q -t ed25519 -N '' \
+        -C "mcplexer-integration@$(hostname)" \
+        -f /data/identity_ed25519
+fi
+chmod 600 /data/identity_ed25519
+rm -f /data/ssh-agent.sock
+eval "$(ssh-agent -s -a /data/ssh-agent.sock)" >/dev/null
+ssh-add /data/identity_ed25519 >/dev/null
+export SSH_AUTH_SOCK=/data/ssh-agent.sock
+
 # The first request to the daemon also auto-creates the api-key. We give it
 # a head-start so curl-from-host can read /data/api-key right after boot
 # without racing the first request.

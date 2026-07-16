@@ -1,31 +1,32 @@
-import { Link } from 'react-router-dom'
-import { Layers, Network, Plug, Settings2 } from 'lucide-react'
-import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
+import { Library, Layers, Plug } from 'lucide-react'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import type { Workspace } from '@/api/types'
 import type { WorkspaceConnectionSummary } from './connection-model'
 
 export function WorkspaceRail({
   summaries,
   selectedWorkspaceId,
+  libraryActive,
   onSelect,
+  onOpenLibrary,
 }: {
   summaries: WorkspaceConnectionSummary[]
   selectedWorkspaceId: string
+  libraryActive: boolean
   onSelect: (workspaceId: string) => void
+  onOpenLibrary: () => void
 }) {
   return (
-    <aside className="min-w-0 rounded-md border border-border/50 bg-card/30">
-      <div className="border-b border-border/50 px-3 py-2">
-        <div className="flex items-center gap-2 text-sm font-medium">
+    <aside className="min-w-0 border border-border/60 bg-card/20">
+      <div className="hidden border-b border-border/60 px-3 py-2.5 lg:block">
+        <div className="flex items-center gap-2 text-sm font-semibold">
           <Layers className="h-4 w-4 text-muted-foreground" />
           Workspaces
         </div>
       </div>
-      <div className="max-h-[70vh] overflow-auto p-1.5">
+
+      <div className="scrollbar-none flex gap-1.5 overflow-x-auto p-1.5 lg:block lg:max-h-[calc(100dvh-18rem)] lg:overflow-y-auto">
         {summaries.map((summary) => {
-          const selected = summary.workspace.id === selectedWorkspaceId
+          const selected = !libraryActive && summary.workspace.id === selectedWorkspaceId
           return (
             <button
               key={summary.workspace.id}
@@ -33,7 +34,7 @@ export function WorkspaceRail({
               onClick={() => onSelect(summary.workspace.id)}
               aria-pressed={selected}
               className={
-                'mb-1 w-full min-w-0 rounded-md border px-3 py-2 text-left transition-colors last:mb-0 ' +
+                'min-w-40 shrink-0 border px-3 py-2 text-left transition-colors lg:mb-1 lg:w-full lg:min-w-0 lg:last:mb-0 ' +
                 (selected
                   ? 'border-primary/50 bg-primary/10 text-foreground'
                   : 'border-transparent text-muted-foreground hover:border-border/60 hover:bg-muted/30 hover:text-foreground')
@@ -54,59 +55,29 @@ export function WorkspaceRail({
                   <span className="tabular-nums">{summary.connected}</span>
                 </span>
                 {summary.needsAuth > 0 && (
-                  <span className="flex items-center gap-1 text-amber-500">
-                    <span className="tabular-nums">{summary.needsAuth}</span>
-                    <span>need creds</span>
-                  </span>
+                  <span className="text-amber-500">{summary.needsAuth} need auth</span>
                 )}
-                {summary.available > 0 && (
-                  <span className="tabular-nums opacity-50">+{summary.available}</span>
-                )}
+                {summary.available > 0 && <span className="tabular-nums opacity-50">+{summary.available}</span>}
               </div>
             </button>
           )
         })}
+        <div className="min-w-40 shrink-0 lg:mt-2 lg:min-w-0 lg:border-t lg:border-border/60 lg:pt-1.5">
+          <button
+            type="button"
+            onClick={onOpenLibrary}
+            aria-pressed={libraryActive}
+            className={
+              'flex w-full items-center gap-2 border px-3 py-3 text-left text-sm transition-colors lg:py-2 ' +
+              (libraryActive
+                ? 'border-primary/50 bg-primary/10 text-foreground'
+                : 'border-transparent text-muted-foreground hover:border-border/60 hover:bg-muted/30 hover:text-foreground')
+            }
+          >
+            <Library className="h-4 w-4" /> Server library
+          </button>
+        </div>
       </div>
     </aside>
-  )
-}
-
-export function WorkspaceHeader({
-  workspace,
-  summary,
-}: {
-  workspace: Workspace
-  summary?: WorkspaceConnectionSummary
-}) {
-  return (
-    <div className="rounded-md border border-border/50 bg-card/30 px-4 py-3">
-      <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
-        <div className="flex items-center gap-2 min-w-0">
-          <Network className="h-4 w-4 shrink-0 text-muted-foreground" />
-          <h2 className="truncate text-lg font-semibold">{workspace.name}</h2>
-          <span className="hidden truncate font-mono text-xs text-muted-foreground/50 sm:inline" title={workspace.root_path}>
-            {workspace.root_path}
-          </span>
-        </div>
-        <div className="flex flex-wrap items-center gap-1.5">
-          <Badge variant="outline" tone={workspace.default_policy === 'allow' ? 'success' : 'muted'}>
-            default {workspace.default_policy}
-          </Badge>
-          <Badge variant="outline" tone="success">{summary?.connected ?? 0} usable</Badge>
-          {summary && summary.needsAuth > 0 && (
-            <Badge variant="outline" tone="warn">{summary.needsAuth} need creds</Badge>
-          )}
-          {summary && summary.available > 0 && (
-            <Badge variant="outline" tone="muted">{summary.available} available</Badge>
-          )}
-          <Button variant="outline" size="sm" asChild className="h-7">
-            <Link to={`/workspaces/manage?workspace=${workspace.id}`}>
-              <Settings2 className="mr-1.5 h-3.5 w-3.5" />
-              Edit
-            </Link>
-          </Button>
-        </div>
-      </div>
-    </div>
   )
 }

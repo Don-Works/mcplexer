@@ -50,8 +50,11 @@ var valueRedactPatterns = []*regexp.Regexp{
 	// 30+-char tail as ghp_ — these were a coverage gap caught by the
 	// memory deep-redaction scenario (D7.5).
 	regexp.MustCompile(`\bgh[ousr]_[A-Za-z0-9]{30,}\b`),
-	// OpenAI / Anthropic / generic sk- secret keys (sk-proj-…, sk-ant-…)
-	regexp.MustCompile(`\bsk-[a-z]+(?:-[A-Za-z0-9]+)?-?[A-Za-z0-9]{20,}\b`),
+	// OpenAI / Anthropic / generic sk- secret keys. Provider namespaces have
+	// grown from one segment (sk-ant-...) to multi-segment forms; treat any
+	// long, token-shaped sk- value as sensitive instead of trying to enumerate
+	// the namespace grammar.
+	regexp.MustCompile(`\bsk-[A-Za-z0-9][A-Za-z0-9_-]{19,}\b`),
 	// Bare OpenAI "classic" keys (sk-<48 base62>) — no namespace
 	// subprefix (no `-proj-`, no `-ant-`). The mainline sk- pattern
 	// above requires a lowercase namespace word after "sk-"; a key

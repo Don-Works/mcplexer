@@ -239,12 +239,12 @@ func (h *handler) handleBuiltinCall(
 		return h.handleConciergeRecordSignal(ctx, req.Arguments)
 
 	case "task__create", "task__list", "task__get",
-		"task__update", "task__assign", "task__claim", "task__delete",
+		"task__update", "task__set_visibility", "task__assign", "task__claim", "task__delete",
 		"task__append_note", "task__heartbeat", "task__set_work_context",
 		"task__compose", "task__decompose",
 		"task__recent_activity", "task__list_milestones",
 		"task__attach", "task__list_attachments", "task__get_attachment",
-		"task__offer", "task__assign_remote",
+		"task__offer", "task__assign_remote", "task__publish_home",
 		"task__accept_offer", "task__decline_offer", "task__list_offers",
 		"task_status_vocabulary__upsert":
 		resp, rpcErr, _ := h.dispatchTaskTool(ctx, req.Name, req.Arguments)

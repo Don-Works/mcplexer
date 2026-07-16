@@ -32,7 +32,7 @@ scenario_health() {
     for url in "$NODE_A" "$NODE_B" "$NODE_C"; do
         local body
         body=$(curl -fsS "$url/api/v1/health")
-        assert_jq "$url health.status=ok" "$body" '.status == "ok"'
+        assert_jq "$url health.status=ready" "$body" '.status == "ready" or .status == "ok"'
         assert_jq "$url health.p2p_enabled=true" "$body" '.system.p2p_enabled == true'
     done
 }
@@ -230,6 +230,8 @@ scenario_skill_publish_request() {
 . "$(dirname "$0")/scenario_memory.sh"
 # shellcheck source=scenario_tasks.sh
 . "$(dirname "$0")/scenario_tasks.sh"
+# shellcheck source=scenario_collaboration.sh
+. "$(dirname "$0")/scenario_collaboration.sh"
 # shellcheck source=scenario_linked_workspaces.sh
 . "$(dirname "$0")/scenario_linked_workspaces.sh"
 # shellcheck source=scenario_googlechat.sh
@@ -305,9 +307,26 @@ main() {
     fi
     printf '  tokens loaded (len A=%d B=%d C=%d)\n' ${#TOK_A} ${#TOK_B} ${#TOK_C}
 
+    if [ "${SCENARIO_MODE:-all}" = "collaboration" ]; then
+        scenario_health
+        scenario_provision
+        scenario_p2p_identity
+        scenario_collaboration_identity_and_permissions
+        scenario_collaboration_task_flow
+        printf '\n=== SUMMARY ===\n'
+        printf 'PASS=%d FAIL=%d SKIP=%d\n' "$PASS" "$FAIL" "$SKIP"
+        for line in "${RESULTS[@]}"; do
+            printf '  %s\n' "$line"
+        done
+        [ "$FAIL" -eq 0 ]
+        return
+    fi
+
     scenario_health
     scenario_provision
     scenario_p2p_identity
+    scenario_collaboration_identity_and_permissions
+    scenario_collaboration_task_flow
     scenario_pairing
     scenario_mesh_send
     scenario_mesh_wait

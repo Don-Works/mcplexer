@@ -72,6 +72,7 @@ import { TaskRef } from './TaskRef'
 import { TaskEditDialog } from './TaskEditDialog'
 import { WorkContextCard } from './WorkContextCard'
 import { TaskAttachments } from './TaskAttachments'
+import { TaskVisibilityControl } from './TaskVisibilityControl'
 
 // dashboardSessionId returns a stable per-browser-tab identifier used
 // when this UI claims a task on the operator's behalf. The id sticks
@@ -592,7 +593,7 @@ export function TaskDetailPage() {
                   value={noteInput}
                   onChange={(e) => setNoteInput(e.target.value)}
                   rows={2}
-                  placeholder="append a note (visible to anyone with workspace access)…"
+                  placeholder="append a local note (notes are not shared over P2P)…"
                   className="resize-y"
                 />
                 <div className="mt-2 flex items-center justify-between text-[11px] text-muted-foreground">
@@ -618,6 +619,8 @@ export function TaskDetailPage() {
         </div>
 
         <aside className="space-y-5">
+          <TaskVisibilityControl task={task} onUpdate={refetch} />
+
           {/* History timeline */}
           <section>
             <SectionLabel>Status history</SectionLabel>

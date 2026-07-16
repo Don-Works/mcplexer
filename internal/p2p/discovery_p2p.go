@@ -92,9 +92,13 @@ func NewDiscoveryService(h *Host, lookup PeerLookup, logger *slog.Logger) *Disco
 		reported: make(map[peer.ID]ConnectionMode),
 	}
 	if h != nil {
-		h.discovery = d
 		h.h.Network().Notify(d.notifiee())
 		d.hydratePeerstore()
+		// Publish only after the service is completely initialised. mDNS
+		// callbacks that arrive during setup are safely ignored by the host;
+		// callbacks after publication observe all constructor writes through
+		// Host's discovery lock.
+		h.setDiscovery(d)
 	}
 	return d
 }

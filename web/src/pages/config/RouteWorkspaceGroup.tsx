@@ -13,6 +13,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { ChevronDown, ChevronRight, Pencil, Plus, Server, ShieldCheck, Trash2 } from 'lucide-react'
 import type { AuthScope, DownstreamServer, RouteRule, Workspace } from '@/api/types'
 import { cn } from '@/lib/utils'
+import { scopeLabel } from '@/lib/scope-label'
 
 interface RouteWorkspaceGroupProps {
   workspace: Workspace
@@ -46,7 +47,10 @@ export function RouteWorkspaceGroup({
   highlightWorkspace,
 }: RouteWorkspaceGroupProps) {
   const dsName = (id: string) => downstreams.find((d) => d.id === id)?.name ?? id
-  const asName = (id: string) => authScopes.find((a) => a.id === id)?.name ?? id
+  const asName = (id: string) => {
+    const scope = authScopes.find((item) => item.id === id)
+    return scope ? scopeLabel(scope) : id
+  }
 
   const enabledDownstreams = [...new Set(rules.map((r) => r.downstream_server_id).filter(Boolean))]
 
@@ -58,51 +62,51 @@ export function RouteWorkspaceGroup({
         highlightWorkspace && 'ring-2 ring-amber-400/80 ring-offset-2 ring-offset-background',
       )}
     >
-      <button
-        type="button"
-        className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-muted/30 transition-colors"
-        onClick={onToggle}
-      >
-        {expanded ? (
-          <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
-        ) : (
-          <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
-        )}
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2">
-            <span className="font-semibold truncate">{workspace.name}</span>
-            <Badge variant="secondary" className="text-xs shrink-0">
-              {rules.length} rule{rules.length !== 1 ? 's' : ''}
-            </Badge>
-          </div>
-          {!expanded && enabledDownstreams.length > 0 && (
-            <div className="flex flex-wrap gap-1 mt-1">
-              {enabledDownstreams.slice(0, MAX_BADGES).map((dsId) => (
-                <Badge key={dsId} variant="outline" className="text-xs text-green-400 border-green-500/30">
-                  {dsName(dsId)}
-                </Badge>
-              ))}
-              {enabledDownstreams.length > MAX_BADGES && (
-                <Badge variant="outline" className="text-xs text-muted-foreground">
-                  +{enabledDownstreams.length - MAX_BADGES} more
-                </Badge>
-              )}
-            </div>
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          className="flex min-w-0 flex-1 items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-muted/30"
+          onClick={onToggle}
+          aria-expanded={expanded}
+        >
+          {expanded ? (
+            <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
+          ) : (
+            <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
           )}
-        </div>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2">
+              <span className="truncate font-semibold">{workspace.name}</span>
+              <Badge variant="secondary" className="shrink-0 text-xs">
+                {rules.length} rule{rules.length !== 1 ? 's' : ''}
+              </Badge>
+            </div>
+            {!expanded && enabledDownstreams.length > 0 && (
+              <div className="mt-1 flex flex-wrap gap-1">
+                {enabledDownstreams.slice(0, MAX_BADGES).map((dsId) => (
+                  <Badge key={dsId} variant="outline" className="border-green-500/30 text-xs text-green-400">
+                    {dsName(dsId)}
+                  </Badge>
+                ))}
+                {enabledDownstreams.length > MAX_BADGES && (
+                  <Badge variant="outline" className="text-xs text-muted-foreground">
+                    +{enabledDownstreams.length - MAX_BADGES} more
+                  </Badge>
+                )}
+              </div>
+            )}
+          </div>
+        </button>
         <Button
           variant="outline"
           size="sm"
-          className="shrink-0"
-          onClick={(e) => {
-            e.stopPropagation()
-            onEnableServers()
-          }}
+          className="mr-3 shrink-0"
+          onClick={onEnableServers}
         >
           <Server className="mr-1.5 h-3.5 w-3.5" />
           Enable Servers
         </Button>
-      </button>
+      </div>
 
       {expanded && (
         <CardContent className="pt-0 pb-4 px-4">
@@ -123,7 +127,7 @@ export function RouteWorkspaceGroup({
                     <TableHead>Name</TableHead>
                     <TableHead className="hidden md:table-cell">Path Glob</TableHead>
                     <TableHead className="hidden lg:table-cell">Downstream</TableHead>
-                    <TableHead className="hidden lg:table-cell">Auth Scope</TableHead>
+                    <TableHead className="hidden lg:table-cell">Credential</TableHead>
                     <TableHead className="hidden lg:table-cell">Approval</TableHead>
                     <TableHead>Policy</TableHead>
                     <TableHead className="w-24">Actions</TableHead>

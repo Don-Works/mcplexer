@@ -376,7 +376,7 @@ export function AuthScopeDialog({
                 {!editing && (
                   <p className="text-xs text-muted-foreground">
                     Need a provider first? Use{' '}
-                    <Link to="/setup" className="text-primary hover:underline" onClick={onClose}>
+                    <Link to="/workspaces?view=add-server" className="text-primary hover:underline" onClick={onClose}>
                       Quick Setup
                     </Link>{' '}
                     for template-based OAuth configuration.

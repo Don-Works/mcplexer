@@ -228,6 +228,14 @@
    flex h-screen div), NOT to html/body, because body padding would create
    an extra 1-2px gap between the PWA status bar and the header. */
 @layer utilities {
+  .scrollbar-none {
+    scrollbar-width: none;
+  }
+
+  .scrollbar-none::-webkit-scrollbar {
+    display: none;
+  }
+
   @supports (padding: env(safe-area-inset-top)) {
     .safe-area-top { padding-top: env(safe-area-inset-top); }
     .safe-area-bottom { padding-bottom: env(safe-area-inset-bottom); }

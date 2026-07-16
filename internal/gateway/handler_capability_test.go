@@ -115,7 +115,7 @@ func TestCapabilityWriteDenyEnumeratesRealTaskBuiltins(t *testing.T) {
 	for pName, profile := range profiles {
 		ctx := WithWorkerCapabilityProfile(context.Background(), profile)
 		for _, tool := range names {
-			// task__offer / task__assign_remote are gated by may_offer_tasks,
+			// Remote task publishing is gated by may_offer_tasks,
 			// which the bare may_write_tasks=false profile leaves at its
 			// default (true). They're still write — but the may_write_tasks
 			// read-allowlist deny covers them too (not in taskReadTools).

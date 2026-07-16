@@ -53,6 +53,7 @@ func TestCapabilityPresetGate(t *testing.T) {
 		{"coder", "mcpx__invoke_model", false},
 		{"coder", "task__offer", false},
 		{"coder", "task__assign_remote", false},
+		{"coder", "task__publish_home", false},
 		{"coder", "mcplexer__create_worker", false},
 
 		// researcher: read-only; writes denied across namespaces.

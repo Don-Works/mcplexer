@@ -6,13 +6,12 @@ import { OAuthProvidersPage } from './OAuthProvidersPage'
 import { DescriptionsPage } from '../DescriptionsPage'
 
 // /config?tab=* redirects — keeps deep-links alive while the IA moves.
-// servers land on /workspaces; routes land on /workspaces/routes.
-// workspace metadata lives at /workspaces/manage.
+// Workspace configuration lands in the canonical query-backed console.
 // credentials, oauth, descriptions stay here under /advanced.
 const TAB_REDIRECTS: Record<string, string> = {
-  servers: '/workspaces',
-  routes: '/workspaces/routes',
-  workspaces: '/workspaces/manage',
+  servers: '/workspaces?view=servers&server_tab=installed',
+  routes: '/workspaces?view=access&advanced=1',
+  workspaces: '/workspaces?view=settings',
   credentials: '/advanced/credentials',
   oauth: '/advanced/oauth-providers',
   descriptions: '/advanced/descriptions',
@@ -35,7 +34,8 @@ function legacyRedirectTarget(rawTab: string, searchParams: URLSearchParams): st
   }
 
   const query = next.toString()
-  return query ? `${base}?${query}` : base
+  const separator = base.includes('?') ? '&' : '?'
+  return query ? `${base}${separator}${query}` : base
 }
 
 // Canonical Advanced sub-pages — each maps to a path segment under /advanced.

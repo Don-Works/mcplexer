@@ -84,7 +84,6 @@ func (s *Service) searchChunks(
 			if normErr != nil {
 				status.State = "error"
 				status.LastError = "embedding provider returned an invalid query vector: " + normErr.Error()
-				vectors = nil
 			}
 			if queryVector == nil {
 				semantic = nil

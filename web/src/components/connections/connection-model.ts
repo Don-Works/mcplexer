@@ -14,6 +14,7 @@ export interface WorkspaceConnectionSummary {
 export interface WorkspaceConnectionRow {
   server: DownstreamServer
   workspace: Workspace
+  routes: RouteRule[]
   route: RouteRule | null
   scope: AuthScope | null
   state: CellState
@@ -24,6 +25,7 @@ export interface ConnectionTarget {
   server: DownstreamServer
   workspace: Workspace
   state: CellState
+  routes: RouteRule[]
   route: RouteRule | null
 }
 
@@ -31,44 +33,48 @@ export function connectionKey(serverId: string, workspaceId: string): string {
   return `${serverId}::${workspaceId}`
 }
 
-export function indexRoutes(routes: RouteRule[]): Map<string, RouteRule> {
-  const idx = new Map<string, RouteRule>()
+export type RouteIndex = Map<string, RouteRule[]>
+
+export function indexRoutes(routes: RouteRule[]): RouteIndex {
+  const idx: RouteIndex = new Map()
   for (const route of routes) {
-    idx.set(connectionKey(route.downstream_server_id, route.workspace_id), route)
+    if (!route.downstream_server_id) continue
+    const key = connectionKey(route.downstream_server_id, route.workspace_id)
+    const current = idx.get(key) ?? []
+    current.push(route)
+    idx.set(key, current)
   }
+  for (const rules of idx.values()) rules.sort(compareRules)
   return idx
 }
 
 export function deriveConnectionCells(
-  routeIndex: Map<string, RouteRule>,
+  routeIndex: RouteIndex,
   scopes: AuthScope[],
 ): Map<string, CellState> {
   const scopeById = new Map(scopes.map((scope) => [scope.id, scope]))
   const out = new Map<string, CellState>()
 
-  for (const [key, route] of routeIndex) {
-    if (route.policy === 'deny') {
-      out.set(key, { kind: 'disabled', routeId: route.id })
+  for (const [key, routes] of routeIndex) {
+    const allowRules = routes.filter((route) => route.policy === 'allow')
+    if (allowRules.length === 0) {
+      out.set(key, { kind: 'disabled', routeId: routes[0]?.id })
       continue
     }
 
-    if (!route.auth_scope_id) {
-      out.set(key, { kind: 'connected', routeId: route.id })
-      continue
+    for (const route of allowRules) {
+      if (!route.auth_scope_id) continue
+      const scope = scopeById.get(route.auth_scope_id)
+      if (!scope) {
+        out.set(key, { kind: 'needs-auth', hint: 'scope deleted', routeId: route.id })
+        break
+      }
+      if (scopeNeedsSecret(scope)) {
+        out.set(key, { kind: 'needs-auth', hint: 'no secrets', routeId: route.id })
+        break
+      }
     }
-
-    const scope = scopeById.get(route.auth_scope_id)
-    if (!scope) {
-      out.set(key, { kind: 'needs-auth', hint: 'scope deleted', routeId: route.id })
-      continue
-    }
-
-    if (scopeNeedsSecret(scope)) {
-      out.set(key, { kind: 'needs-auth', hint: 'no secrets', routeId: route.id })
-      continue
-    }
-
-    out.set(key, { kind: 'connected', routeId: route.id })
+    if (!out.has(key)) out.set(key, { kind: 'connected', routeId: allowRules[0].id })
   }
 
   return out
@@ -77,7 +83,7 @@ export function deriveConnectionCells(
 export function buildWorkspaceSummaries(
   workspaces: Workspace[],
   servers: DownstreamServer[],
-  routeIndex: Map<string, RouteRule>,
+  routeIndex: RouteIndex,
   cells: Map<string, CellState>,
 ): WorkspaceConnectionSummary[] {
   return workspaces.map((workspace) => {
@@ -104,7 +110,7 @@ export function buildWorkspaceSummaries(
 export function buildWorkspaceRows(
   workspace: Workspace,
   servers: DownstreamServer[],
-  routeIndex: Map<string, RouteRule>,
+  routeIndex: RouteIndex,
   cells: Map<string, CellState>,
   scopes: AuthScope[],
 ): WorkspaceConnectionRow[] {
@@ -113,25 +119,25 @@ export function buildWorkspaceRows(
   return servers
     .map((server) => {
       const key = connectionKey(server.id, workspace.id)
-      const route = routeIndex.get(key) ?? null
+      const routes = routeIndex.get(key) ?? []
+      const route = primaryRoute(routes, cells.get(key))
       const scope = route?.auth_scope_id ? scopeById.get(route.auth_scope_id) ?? null : null
       const state = cells.get(key) ?? { kind: 'add' as const }
+      const routeScopes = routes
+        .map((item) => (item.auth_scope_id ? scopeById.get(item.auth_scope_id) : null))
+        .filter((item): item is AuthScope => Boolean(item))
       const searchText = [
         server.name,
         server.tool_namespace,
         server.transport,
-        route?.name,
-        route?.path_glob,
-        route?.tool_match.join(' '),
-        scope?.display_name,
-        scope?.name,
-        scope?.type,
+        ...routes.flatMap((item) => [item.name, item.path_glob, item.tool_match.join(' ')]),
+        ...routeScopes.flatMap((item) => [item.display_name, item.name, item.type]),
       ]
         .filter(Boolean)
         .join(' ')
         .toLowerCase()
 
-      return { server, workspace, route, scope, state, searchText }
+      return { server, workspace, routes, route, scope, state, searchText }
     })
     .sort(compareConnectionRows)
 }
@@ -169,7 +175,7 @@ export function resolveFocusTarget(
   focusWorkspace: string | null,
   servers: DownstreamServer[],
   workspaces: Workspace[],
-  routeIndex: Map<string, RouteRule>,
+  routeIndex: RouteIndex,
   cells: Map<string, CellState>,
 ): ConnectionTarget | null {
   if (!focusServer) return null
@@ -183,12 +189,25 @@ export function resolveFocusTarget(
   if (!workspace) return null
 
   const key = connectionKey(server.id, workspace.id)
+  const routes = routeIndex.get(key) ?? []
   return {
     server,
     workspace,
     state: cells.get(key) ?? { kind: 'add' },
-    route: routeIndex.get(key) ?? null,
+    routes,
+    route: primaryRoute(routes, cells.get(key)),
   }
+}
+
+function primaryRoute(routes: RouteRule[], state?: CellState): RouteRule | null {
+  if (routes.length === 0) return null
+  if (state?.routeId) return routes.find((route) => route.id === state.routeId) ?? routes[0]
+  return routes.find((route) => route.policy === 'allow') ?? routes[0]
+}
+
+function compareRules(a: RouteRule, b: RouteRule): number {
+  if (a.priority !== b.priority) return b.priority - a.priority
+  return a.id.localeCompare(b.id)
 }
 
 function compareConnectionRows(a: WorkspaceConnectionRow, b: WorkspaceConnectionRow): number {
@@ -208,7 +227,7 @@ function findServerForFocus(focusServer: string, servers: DownstreamServer[]): D
 function findWorkspaceForServer(
   serverId: string,
   workspaces: Workspace[],
-  routeIndex: Map<string, RouteRule>,
+  routeIndex: RouteIndex,
 ): Workspace | null {
   for (const workspace of workspaces) {
     if (routeIndex.has(connectionKey(serverId, workspace.id))) return workspace

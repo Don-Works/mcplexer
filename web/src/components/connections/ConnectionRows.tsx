@@ -104,6 +104,12 @@ function ConnectionRowButton({ row, onOpen }: { row: WorkspaceConnectionRow; onO
               </span>
             </>
           )}
+          {row.routes.length > 1 && (
+            <>
+              <span className="text-muted-foreground/40 select-none">·</span>
+              <span>{row.routes.length} rules</span>
+            </>
+          )}
         </div>
       </div>
       <div className="flex items-center justify-end gap-2">

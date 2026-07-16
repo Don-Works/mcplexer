@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -15,6 +15,7 @@ import {
   getDownstreamOAuthStatus,
   getOAuthCapabilities,
   listDownstreams,
+  listRoutes,
   listWorkspaces,
 } from '@/api/client'
 import type { DownstreamOAuthStatusEntry, DownstreamServer, OAuthCapabilities } from '@/api/types'
@@ -72,6 +73,21 @@ type ConnectMode =
   | 'route_only' // existing stdio/internal downstream — just create route(s)
   | 'new_routes' // server was just created by a sub-form; just create route(s)
 
+const CURATED_IDS = ['github', 'linear', 'slack', 'notion', 'clickup', 'obsidian']
+
+type Recipe = { id: string; label: string; description: string }
+
+const RECIPE_TEMPLATES: Record<string, Recipe[]> = {
+  github: [
+    { id: 'readonly', label: 'Read-only', description: 'Browse repos, issues, and PRs. No write access.' },
+    { id: 'full', label: 'Full access', description: 'Read and write: create issues, comment on PRs, push branches.' },
+  ],
+  slack: [
+    { id: 'all', label: 'All workspaces', description: 'Access all workspaces your OAuth token permits.' },
+    { id: 'specific', label: 'Specific workspace', description: 'Limit to a single workspace after auth.' },
+  ],
+}
+
 function buildSteps(mode: ConnectMode, skipsConfig: boolean): StepDef[] {
   const steps: StepDef[] = []
   if (mode === 'oauth' && !skipsConfig) steps.push({ id: 'configure', label: 'Credentials' })
@@ -82,7 +98,21 @@ function buildSteps(mode: ConnectMode, skipsConfig: boolean): StepDef[] {
 
 // ── Main page ────────────────────────────────────────────────────────────────
 
-export function QuickSetupPage() {
+interface QuickSetupPageProps {
+  embedded?: boolean
+  initialWorkspaceId?: string
+  initialServerId?: string
+  onComplete?: () => void
+  onManageAccess?: (serverId: string) => void
+}
+
+export function QuickSetupPage({
+  embedded = false,
+  initialWorkspaceId,
+  initialServerId,
+  onComplete,
+  onManageAccess,
+}: QuickSetupPageProps = {}) {
   const [searchParams, setSearchParams] = useSearchParams()
   const [stepStack, setStepStack] = useState<Step[]>(['pick'])
   const [selectedDs, setSelectedDs] = useState<DownstreamServer | null>(null)
@@ -109,6 +139,7 @@ export function QuickSetupPage() {
   // Welcome overlay
   const [showWelcome, setShowWelcome] = useState(false)
   const [welcomeStep, setWelcomeStep] = useState(0)
+  const handledInitialServer = useRef<string | null>(null)
 
   const step = stepStack[stepStack.length - 1]
   function pushStep(s: Step) { setStepStack((prev) => [...prev, s]) }
@@ -118,9 +149,19 @@ export function QuickSetupPage() {
   const { data: downstreams } = useApi(dsFetcher)
   const wsFetcher = useCallback(() => listWorkspaces(), [])
   const { data: workspaces } = useApi(wsFetcher)
+  const routesFetcher = useCallback(() => listRoutes(), [])
+  const { data: existingRoutes } = useApi(routesFetcher)
 
-  // Curated "start here" server IDs
-  const CURATED_IDS = ['github', 'linear', 'slack', 'notion', 'clickup', 'obsidian']
+  const workspaceServerIds = useMemo(() => {
+    const workspaceIds = selectedWorkspaceIds.length > 0
+      ? selectedWorkspaceIds
+      : initialWorkspaceId ? [initialWorkspaceId] : []
+    return new Set(
+      (existingRoutes ?? [])
+        .filter((route) => route.policy === 'allow' && workspaceIds.includes(route.workspace_id))
+        .map((route) => route.downstream_server_id),
+    )
+  }, [existingRoutes, initialWorkspaceId, selectedWorkspaceIds])
 
   // Show welcome overlay on first run
   useEffect(() => {
@@ -142,26 +183,21 @@ export function QuickSetupPage() {
   const curatedServers = useMemo(() => {
     if (!downstreams) return []
     return CURATED_IDS
-      .map((id) => downstreams.find((ds) => ds.id === id && !ds.disabled))
+      .map((id) => downstreams.find((ds) => ds.id === id && !ds.disabled && !workspaceServerIds.has(ds.id)))
       .filter((ds): ds is DownstreamServer => !!ds)
-  }, [downstreams])
-
-  // Built-in recipe templates for popular servers
-  type Recipe = { id: string; label: string; description: string }
-  const RECIPE_TEMPLATES: Record<string, Recipe[]> = {
-    github: [
-      { id: 'readonly', label: 'Read-only', description: 'Browse repos, issues, and PRs. No write access.' },
-      { id: 'full', label: 'Full access', description: 'Read and write: create issues, comment on PRs, push branches.' },
-    ],
-    slack: [
-      { id: 'all', label: 'All workspaces', description: 'Access all workspaces your OAuth token permits.' },
-      { id: 'specific', label: 'Specific workspace', description: 'Limit to a single workspace after auth.' },
-    ],
-  }
+  }, [downstreams, workspaceServerIds])
 
   function getRecipesForServer(dsId: string): Recipe[] {
     return RECIPE_TEMPLATES[dsId] ?? []
   }
+
+  const getStatusInfo = useCallback((dsId: string) => {
+    const entries = oauthStatuses[dsId]
+    const connected = entries?.some((entry) => entry.status === 'authenticated')
+    const expired = entries?.some((entry) => entry.status === 'expired')
+    const expiresAt = entries?.find((entry) => entry.status === 'authenticated')?.expires_at
+    return { connected, expired, expiresAt }
+  }, [oauthStatuses])
 
   const [catalogEntries, setCatalogEntries] = useState<CatalogEntry[]>([])
   useEffect(() => {
@@ -222,19 +258,20 @@ export function QuickSetupPage() {
       if (pickFilter !== 'all') {
         servers = servers.filter((ds) => {
           const { connected, expired } = getStatusInfo(ds.id)
+          const hasAccess = workspaceServerIds.has(ds.id)
           const autoDisc = ds.transport === 'http' ? (capsCache[ds.id]?.supports_auto_discovery ?? false) : false
           switch (pickFilter) {
-            case 'connected': return connected
-            case 'needs-auth': return ds.transport === 'http' && !connected && !autoDisc
-            case 'one-click': return ds.transport === 'http' && !connected && autoDisc
-            case 'not-connected': return ds.transport === 'http' ? (!connected && !expired) : true
+            case 'connected': return hasAccess
+            case 'needs-auth': return !hasAccess && ds.transport === 'http' && !connected && !autoDisc
+            case 'one-click': return !hasAccess && ds.transport === 'http' && !connected && autoDisc
+            case 'not-connected': return !hasAccess && (ds.transport !== 'http' || (!connected && !expired))
             default: return true
           }
         })
       }
       return { ...g, servers }
     }).filter((g) => g.servers.length > 0 || pickQuery.trim() === '')
-  }, [groupedServers, pickQuery, pickFilter, capsCache, catalogMap, oauthStatuses])
+  }, [groupedServers, pickQuery, pickFilter, capsCache, catalogMap, getStatusInfo, workspaceServerIds])
 
   const showNewTiles = pickQuery.trim() === '' && pickFilter === 'all'
 
@@ -244,6 +281,7 @@ export function QuickSetupPage() {
     const states = { connected: 0, needsAuth: 0, oneClick: 0, notConnected: 0 }
     for (const g of groupedServers) {
       for (const ds of g.servers) {
+        if (workspaceServerIds.has(ds.id)) { states.connected++; continue }
         if (ds.transport !== 'http') { states.notConnected++; continue }
         const { connected } = getStatusInfo(ds.id)
         const autoDisc = capsCache[ds.id]?.supports_auto_discovery ?? false
@@ -253,71 +291,22 @@ export function QuickSetupPage() {
       }
     }
     return { all, ...states }
-  }, [groupedServers, capsCache, oauthStatuses])
+  }, [groupedServers, capsCache, getStatusInfo, workspaceServerIds])
 
-  // Handle OAuth redirect back
-  useEffect(() => {
-    const oauthResult = searchParams.get('oauth')
-    if (oauthResult === 'success') {
-      setStepStack(['success'])
-      setSearchParams({}, { replace: true })
-    } else if (oauthResult === 'error') {
-      setConnectError(searchParams.get('message') ?? 'Authentication failed')
-      setStepStack(['pick'])
-      setSearchParams({}, { replace: true })
+  const showStartHere = pickCounts.connected === 0 && pickQuery.trim() === '' && pickFilter === 'all' && curatedServers.length > 0
+  const displayGroups = useMemo(() => {
+    if (!showStartHere) return filteredGroups
+    const curatedIds = new Set(curatedServers.map((server) => server.id))
+    return filteredGroups
+      .map((group) => ({ ...group, servers: group.servers.filter((server) => !curatedIds.has(server.id)) }))
+      .filter((group) => group.servers.length > 0)
+  }, [curatedServers, filteredGroups, showStartHere])
+
+  const pickIntegration = useCallback((ds: DownstreamServer) => {
+    if (workspaceServerIds.has(ds.id) && onManageAccess) {
+      onManageAccess(ds.id)
+      return
     }
-  }, [searchParams, setSearchParams])
-
-  // Fetch OAuth status + capabilities for HTTP downstreams
-  useEffect(() => {
-    if (!downstreams) return
-    let active = true
-    for (const ds of downstreams) {
-      if (ds.transport !== 'http') continue
-      getDownstreamOAuthStatus(ds.id)
-        .then((res) => { if (active) setOauthStatuses((prev) => ({ ...prev, [ds.id]: res.entries })) })
-        .catch(() => { if (active) setStatusErrors((prev) => ({ ...prev, [ds.id]: true })) })
-      getOAuthCapabilities(ds.id)
-        .then((res) => { if (active) setCapsCache((prev) => ({ ...prev, [ds.id]: res })) })
-      .catch((err) => { console.warn('Failed to fetch catalog', err) })
-    }
-    return () => { active = false }
-  }, [downstreams])
-
-  // Seed workspace selection with first workspace when data loads
-  useEffect(() => {
-    if (!workspaces || workspaces.length === 0) return
-    setSelectedWorkspaceIds((prev) => {
-      const valid = prev.filter((id) => workspaces.some((w) => w.id === id))
-      if (valid.length > 0) return valid
-      return [workspaces[0].id]
-    })
-  }, [workspaces])
-
-  const skipsConfig = !!(caps?.supports_auto_discovery && !caps.needs_credentials)
-  const completedSteps = stepStack
-    .slice(0, -1)
-    .filter((s): s is 'configure' | 'workspace' | 'review' =>
-      s === 'configure' || s === 'workspace' || s === 'review',
-    )
-
-  function getStatusInfo(dsId: string) {
-    const entries = oauthStatuses[dsId]
-    const connected = entries?.some((e) => e.status === 'authenticated')
-    const expired = entries?.some((e) => e.status === 'expired')
-    const expiresAt = entries?.find((e) => e.status === 'authenticated')?.expires_at
-    return { connected, expired, expiresAt }
-  }
-
-  function toggleWorkspace(id: string) {
-    setSelectedWorkspaceIds((prev) =>
-      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
-    )
-  }
-
-  // ── Pick handlers ──────────────────────────────────────────────────────────
-
-  function pickIntegration(ds: DownstreamServer) {
     setSelectedDs(ds)
     setNewServerName(null)
     setNewServerId(null)
@@ -330,17 +319,99 @@ export function QuickSetupPage() {
 
     if (ds.transport === 'http') {
       setConnectMode('oauth')
-      if (dsCaps?.supports_auto_discovery && !dsCaps.needs_credentials) {
-        setStepStack(['pick', 'workspace'])
-      } else {
-        setStepStack(['pick', 'configure'])
-      }
+      setStepStack(dsCaps?.supports_auto_discovery && !dsCaps.needs_credentials
+        ? ['pick', 'workspace']
+        : ['pick', 'configure'])
     } else {
-      // stdio / internal — skip OAuth, just create a route
       setConnectMode('route_only')
       setStepStack(['pick', 'workspace'])
     }
+  }, [capsCache, onManageAccess, workspaceServerIds])
+
+  // Handle OAuth redirect back
+  useEffect(() => {
+    const oauthResult = searchParams.get('oauth')
+    if (oauthResult === 'success') {
+      setStepStack(['success'])
+      onComplete?.()
+      setSearchParams((previous) => {
+        const next = new URLSearchParams(previous)
+        next.delete('oauth')
+        next.delete('message')
+        return next
+      }, { replace: true })
+    } else if (oauthResult === 'error') {
+      setConnectError(searchParams.get('message') ?? 'Authentication failed')
+      setStepStack(['pick'])
+      setSearchParams((previous) => {
+        const next = new URLSearchParams(previous)
+        next.delete('oauth')
+        next.delete('message')
+        return next
+      }, { replace: true })
+    }
+  }, [onComplete, searchParams, setSearchParams])
+
+  // Fetch OAuth status + capabilities for HTTP downstreams
+  useEffect(() => {
+    if (!downstreams) return
+    let active = true
+    for (const ds of downstreams) {
+      if (ds.transport !== 'http') continue
+      getDownstreamOAuthStatus(ds.id)
+        .then((res) => {
+          if (active) setOauthStatuses((prev) => ({
+            ...prev,
+            [ds.id]: Array.isArray(res.entries) ? res.entries : [],
+          }))
+        })
+        .catch(() => { if (active) setStatusErrors((prev) => ({ ...prev, [ds.id]: true })) })
+      getOAuthCapabilities(ds.id)
+        .then((res) => { if (active) setCapsCache((prev) => ({ ...prev, [ds.id]: res })) })
+      .catch((err) => { console.warn('Failed to fetch catalog', err) })
+    }
+    return () => { active = false }
+  }, [downstreams])
+
+  useEffect(() => {
+    if (!initialServerId || !downstreams || handledInitialServer.current === initialServerId) return
+    const server = downstreams.find((item) => item.id === initialServerId && !item.disabled)
+    if (!server) return
+    if (server.transport === 'http' && !capsCache[server.id]) return
+    handledInitialServer.current = initialServerId
+    pickIntegration(server)
+    setSearchParams((previous) => {
+      const next = new URLSearchParams(previous)
+      next.delete('setup_server')
+      return next
+    }, { replace: true })
+  }, [capsCache, downstreams, initialServerId, pickIntegration, setSearchParams])
+
+  // Seed workspace selection with first workspace when data loads
+  useEffect(() => {
+    if (!workspaces || workspaces.length === 0) return
+    setSelectedWorkspaceIds((prev) => {
+      const valid = prev.filter((id) => workspaces.some((w) => w.id === id))
+      if (valid.length > 0) return valid
+      const initial = workspaces.find((workspace) => workspace.id === initialWorkspaceId)
+      return [initial?.id ?? workspaces[0].id]
+    })
+  }, [initialWorkspaceId, workspaces])
+
+  const skipsConfig = !!(caps?.supports_auto_discovery && !caps.needs_credentials)
+  const completedSteps = stepStack
+    .slice(0, -1)
+    .filter((s): s is 'configure' | 'workspace' | 'review' =>
+      s === 'configure' || s === 'workspace' || s === 'review',
+    )
+
+  function toggleWorkspace(id: string) {
+    setSelectedWorkspaceIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
+    )
   }
+
+  // ── Pick handlers ──────────────────────────────────────────────────────────
 
   // ── Sub-form callbacks ─────────────────────────────────────────────────────
 
@@ -413,6 +484,7 @@ export function QuickSetupPage() {
           }
         }
         setStepStack(['success'])
+        onComplete?.()
       } catch (err) {
         setConnectError(err instanceof Error ? err.message : 'Failed to connect')
         setStepStack((prev) => prev.filter((s) => s !== 'connecting'))
@@ -451,11 +523,12 @@ export function QuickSetupPage() {
           policy: 'allow',
           log_level: 'info',
           approval_mode: 'write',
-          approval_timeout: 0,
+          approval_timeout: 300,
         })
         setRouteProgress({ done: i + 1, total: selectedWorkspaceIds.length })
       }
       setStepStack(['success'])
+      onComplete?.()
     } catch (err) {
       setConnectError(err instanceof Error ? err.message : 'Failed to create route')
       setStepStack((prev) => prev.filter((s) => s !== 'connecting'))
@@ -608,7 +681,7 @@ export function QuickSetupPage() {
             <ArrowLeft className="h-4 w-4" />
           </Button>
         )}
-        <h1 className="text-2xl font-bold">Add an Integration</h1>
+        {!embedded && <h1 className="text-2xl font-bold">Add an Integration</h1>}
       </div>
 
       {step === 'pick' && (
@@ -671,7 +744,7 @@ export function QuickSetupPage() {
           </div>
 
           {/* Start here — curated servers when nothing is connected */}
-          {pickCounts.connected === 0 && pickQuery.trim() === '' && pickFilter === 'all' && curatedServers.length > 0 && (
+          {showStartHere && (
             <div>
               <div className="mb-2 flex items-baseline gap-2 px-1">
                 <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
@@ -709,15 +782,6 @@ export function QuickSetupPage() {
                   )
                 })}
               </div>
-              <div className="mt-2 px-1">
-                <button
-                  type="button"
-                  className="text-xs text-primary hover:underline"
-                  onClick={() => setPickFilter('all')}
-                >
-                  Show all integrations
-                </button>
-              </div>
             </div>
           )}
 
@@ -727,7 +791,7 @@ export function QuickSetupPage() {
             </p>
           )}
 
-          {filteredGroups.map((group) => (
+          {displayGroups.map((group) => (
             <div key={group.key}>
               <div className="mb-2 flex items-baseline gap-2 px-1">
                 <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
@@ -747,6 +811,7 @@ export function QuickSetupPage() {
                   const hasError = isHttp ? (statusErrors[ds.id] ?? false) : false
                   const capsLoaded = isHttp ? !!capsCache[ds.id] : true
                   const catEntry = catalogMap.get(ds.id)
+                  const hasAccess = workspaceServerIds.has(ds.id)
 
                   return (
                     <button
@@ -759,15 +824,20 @@ export function QuickSetupPage() {
                       <div className="flex w-full items-start justify-between gap-2">
                         <span className="min-w-0 truncate text-sm font-semibold">{ds.name}</span>
                         <div className="flex shrink-0 gap-1">
-                          {ds.transport !== 'http' && (
+                          {hasAccess && (
+                            <Badge className="border-0 bg-primary/15 px-1.5 text-[10px] text-primary">
+                              In workspace
+                            </Badge>
+                          )}
+                          {!hasAccess && ds.transport !== 'http' && (
                             <Badge variant="outline" className="text-[10px] px-1.5">{ds.transport}</Badge>
                           )}
-                          {isHttp && hasError && (
+                          {!hasAccess && isHttp && hasError && (
                             <Badge variant="outline" className="text-destructive border-destructive/30 text-[10px] px-1.5">
                               <AlertCircle className="mr-0.5 h-2.5 w-2.5" /> Error
                             </Badge>
                           )}
-                          {isHttp && !hasError && connected && (
+                          {!hasAccess && isHttp && !hasError && connected && (
                             <Badge className="bg-emerald-500/15 text-emerald-600 border-0 text-[10px] px-1.5">
                               <CheckCircle2 className="mr-0.5 h-2.5 w-2.5" /> Connected
                               {expiresAt && (
@@ -778,22 +848,22 @@ export function QuickSetupPage() {
                               )}
                             </Badge>
                           )}
-                          {isHttp && !hasError && expired && (
+                          {!hasAccess && isHttp && !hasError && expired && (
                             <Badge variant="outline" className="text-amber-600 border-amber-300 text-[10px] px-1.5">
                               Expired — Reconnect
                             </Badge>
                           )}
-                          {isHttp && !hasError && !connected && !expired && autoDisc && capsLoaded && (
+                          {!hasAccess && isHttp && !hasError && !connected && !expired && autoDisc && capsLoaded && (
                             <Badge className="bg-emerald-500/15 text-emerald-600 border-0 text-[10px] px-1.5">
                               <Zap className="mr-0.5 h-2.5 w-2.5" /> 1-Click
                             </Badge>
                           )}
-                          {isHttp && !hasError && !connected && !expired && !autoDisc && capsLoaded && (
+                          {!hasAccess && isHttp && !hasError && !connected && !expired && !autoDisc && capsLoaded && (
                             <Badge variant="outline" className="text-amber-600 border-amber-300 text-[10px] px-1.5">
                               Credentials Required
                             </Badge>
                           )}
-                          {isHttp && !hasError && !connected && !expired && !capsLoaded && (
+                          {!hasAccess && isHttp && !hasError && !connected && !expired && !capsLoaded && (
                             <Loader2 className="h-3 w-3 animate-spin text-muted-foreground/50" />
                           )}
                         </div>
@@ -881,11 +951,11 @@ export function QuickSetupPage() {
                   <span className="text-xs text-muted-foreground">Import an OpenAPI 3.x spec as tools</span>
                 </button>
                 <Link
-                  to="/workspaces"
+                  to="/workspaces?view=servers&server_tab=available"
                   className="flex flex-col items-center justify-center gap-1.5 rounded-md border border-dashed border-border p-4 text-muted-foreground transition-colors hover:border-primary hover:text-foreground"
                 >
                   <Plus className="h-5 w-5" />
-                  <span className="text-sm font-medium">Browse Catalog</span>
+                  <span className="text-sm font-medium">Browse full catalog</span>
                 </Link>
               </div>
             </div>
@@ -1162,7 +1232,9 @@ export function QuickSetupPage() {
           </p>
           <div className="mt-6 flex gap-3">
             <Button variant="outline" asChild>
-              <Link to="/">Back to Dashboard</Link>
+              <Link to={initialWorkspaceId ? `/workspaces?workspace=${encodeURIComponent(initialWorkspaceId)}` : '/workspaces'}>
+                Back to workspace
+              </Link>
             </Button>
             <Button
               onClick={() => {
@@ -1198,13 +1270,13 @@ function PickFilterChips({
 }) {
   const opts: Array<{ key: PickFilter; label: string; n: number }> = [
     { key: 'all', label: 'All', n: counts.all },
-    { key: 'connected', label: 'Connected', n: counts.connected },
+    { key: 'connected', label: 'In workspace', n: counts.connected },
     { key: 'needs-auth', label: 'Needs Auth', n: counts.needsAuth },
     { key: 'one-click', label: '1-Click', n: counts.oneClick },
     { key: 'not-connected', label: 'Not Connected', n: counts.notConnected },
   ]
   return (
-    <div className="flex flex-nowrap items-center gap-1.5 overflow-x-auto pb-1" data-testid="setup-pick-filters">
+    <div className="scrollbar-none flex flex-nowrap items-center gap-1.5 overflow-x-auto pb-1" data-testid="setup-pick-filters">
       {opts.map((o) => {
         const active = filter === o.key
         return (

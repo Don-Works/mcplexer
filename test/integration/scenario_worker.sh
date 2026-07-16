@@ -9,11 +9,13 @@ build_worker_body() {
     local name="$1"
     local ws="$2"
     local scope="$3"
+    local enabled="${4:-false}"
     jq -n \
         --arg name "$name" \
         --arg ws "$ws" \
         --arg scope "$scope" \
         --arg endpoint "http://echo-llm:8080" \
+        --argjson enabled "$enabled" \
         '{
             name: $name,
             description: "integration test worker",
@@ -25,8 +27,39 @@ build_worker_body() {
             schedule_spec: "0 9 * * *",
             workspace_id: $ws,
             exec_mode: "autonomous",
-            enabled: false
+            enabled: $enabled
         }'
+}
+
+# dispatch_worker_run posts the detached run-now request, verifies its
+# acknowledgement, then polls until the new run row is visible. Stdout is
+# only the run id so callers can safely use command substitution.
+dispatch_worker_run() {
+    local node="$1"
+    local worker_id="$2"
+    local response
+    response=$(api POST "$node/api/v1/workers/$worker_id/run-now" '{}') || return 1
+    if ! echo "$response" | jq -e \
+        --arg wid "$worker_id" \
+        '.worker_id == $wid and .status == "dispatched"' >/dev/null 2>&1
+    then
+        echo "unexpected run-now acknowledgement: $response" >&2
+        return 1
+    fi
+
+    local run_id=""
+    for _ in $(seq 1 30); do
+        local runs
+        runs=$(api GET "$node/api/v1/workers/$worker_id/runs?limit=5") || return 1
+        run_id=$(echo "$runs" | jq -r '.[0].id // empty')
+        if [ -n "$run_id" ]; then
+            echo "$run_id"
+            return 0
+        fi
+        sleep 1
+    done
+    echo "detached run did not materialise for worker $worker_id" >&2
+    return 1
 }
 
 # poll_worker_run waits up to ~30s for the named run to reach a terminal
@@ -79,7 +112,8 @@ scenario_worker_run() {
     fi
 
     local create_body
-    create_body=$(build_worker_body "echo-worker-$$" "$ws_id" "$scope_id")
+    # run-now rejects paused workers; keep this fixture enabled.
+    create_body=$(build_worker_body "echo-worker-$$" "$ws_id" "$scope_id" true)
     local cresp
     if ! cresp=$(api POST "$NODE_C/api/v1/workers" "$create_body"); then
         fail "node-c worker create call" "see daemon logs"
@@ -93,15 +127,12 @@ scenario_worker_run() {
     fi
     pass "node-c worker created id=$worker_id"
 
-    local rresp
-    rresp=$(api POST "$NODE_C/api/v1/workers/$worker_id/run-now" '{}')
     local run_id
-    run_id=$(echo "$rresp" | jq -r '.run_id // .id // empty')
-    if [ -z "$run_id" ]; then
-        fail "node-c worker run-now returned no run_id" "resp=$rresp"
+    if ! run_id=$(dispatch_worker_run "$NODE_C" "$worker_id"); then
+        fail "node-c worker run-now dispatch" "detached run did not materialise"
         return
     fi
-    pass "node-c worker run-now accepted run_id=$run_id"
+    pass "node-c worker run-now dispatched; run materialised id=$run_id"
 
     local status
     status=$(poll_worker_run "$NODE_C" "$worker_id" "$run_id")

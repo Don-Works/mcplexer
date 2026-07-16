@@ -48,9 +48,10 @@ function isUserInstalled(db: DownstreamServer | null | undefined): boolean {
 interface DownstreamsPageProps {
   mode?: DownstreamsMode
   embedded?: boolean
+  onServerReady?: (serverId: string) => void
 }
 
-export function DownstreamsPage({ mode = 'installed', embedded = false }: DownstreamsPageProps) {
+export function DownstreamsPage({ mode = 'installed', embedded = false, onServerReady }: DownstreamsPageProps) {
   const fetcher = useCallback(() => listDownstreams(), [])
   const { data, loading, error, refetch } = useApi(fetcher)
 
@@ -206,7 +207,7 @@ export function DownstreamsPage({ mode = 'installed', embedded = false }: Downst
 
   async function handleAdd(catalog: CatalogEntry) {
     try {
-      await createDownstream({
+      const installed = await createDownstream({
         id: catalog.id,
         name: catalog.name,
         transport: catalog.preset.transport,
@@ -221,6 +222,7 @@ export function DownstreamsPage({ mode = 'installed', embedded = false }: Downst
       })
       toast.success(`${catalog.name} installed`)
       refetch()
+      onServerReady?.(installed.id)
       Promise.all([listRoutes(), listAuthScopes()]).then(([routes, scopes]) => {
         const scopeById = new Map(
           scopes.filter((s) => s.type === 'env' || s.type === 'client_credentials').map((s) => [s.id, s]),
@@ -243,8 +245,19 @@ export function DownstreamsPage({ mode = 'installed', embedded = false }: Downst
       await updateDownstream(ds.id, { disabled: false })
       toast.success(`${ds.name} enabled`)
       refetch()
+      onServerReady?.(ds.id)
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : 'Failed to enable server')
+    }
+  }
+
+  async function handleDisable(ds: DownstreamServer) {
+    try {
+      await updateDownstream(ds.id, { disabled: true })
+      toast.success(`${ds.name} disabled globally`)
+      refetch()
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Failed to disable server')
     }
   }
 
@@ -330,7 +343,7 @@ export function DownstreamsPage({ mode = 'installed', embedded = false }: Downst
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <p className="text-sm text-muted-foreground">
           {mode === 'installed'
-            ? 'MCP tool servers you have installed and can route through MCPlexer.'
+            ? 'Servers installed in MCPlexer. Global enablement is separate from workspace access.'
             : 'Browse the catalog and install one with a single click.'}
         </p>
         {mode === 'installed' && (
@@ -409,6 +422,7 @@ export function DownstreamsPage({ mode = 'installed', embedded = false }: Downst
               serverAuthScopes={serverAuthScopes}
               onAdd={handleAdd}
               onEnable={handleEnable}
+              onDisable={handleDisable}
               onEdit={openEdit}
               onDuplicate={handleDuplicate}
               onDelete={setDeleteTarget}
@@ -491,22 +505,16 @@ function ModeTabs({
   current,
   installedCount,
   availableCount,
-  embedded,
 }: {
   current: DownstreamsMode
   installedCount: number
   availableCount: number
   embedded?: boolean
 }) {
-  const tabs: Array<{ mode: DownstreamsMode; label: string; href: string; count: number; testid: string }> = embedded
-    ? [
-        { mode: 'installed', label: 'Installed', href: '/workspaces', count: installedCount, testid: 'downstream-tab-installed' },
-        { mode: 'available', label: 'Available', href: '/setup', count: availableCount, testid: 'downstream-tab-available' },
-      ]
-    : [
-        { mode: 'installed', label: 'Installed', href: '/workspaces', count: installedCount, testid: 'downstream-tab-installed' },
-        { mode: 'available', label: 'Available', href: '/setup', count: availableCount, testid: 'downstream-tab-available' },
-      ]
+  const tabs: Array<{ mode: DownstreamsMode; label: string; href: string; count: number; testid: string }> = [
+    { mode: 'installed', label: 'Installed', href: '/workspaces?view=servers&server_tab=installed', count: installedCount, testid: 'downstream-tab-installed' },
+    { mode: 'available', label: 'Available', href: '/workspaces?view=servers&server_tab=available', count: availableCount, testid: 'downstream-tab-available' },
+  ]
   return (
     <div className="border-b border-border">
       <nav className="-mb-px flex gap-6" aria-label="Servers view">
@@ -548,7 +556,7 @@ function EmptyState({ mode }: { mode: DownstreamsMode }) {
         description="Browse the catalog to install MCP tool servers with one click, or build a custom one."
         action={
           <Button asChild>
-            <Link to="/setup">Browse Available</Link>
+            <Link to="/workspaces?view=servers&server_tab=available">Browse available servers</Link>
           </Button>
         }
       />

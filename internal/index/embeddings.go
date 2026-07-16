@@ -78,11 +78,6 @@ func (s *Service) embeddingSnapshot() (Embedder, string, context.Context, uint64
 	return s.embedder, s.embedModel, s.embedContext, s.embedGeneration
 }
 
-func (s *Service) embeddingConfigured() bool {
-	emb, model, _, _ := s.embeddingSnapshot()
-	return emb != nil && emb.HasModel() && model != ""
-}
-
 // embeddingStatus reports durable store progress plus the last background
 // provider error. It never turns a lexical query into an error.
 func (s *Service) embeddingStatus(ctx context.Context, indexID string) EmbeddingStatus {

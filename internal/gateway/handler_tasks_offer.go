@@ -1,4 +1,5 @@
 // handler_tasks_offer.go — universal task__offer / task__assign_remote /
+// task__publish_home /
 // task__accept_offer / task__decline_offer / task__list_offers MCP
 // handlers (Phase 3 cross-peer surface). Mirrors the shape of the
 // memory handler's offer endpoints; share-service-not-wired and peer-
@@ -25,7 +26,7 @@ func (h *handler) dispatchTaskOfferTool(
 ) (json.RawMessage, *RPCError, bool) {
 	if h.tasksSvc == nil {
 		switch name {
-		case "task__offer", "task__assign_remote",
+		case "task__offer", "task__assign_remote", "task__publish_home",
 			"task__accept_offer", "task__decline_offer",
 			"task__list_offers":
 			return marshalErrorResult("Tasks subsystem is not enabled."), nil, true
@@ -39,6 +40,9 @@ func (h *handler) dispatchTaskOfferTool(
 	case "task__assign_remote":
 		resp, err := h.handleTaskOffer(ctx, raw, true)
 		return resp, err, true
+	case "task__publish_home":
+		resp, err := h.handleTaskPublishHome(ctx, raw)
+		return resp, err, true
 	case "task__accept_offer":
 		resp, err := h.handleTaskAcceptOffer(ctx, raw)
 		return resp, err, true
@@ -50,6 +54,46 @@ func (h *handler) dispatchTaskOfferTool(
 		return resp, err, true
 	}
 	return nil, nil, false
+}
+
+// handleTaskPublishHome publishes through the accepted workspace membership,
+// so a person or machine can say "send this task home" without discovering a
+// transport peer ID. The authoritative home re-checks the live grant/epoch.
+func (h *handler) handleTaskPublishHome(
+	ctx context.Context, raw json.RawMessage,
+) (json.RawMessage, *RPCError) {
+	args, err := unmarshalRawObject(raw)
+	if err != nil {
+		return nil, &RPCError{Code: CodeInvalidParams, Message: err.Error()}
+	}
+	taskID, _ := stringField(args, "task_id")
+	message, _ := stringField(args, "message")
+	if taskID == "" {
+		return nil, &RPCError{Code: CodeInvalidParams, Message: "task_id is required"}
+	}
+	wsID := h.resolveWorkspace(ctx, args)
+	if wsID == "" {
+		return marshalErrorResult("No workspace bound to this session — open a terminal in the shared workspace, or pass workspace_id."), nil
+	}
+	// Do not apply the legacy session/CWD workspace gate here. A workspace
+	// joined from another peer is deliberately represented by a local mirror
+	// ID that need not be an ancestor of the MCP session's current directory.
+	// PublishToHome validates that the task belongs to that mirror and that its
+	// active membership advertises the capability needed for this exact
+	// operation; the authoritative home then re-checks the live grant, device
+	// status, and access epoch. Applying requireWorkspaceWrite first would make
+	// a legitimate write-only machine membership impossible to use.
+	row, err := h.tasksSvc.PublishToHome(ctx, wsID, taskID, message, h.sessions.sessionID())
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return marshalErrorResult("Task not found in this workspace."), nil
+		}
+		if row != nil {
+			return marshalErrorResult(fmt.Sprintf("Publish recorded (id=%s) but home delivery failed: %v", row.ID, err)), nil
+		}
+		return marshalErrorResult(fmt.Sprintf("Publish failed: %v", err)), nil
+	}
+	return marshalJSONResult(row)
 }
 
 // handleTaskOffer is the shared entrypoint for task__offer and

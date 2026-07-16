@@ -11,6 +11,7 @@ import axe, { type Result as AxeResult } from 'axe-core'
 import { DashboardPage } from '@/pages/DashboardPage'
 import { AuditPage } from '@/pages/AuditPage'
 import { ApprovalsPage } from '@/pages/ApprovalsPage'
+import { ConnectionsPage } from '@/pages/ConnectionsPage'
 import { TooltipProvider } from '@/components/ui/tooltip'
 
 type FetchInput = string | URL | Request
@@ -135,6 +136,18 @@ describe('a11y: busiest pages have no serious/critical axe violations', () => {
     const violations = await runAxe(container)
     if (violations.length > 0) {
       console.error('Approvals violations:', JSON.stringify(violations, null, 2))
+    }
+    expect(violations).toEqual([])
+  })
+
+  it('ConnectionsPage', async () => {
+    const { container } = render(wrap(<ConnectionsPage />))
+    await waitFor(() => {
+      expect(container.querySelector('h1')).toBeTruthy()
+    })
+    const violations = await runAxe(container)
+    if (violations.length > 0) {
+      console.error('Connections violations:', JSON.stringify(violations, null, 2))
     }
     expect(violations).toEqual([])
   })

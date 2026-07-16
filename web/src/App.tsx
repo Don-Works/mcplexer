@@ -15,12 +15,9 @@ import { HealthProvider, useHealth } from '@/hooks/use-health'
 
 const DashboardPage = lazy(() => import('@/pages/DashboardPage').then(m => ({ default: m.DashboardPage })))
 const CommandPalette = lazy(() => import('@/components/command-palette/CommandPalette').then(m => ({ default: m.CommandPalette })))
-const QuickSetupPage = lazy(() => import('@/pages/QuickSetupPage').then(m => ({ default: m.QuickSetupPage })))
 const HarnessSetupPage = lazy(() => import('@/pages/HarnessSetupPage').then(m => ({ default: m.HarnessSetupPage })))
 const AuditPage = lazy(() => import('@/pages/AuditPage').then(m => ({ default: m.AuditPage })))
 const ConfigPage = lazy(() => import('@/pages/config/ConfigPage').then(m => ({ default: m.ConfigPage })))
-const WorkspacesPage = lazy(() => import('@/pages/config/WorkspacesPage').then(m => ({ default: m.WorkspacesPage })))
-const RoutesPage = lazy(() => import('@/pages/config/RoutesPage').then(m => ({ default: m.RoutesPage })))
 const LinkedWorkspacesPage = lazy(() => import('@/pages/config/LinkedWorkspacesPage').then(m => ({ default: m.LinkedWorkspacesPage })))
 const DryRunPage = lazy(() => import('@/pages/DryRunPage').then(m => ({ default: m.DryRunPage })))
 const CreateMCPPage = lazy(() => import('@/pages/CreateMCP').then(m => ({ default: m.CreateMCPPage })))
@@ -32,6 +29,7 @@ const CompressionPage = lazy(() => import('@/pages/CompressionPage').then(m => (
 const MeshPage = lazy(() => import('@/pages/MeshPage').then(m => ({ default: m.MeshPage })))
 const ChatView = lazy(() => import('@/pages/chat/ChatView').then(m => ({ default: m.ChatView })))
 const PairingPage = lazy(() => import('@/pages/Pairing').then(m => ({ default: m.PairingPage })))
+const CollaborationPage = lazy(() => import('@/pages/CollaborationPage').then(m => ({ default: m.CollaborationPage })))
 const BackupsPage = lazy(() => import('@/pages/BackupsPage').then(m => ({ default: m.BackupsPage })))
 const BrainStatusPage = lazy(() => import('@/pages/BrainStatusPage').then(m => ({ default: m.BrainStatusPage })))
 const BrainBrowserPage = lazy(() => import('@/pages/brain/BrainBrowserPage').then(m => ({ default: m.BrainBrowserPage })))
@@ -125,7 +123,14 @@ function ProfileHome() {
 
 function RedirectWithSearch({ to }: { to: string }) {
   const location = useLocation()
-  return <Navigate to={`${to}${location.search}`} replace />
+  const [path, rawTargetSearch = ''] = to.split('?')
+  const merged = new URLSearchParams(rawTargetSearch)
+  const current = new URLSearchParams(location.search)
+  for (const [key, value] of current.entries()) {
+    if (!merged.has(key)) merged.append(key, value)
+  }
+  const search = merged.toString()
+  return <Navigate to={`${path}${search ? `?${search}` : ''}`} replace />
 }
 
 function App() {
@@ -140,7 +145,7 @@ function App() {
           <Routes>
             <Route path="/" element={<ProfileHome />} />
             <Route path="/harness-setup" element={<HarnessSetupPage />} />
-            <Route path="/setup" element={<QuickSetupPage />} />
+            <Route path="/setup" element={<RedirectWithSearch to="/workspaces?view=add-server" />} />
             <Route path="/connections" element={<RedirectWithSearch to="/workspaces" />} />
             <Route path="/audit" element={<AuditPage />} />
             <Route path="/app" element={<MobileAppPage />} />
@@ -200,10 +205,11 @@ function App() {
             <Route path="/worker-approvals" element={<WorkerApprovalsPage />} />
             <Route path="/model-providers" element={<ModelProvidersPage />} />
 
-          {/* Setup group — Connect a service, workspace/server matrix, workspace routing, workspace metadata. */}
+          {/* Workspaces — one canonical console for access, activity,
+              metadata, server setup, and the global server library. */}
             <Route path="/workspaces" element={<ConnectionsPage />} />
-            <Route path="/workspaces/routes" element={<RoutesPage />} />
-            <Route path="/workspaces/manage" element={<WorkspacesPage />} />
+            <Route path="/workspaces/routes" element={<RedirectWithSearch to="/workspaces?view=access&advanced=1" />} />
+            <Route path="/workspaces/manage" element={<RedirectWithSearch to="/workspaces?view=settings" />} />
             <Route path="/workspace-links" element={<LinkedWorkspacesPage />} />
 
           {/* Advanced — raw config surfaces: credentials, OAuth providers,
@@ -213,20 +219,22 @@ function App() {
             <Route path="/advanced" element={<ConfigPage />} />
             <Route path="/advanced/credentials" element={<ConfigPage />} />
             <Route path="/advanced/oauth-providers" element={<ConfigPage />} />
-            <Route path="/advanced/routes" element={<RedirectWithSearch to="/workspaces/routes" />} />
+            <Route path="/advanced/routes" element={<RedirectWithSearch to="/workspaces?view=access&advanced=1" />} />
             <Route path="/advanced/descriptions" element={<ConfigPage />} />
 
           {/* Legacy per-resource routes — redirect to new canonical URLs. */}
-            <Route path="/servers" element={<RedirectWithSearch to="/workspaces" />} />
-            <Route path="/servers/available" element={<RedirectWithSearch to="/workspaces" />} />
-            <Route path="/config/downstreams" element={<RedirectWithSearch to="/workspaces" />} />
-            <Route path="/config/routes" element={<RedirectWithSearch to="/workspaces/routes" />} />
+            <Route path="/servers" element={<RedirectWithSearch to="/workspaces?view=servers&server_tab=installed" />} />
+            <Route path="/servers/available" element={<RedirectWithSearch to="/workspaces?view=servers&server_tab=available" />} />
+            <Route path="/config/downstreams" element={<RedirectWithSearch to="/workspaces?view=servers&server_tab=installed" />} />
+            <Route path="/config/routes" element={<RedirectWithSearch to="/workspaces?view=access&advanced=1" />} />
             <Route path="/config/auth-scopes" element={<Navigate to="/advanced/credentials" replace />} />
             <Route path="/config/oauth-providers" element={<Navigate to="/advanced/oauth-providers" replace />} />
-            <Route path="/config/workspaces" element={<RedirectWithSearch to="/workspaces/manage" />} />
+            <Route path="/config/workspaces" element={<RedirectWithSearch to="/workspaces?view=settings" />} />
             <Route path="/descriptions" element={<Navigate to="/advanced/descriptions" replace />} />
 
             <Route path="/pairing" element={<PairingPage />} />
+            <Route path="/collaboration" element={<CollaborationPage />} />
+            <Route path="/workspaces/access" element={<CollaborationPage />} />
             <Route path="/install" element={<RedirectWithSearch to="/harness-setup" />} />
             <Route path="/create-mcp" element={<CreateMCPPage />} />
             <Route path="/dry-run" element={<DryRunPage />} />

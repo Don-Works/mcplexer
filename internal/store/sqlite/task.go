@@ -26,7 +26,10 @@ const taskSelectCols = `id, workspace_id, title, description, status, closed_at,
 	lease_expires_at,
 	source_kind, source_session_id, source_tool_call_id,
 	created_by_session_id, updated_by_session_id, origin_peer_id,
-	status_history_json, hlc_at, pinned, deleted_at, created_at, updated_at`
+	status_history_json, hlc_at, remote_base_hlc,
+	owner_principal_id, visibility, visibility_epoch,
+	visibility_updated_by_principal_id, visibility_updated_at,
+	pinned, deleted_at, created_at, updated_at`
 
 // CreateTask inserts a new task row.
 func (d *DB) CreateTask(ctx context.Context, t *store.Task) error {
@@ -61,6 +64,15 @@ func (d *DB) CreateTask(ctx context.Context, t *store.Task) error {
 	if t.AssigneeOriginKind == "" {
 		t.AssigneeOriginKind = store.TaskAssigneeLocal
 	}
+	// Ordinary task creation is private. A service that has evaluated the
+	// workspace publication policy may widen it atomically with
+	// SetTaskVisibility inside Store.Tx.
+	t.Visibility = store.TaskVisibilityPrivate
+	t.VisibilityEpoch = 1
+	if t.VisibilityUpdatedAt == nil {
+		visibilityUpdatedAt := t.CreatedAt
+		t.VisibilityUpdatedAt = &visibilityUpdatedAt
+	}
 
 	tags := normalizeJSON(t.TagsJSON, "[]")
 	statusHistory := normalizeJSON(t.StatusHistoryJSON, "[]")
@@ -85,8 +97,11 @@ func (d *DB) CreateTask(ctx context.Context, t *store.Task) error {
 			lease_expires_at,
 			source_kind, source_session_id, source_tool_call_id,
 			created_by_session_id, updated_by_session_id, origin_peer_id,
-			status_history_json, hlc_at, pinned, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			status_history_json, hlc_at, remote_base_hlc,
+			owner_principal_id, visibility, visibility_epoch,
+			visibility_updated_by_principal_id, visibility_updated_at,
+			pinned, created_at, updated_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		t.ID, t.WorkspaceID, t.Title, t.Description, t.Status, unixOrNil(t.ClosedAt),
 		t.Priority, unixOrNil(t.DueAt), tags, t.Meta,
 		nullString(t.AssigneeSessionID), t.AssigneeOriginKind, t.AssigneePeerID, t.AssigneeUserID,
@@ -94,7 +109,9 @@ func (d *DB) CreateTask(ctx context.Context, t *store.Task) error {
 		unixOrNil(t.LeaseExpiresAt),
 		t.SourceKind, nullString(t.SourceSessionID), nullString(t.SourceToolCallID),
 		nullString(t.CreatedBySessionID), nullString(t.UpdatedBySessionID), t.OriginPeerID,
-		statusHistory, t.HlcAt, pinned, t.CreatedAt.Unix(), t.UpdatedAt.Unix(),
+		statusHistory, t.HlcAt, t.RemoteBaseHLC, nullString(t.OwnerPrincipalID), t.Visibility,
+		t.VisibilityEpoch, nullString(t.VisibilityUpdatedByPrincipalID),
+		unixOrNil(t.VisibilityUpdatedAt), pinned, t.CreatedAt.Unix(), t.UpdatedAt.Unix(),
 	)
 	if err != nil {
 		return fmt.Errorf("insert task: %w", mapConstraintError(err))
@@ -149,7 +166,7 @@ func (d *DB) UpdateTask(ctx context.Context, t *store.Task) error {
 			assigned_by_session_id = ?, assigned_by_peer_id = ?, assigned_at = ?,
 			lease_expires_at = ?,
 			updated_by_session_id = ?,
-			status_history_json = ?, hlc_at = ?, pinned = ?, updated_at = ?
+			status_history_json = ?, hlc_at = ?, remote_base_hlc = ?, pinned = ?, updated_at = ?
 		WHERE id = ? AND deleted_at IS NULL`,
 		t.WorkspaceID, t.Title, t.Description, t.Status, unixOrNil(t.ClosedAt),
 		t.Priority, unixOrNil(t.DueAt), tags, t.Meta,
@@ -157,7 +174,7 @@ func (d *DB) UpdateTask(ctx context.Context, t *store.Task) error {
 		nullString(t.AssignedBySessionID), t.AssignedByPeerID, unixOrNil(t.AssignedAt),
 		unixOrNil(t.LeaseExpiresAt),
 		nullString(t.UpdatedBySessionID),
-		statusHistory, t.HlcAt, pinned, t.UpdatedAt.Unix(),
+		statusHistory, t.HlcAt, t.RemoteBaseHLC, pinned, t.UpdatedAt.Unix(),
 		t.ID,
 	)
 	if err != nil {
@@ -875,9 +892,11 @@ func scanTask(scan func(...any) error) (*store.Task, error) {
 		t                                                      store.Task
 		tags, statusHistory                                    string
 		closedAt, dueAt, assignedAt, leaseExpiresAt, deletedAt sql.NullInt64
+		visibilityUpdatedAt                                    sql.NullInt64
 		assigneeSession, assignedBySession                     sql.NullString
 		assigneeUserID                                         sql.NullString
 		sourceSession, sourceToolCall, createdBy, updatedBy    sql.NullString
+		ownerPrincipal, visibilityUpdatedBy                    sql.NullString
 		createdAt, updatedAt                                   int64
 		pinned                                                 int
 	)
@@ -889,11 +908,16 @@ func scanTask(scan func(...any) error) (*store.Task, error) {
 		&leaseExpiresAt,
 		&t.SourceKind, &sourceSession, &sourceToolCall,
 		&createdBy, &updatedBy, &t.OriginPeerID,
-		&statusHistory, &t.HlcAt, &pinned, &deletedAt, &createdAt, &updatedAt,
+		&statusHistory, &t.HlcAt, &t.RemoteBaseHLC,
+		&ownerPrincipal, &t.Visibility, &t.VisibilityEpoch,
+		&visibilityUpdatedBy, &visibilityUpdatedAt,
+		&pinned, &deletedAt, &createdAt, &updatedAt,
 	); err != nil {
 		return nil, err
 	}
 	t.AssigneeUserID = assigneeUserID.String
+	t.OwnerPrincipalID = ownerPrincipal.String
+	t.VisibilityUpdatedByPrincipalID = visibilityUpdatedBy.String
 	t.TagsJSON = json.RawMessage(tags)
 	t.StatusHistoryJSON = json.RawMessage(statusHistory)
 	if closedAt.Valid {
@@ -915,6 +939,10 @@ func scanTask(scan func(...any) error) (*store.Task, error) {
 	if deletedAt.Valid {
 		tt := time.Unix(deletedAt.Int64, 0).UTC()
 		t.DeletedAt = &tt
+	}
+	if visibilityUpdatedAt.Valid {
+		tt := time.Unix(visibilityUpdatedAt.Int64, 0).UTC()
+		t.VisibilityUpdatedAt = &tt
 	}
 	if assigneeSession.Valid {
 		t.AssigneeSessionID = assigneeSession.String

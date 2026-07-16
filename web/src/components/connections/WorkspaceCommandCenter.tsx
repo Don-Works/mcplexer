@@ -119,7 +119,7 @@ export function WorkspaceCommandCenter({
           </div>
           <div className="flex flex-wrap gap-2">
             <Button variant="outline" size="sm" asChild>
-              <Link to={`/workspaces/routes?workspace=${encodeURIComponent(workspace.id)}`}>
+              <Link to={`/workspaces?workspace=${encodeURIComponent(workspace.id)}&advanced=1`}>
                 <Route className="h-3.5 w-3.5" />
                 Server access
               </Link>

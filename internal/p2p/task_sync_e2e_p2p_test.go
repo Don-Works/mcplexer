@@ -50,7 +50,7 @@ func (f *fakeTaskSyncSource) add(workspaceID string, evt TaskSyncEvent) {
 // ListTasksSinceHLC returns events ordered by HLC ASC where HLC >
 // sinceHLC, capped at limit.
 func (f *fakeTaskSyncSource) ListTasksSinceHLC(
-	_ context.Context, workspaceID, sinceHLC string, limit int,
+	_ context.Context, _ string, workspaceID, sinceHLC string, limit int,
 ) ([]TaskSyncEvent, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

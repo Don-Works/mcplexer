@@ -23,20 +23,26 @@ const (
 // receiver pulls the full content. Mirrors the schema described in
 // PLAN.md "Phase A — Offer".
 type TaskOfferEnvelope struct {
-	EnvelopeKind        string          `json:"envelope_kind"` // "task_offer"
-	EnvelopeNonce       string          `json:"envelope_nonce"`
-	EnvelopeCreatedAt   time.Time       `json:"envelope_created_at"`
-	IsDirectAssign      bool            `json:"is_direct_assign"`
-	RemoteTaskID        string          `json:"remote_task_id"`
-	RemoteWorkspaceID   string          `json:"remote_workspace_id"`
-	RemoteWorkspaceName string          `json:"remote_workspace_name"`
-	Title               string          `json:"title"`
-	DescriptionPreview  string          `json:"description_preview,omitempty"`
-	MetaPreview         string          `json:"meta_preview,omitempty"`
-	StatusPreview       string          `json:"status_preview,omitempty"`
-	PriorityPreview     string          `json:"priority_preview,omitempty"`
-	Tags                json.RawMessage `json:"tags,omitempty"`
-	Message             string          `json:"message,omitempty"`
+	EnvelopeKind         string          `json:"envelope_kind"` // "task_offer"
+	EnvelopeNonce        string          `json:"envelope_nonce"`
+	EnvelopeCreatedAt    time.Time       `json:"envelope_created_at"`
+	IsDirectAssign       bool            `json:"is_direct_assign"`
+	RemoteTaskID         string          `json:"remote_task_id"`
+	ShareID              string          `json:"share_id"`
+	AccessEpoch          int64           `json:"access_epoch"`
+	Visibility           string          `json:"visibility"`
+	VisibilityEpoch      int64           `json:"visibility_epoch"`
+	BaseHLC              string          `json:"base_hlc,omitempty"`
+	AudiencePrincipalIDs []string        `json:"audience_principal_ids,omitempty"`
+	RemoteWorkspaceID    string          `json:"remote_workspace_id"`
+	RemoteWorkspaceName  string          `json:"remote_workspace_name"`
+	Title                string          `json:"title"`
+	DescriptionPreview   string          `json:"description_preview,omitempty"`
+	MetaPreview          string          `json:"meta_preview,omitempty"`
+	StatusPreview        string          `json:"status_preview,omitempty"`
+	PriorityPreview      string          `json:"priority_preview,omitempty"`
+	Tags                 json.RawMessage `json:"tags,omitempty"`
+	Message              string          `json:"message,omitempty"`
 }
 
 // TaskRequestEnvelope is Phase B's request shape — sent by the receiver
@@ -52,15 +58,21 @@ type TaskRequestEnvelope struct {
 // authoritative for the offer row's preview columns; this carries the
 // full content for the newly-created local task.
 type TaskPayloadEnvelope struct {
-	EnvelopeKind string          `json:"envelope_kind"` // "task_payload"
-	RemoteTaskID string          `json:"remote_task_id"`
-	Title        string          `json:"title"`
-	Description  string          `json:"description"`
-	Status       string          `json:"status"`
-	Priority     string          `json:"priority"`
-	DueAt        *time.Time      `json:"due_at,omitempty"`
-	Meta         string          `json:"meta,omitempty"`
-	Tags         json.RawMessage `json:"tags,omitempty"`
+	EnvelopeKind         string          `json:"envelope_kind"` // "task_payload"
+	RemoteTaskID         string          `json:"remote_task_id"`
+	ShareID              string          `json:"share_id"`
+	AccessEpoch          int64           `json:"access_epoch"`
+	Visibility           string          `json:"visibility"`
+	VisibilityEpoch      int64           `json:"visibility_epoch"`
+	BaseHLC              string          `json:"base_hlc,omitempty"`
+	AudiencePrincipalIDs []string        `json:"audience_principal_ids,omitempty"`
+	Title                string          `json:"title"`
+	Description          string          `json:"description"`
+	Status               string          `json:"status"`
+	Priority             string          `json:"priority"`
+	DueAt                *time.Time      `json:"due_at,omitempty"`
+	Meta                 string          `json:"meta,omitempty"`
+	Tags                 json.RawMessage `json:"tags,omitempty"`
 }
 
 // TaskAckEnvelope is the success reply to a Phase A offer — gives the

@@ -53,20 +53,22 @@ func (s *Service) resolveAcceptWorkspace(
 func (s *Service) materializeOfferedTask(
 	ctx context.Context, offer *store.TaskOffer, payload *p2p.TaskPayloadEnvelope, wsID string,
 ) (*store.Task, error) {
+	sanitizeIncomingTaskPayload(payload)
 	var tags []string
 	if len(payload.Tags) > 0 {
 		_ = json.Unmarshal(payload.Tags, &tags)
 	}
 	return s.Create(ctx, CreateOptions{
-		WorkspaceID: wsID,
-		Title:       payload.Title,
-		Description: payload.Description,
-		Status:      payload.Status,
-		Priority:    payload.Priority,
-		DueAt:       payload.DueAt,
-		Tags:        tags,
-		Meta:        payload.Meta,
-		SourceKind:  store.TaskSourcePeerImport,
+		WorkspaceID:      wsID,
+		Title:            payload.Title,
+		Description:      payload.Description,
+		Status:           payload.Status,
+		Priority:         payload.Priority,
+		DueAt:            payload.DueAt,
+		Tags:             tags,
+		Meta:             payload.Meta,
+		OwnerPrincipalID: offer.SenderPrincipalID,
+		SourceKind:       store.TaskSourcePeerImport,
 		// ActorKind=peer-import is load-bearing: it maps to source="peer"
 		// in the Emitter's replication hook so a peer-imported task is
 		// NEVER re-replicated back out (echo guard). Without it a linked
@@ -83,19 +85,164 @@ func (s *Service) materializeOfferedTask(
 func (s *Service) convergeOrMaterialize(
 	ctx context.Context, offer *store.TaskOffer, payload *p2p.TaskPayloadEnvelope, wsID string,
 ) (*store.Task, error) {
+	task, _, err := s.convergeOrMaterializeWithState(ctx, offer, payload, wsID)
+	return task, err
+}
+
+// convergeOrMaterializeWithState is the production variant used after the
+// authenticated payload gate. The created bit lets the caller apply the
+// workspace publication policy without making this low-level convergence
+// primitive itself an authorization boundary.
+func (s *Service) convergeOrMaterializeWithState(
+	ctx context.Context, offer *store.TaskOffer, payload *p2p.TaskPayloadEnvelope, wsID string,
+) (*store.Task, bool, error) {
+	// Collaboration mirror edits retain the home task's globally stable id.
+	// The authorization gate has already required tasks.edit for this exact
+	// existing row. Resolve it before the legacy offer-mapping convergence
+	// path, which is for imported tasks whose local id may differ.
+	if offer.IsDirectAssign {
+		existing, existingErr := s.store.GetTask(ctx, payload.RemoteTaskID)
+		if existingErr == nil {
+			if existing.WorkspaceID != wsID {
+				return nil, false, p2p.ErrTaskOfferDenied
+			}
+			t, updateErr := s.convergePeerTask(ctx, existing.ID, wsID, payload)
+			return t, false, updateErr
+		}
+		if !errors.Is(existingErr, store.ErrNotFound) {
+			return nil, false, existingErr
+		}
+	}
 	existingID, err := s.store.FindLocalTaskForRemoteOffer(ctx, offer.FromPeerID, offer.RemoteTaskID)
 	if err == nil && existingID != "" {
 		t, cerr := s.convergePeerTask(ctx, existingID, wsID, payload)
 		if cerr == nil {
-			return t, nil
+			return t, false, nil
 		}
 		if !errors.Is(cerr, store.ErrNotFound) {
-			return nil, cerr
+			return nil, false, cerr
 		}
 		// Local row vanished between lookup and update — fall through and
 		// materialize a fresh one.
 	}
-	return s.materializeOfferedTask(ctx, offer, payload, wsID)
+	t, err := s.materializeOfferedTask(ctx, offer, payload, wsID)
+	if err != nil {
+		return nil, false, err
+	}
+	return t, true, nil
+}
+
+func (s *Service) validateIncomingTaskPayload(
+	ctx context.Context, offer *store.TaskOffer, payload *p2p.TaskPayloadEnvelope,
+) error {
+	if offer == nil || payload == nil || payload.RemoteTaskID != offer.RemoteTaskID ||
+		payload.ShareID == "" || payload.ShareID != offer.ShareID ||
+		!store.ValidTaskVisibility(payload.Visibility) {
+		return p2p.ErrTaskOfferDenied
+	}
+	envelope := &p2p.TaskOfferEnvelope{
+		ShareID: payload.ShareID, AccessEpoch: payload.AccessEpoch,
+		IsDirectAssign: offer.IsDirectAssign, RemoteTaskID: payload.RemoteTaskID,
+		BaseHLC: payload.BaseHLC,
+	}
+	if payload.BaseHLC != offer.BaseHLC {
+		return p2p.ErrTaskOfferDenied
+	}
+	workspaceID, principalID, _, err := s.authorizeIncomingOffer(ctx, offer.FromPeerID, envelope)
+	if err != nil || workspaceID != offer.WorkspaceID ||
+		(offer.SenderPrincipalID != "" && principalID != offer.SenderPrincipalID) {
+		return p2p.ErrTaskOfferDenied
+	}
+	offer.SenderPrincipalID = principalID
+	return nil
+}
+
+func (s *Service) applyIncomingTaskVisibility(
+	ctx context.Context,
+	offer *store.TaskOffer,
+	payload *p2p.TaskPayloadEnvelope,
+	task *store.Task,
+	created bool,
+) (*store.Task, error) {
+	if s.collaborationStore == nil || s.authorizer == nil || offer == nil || payload == nil || task == nil {
+		return nil, p2p.ErrTaskOfferDenied
+	}
+	policy, err := s.collaborationStore.GetWorkspacePublicationPolicy(ctx, offer.ShareID)
+	if err != nil {
+		return nil, err
+	}
+	current, err := s.collaborationStore.GetTaskAccess(ctx, task.ID)
+	if err != nil {
+		return nil, err
+	}
+	desired := payload.Visibility
+	audience := append([]string(nil), payload.AudiencePrincipalIDs...)
+	_, publisherErr := s.authorizer.AuthorizeWorkspace(ctx, offer.FromPeerID, offer.ShareID, store.CapabilityTasksPublish)
+	if !created {
+		// A content editor cannot change sharing as a side-effect of a safe
+		// task projection. The remote mirror deliberately carries no audience
+		// metadata, so retain the authoritative home visibility verbatim.
+		desired = current.Visibility
+		audience = append([]string(nil), current.AudiencePrincipalIDs...)
+	} else if publisherErr == nil {
+		// Publisher-only machines cannot choose a wider audience. The home
+		// workspace's policy is authoritative for every published task.
+		desired = policy.DefaultVisibility
+		audience = nil
+	}
+	if !store.ValidTaskVisibility(desired) ||
+		(created && visibilityRank(desired) > visibilityRank(policy.AgentVisibilityCeiling)) {
+		return nil, p2p.ErrTaskOfferDenied
+	}
+	if created && publisherErr != nil && visibilityRank(desired) > visibilityRank(policy.DefaultVisibility) {
+		if _, err := s.authorizer.AuthorizeWorkspace(ctx, offer.FromPeerID, offer.ShareID, store.CapabilityTasksShare); err != nil {
+			return nil, p2p.ErrTaskOfferDenied
+		}
+	}
+	if !created && policy.WideningRequiresApproval && visibilityRank(desired) > visibilityRank(current.Visibility) {
+		return nil, p2p.ErrTaskOfferDenied
+	}
+	if current.Visibility != desired || !equalStringSets(current.AudiencePrincipalIDs, audience) {
+		if _, err := s.collaborationStore.SetTaskVisibility(ctx, store.TaskVisibilityChange{
+			TaskID: task.ID, Visibility: desired,
+			AudiencePrincipalIDs: audience,
+			ActorPrincipalID:     offer.SenderPrincipalID,
+			At:                   time.Now().UTC(),
+		}); err != nil {
+			return nil, err
+		}
+	}
+	return s.store.GetTask(ctx, task.ID)
+}
+
+func visibilityRank(visibility string) int {
+	switch visibility {
+	case store.TaskVisibilityPrivate:
+		return 0
+	case store.TaskVisibilityRestricted:
+		return 1
+	case store.TaskVisibilityWorkspace:
+		return 2
+	default:
+		return 99
+	}
+}
+
+func equalStringSets(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	seen := make(map[string]int, len(left))
+	for _, value := range left {
+		seen[value]++
+	}
+	for _, value := range right {
+		seen[value]--
+		if seen[value] < 0 {
+			return false
+		}
+	}
+	return true
 }
 
 // convergePeerTask applies a re-pushed (linked-workspace replication)
@@ -180,22 +327,27 @@ func (s *Service) selfPeerID() string {
 // buildOfferEnvelope renders the Phase A envelope from a local task.
 // Previews are truncated to taskOfferPreviewCap; tags are passed verbatim
 // (already JSON in the row).
-func buildOfferEnvelope(t *store.Task, wsName, message string) p2p.TaskOfferEnvelope {
+func buildOfferEnvelope(t *store.Task, wsName, message, profile string) (p2p.TaskOfferEnvelope, error) {
+	patch, err := safeRemoteTaskPatch(t, profile)
+	if err != nil {
+		return p2p.TaskOfferEnvelope{}, err
+	}
 	return p2p.TaskOfferEnvelope{
 		EnvelopeKind:        p2p.TaskEnvelopeKindOffer,
 		EnvelopeNonce:       ulid.Make().String(),
 		EnvelopeCreatedAt:   time.Now().UTC(),
 		RemoteTaskID:        t.ID,
+		BaseHLC:             t.RemoteBaseHLC,
 		RemoteWorkspaceID:   t.WorkspaceID,
 		RemoteWorkspaceName: wsName,
-		Title:               t.Title,
-		DescriptionPreview:  truncate(t.Description, taskOfferPreviewCap),
-		MetaPreview:         truncate(t.Meta, taskOfferPreviewCap),
-		StatusPreview:       t.Status,
-		PriorityPreview:     t.Priority,
-		Tags:                t.TagsJSON,
-		Message:             message,
-	}
+		Title:               patch.Title,
+		DescriptionPreview:  truncate(patch.Description, taskOfferPreviewCap),
+		MetaPreview:         "",
+		StatusPreview:       patch.Status,
+		PriorityPreview:     patch.Priority,
+		Tags:                patch.TagsJSON,
+		Message:             safeProjectedText(message, taskOfferPreviewCap),
+	}, nil
 }
 
 // truncate trims s to at most n bytes (rune-safe — falls back to the

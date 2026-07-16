@@ -220,6 +220,86 @@ func TestMigrate133PurgesLegacyWorkspaceCodeIndex(t *testing.T) {
 	}
 }
 
+func TestMigrate136DefaultsLegacyP2PRelationshipsToNoAuthority(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	db := openTestDB(t)
+	if err := ensureSchemaTable(ctx, db); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureLedgerTable(ctx, db); err != nil {
+		t.Fatal(err)
+	}
+	files, err := listMigrations()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, migration := range files {
+		if migration.version >= 136 {
+			break
+		}
+		if err := applyMigration(ctx, db, migration); err != nil {
+			t.Fatalf("apply %d: %v", migration.version, err)
+		}
+		if hook, ok := postMigrationHooks[migration.version]; ok {
+			if err := hook(ctx, db); err != nil {
+				t.Fatalf("hook %d: %v", migration.version, err)
+			}
+		}
+	}
+	now := "2026-07-16T12:00:00Z"
+	statements := []string{
+		`INSERT INTO users(user_id, display_name, created_at, is_self) VALUES ('legacy-local', 'Local operator', '` + now + `', 1)`,
+		`INSERT INTO users(user_id, display_name, created_at, is_self) VALUES ('legacy-remote', 'Remote label', '` + now + `', 0)`,
+		`INSERT INTO p2p_peers(peer_id, display_name, paired_at, trust_level, scopes) VALUES ('peer-local', 'Local device', '` + now + `', 99, '["admin"]')`,
+		`INSERT INTO p2p_peers(peer_id, display_name, paired_at, trust_level, scopes) VALUES ('peer-remote', 'Remote device', '` + now + `', 99, '["admin","tasks.read"]')`,
+		`INSERT INTO peer_users(peer_id, user_id) VALUES ('peer-local', 'legacy-local')`,
+		`INSERT INTO peer_users(peer_id, user_id) VALUES ('peer-remote', 'legacy-remote')`,
+		`INSERT INTO workspaces(id, name, root_path, tags, default_policy, source, created_at, updated_at) VALUES ('legacy-workspace', 'Legacy workspace', '', '[]', 'allow', 'api', '` + now + `', '` + now + `')`,
+		`INSERT INTO workspace_peer_bindings(peer_id, remote_workspace_id, local_workspace_id, established_at, linked, link_established_by) VALUES ('peer-remote', 'remote-workspace', 'legacy-workspace', 1, 1, 'local')`,
+	}
+	for _, statement := range statements {
+		if _, err := db.Exec(statement); err != nil {
+			t.Fatalf("seed pre-136 state: %v\n%s", err, statement)
+		}
+	}
+	if err := migrate(ctx, db); err != nil {
+		t.Fatalf("apply migration 136: %v", err)
+	}
+	assertPrincipal := func(id, status string, owner int) {
+		t.Helper()
+		var gotStatus string
+		var gotOwner int
+		if err := db.QueryRow(`SELECT status, is_local_owner FROM p2p_principals WHERE id = ?`, id).Scan(&gotStatus, &gotOwner); err != nil {
+			t.Fatalf("query principal %s: %v", id, err)
+		}
+		if gotStatus != status || gotOwner != owner {
+			t.Fatalf("principal %s = (%s,%d), want (%s,%d)", id, gotStatus, gotOwner, status, owner)
+		}
+	}
+	assertPrincipal("legacy-local", "active", 1)
+	assertPrincipal("legacy-remote", "legacy_unverified", 0)
+	for _, peerID := range []string{"peer-local", "peer-remote"} {
+		var status string
+		var keyID sql.NullString
+		if err := db.QueryRow(`SELECT status, identity_key_id FROM p2p_principal_devices WHERE peer_id = ?`, peerID).Scan(&status, &keyID); err != nil {
+			t.Fatalf("query migrated device %s: %v", peerID, err)
+		}
+		if status != "legacy_unverified" || keyID.Valid {
+			t.Fatalf("device %s = status %s, key %#v; want unverified without key", peerID, status, keyID)
+		}
+	}
+	for _, table := range []string{"p2p_workspace_shares", "p2p_workspace_grants", "p2p_principal_invitations"} {
+		var count int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM ` + table).Scan(&count); err != nil {
+			t.Fatalf("count %s: %v", table, err)
+		}
+		if count != 0 {
+			t.Fatalf("migration implicitly authorized %d rows in %s", count, table)
+		}
+	}
+}
+
 // openTestDB opens a fresh sqlite database and registers cleanup.
 func openTestDB(t *testing.T) *sql.DB {
 	t.Helper()

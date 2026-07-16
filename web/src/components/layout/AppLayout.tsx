@@ -15,10 +15,10 @@ import {
   Laptop,
   Link2,
   ListTodo,
+  LockKeyhole,
   Menu,
   MessageSquare,
   Radio,
-  Route as RouteIcon,
   Search as SearchIcon,
   Settings,
   ShieldCheck,
@@ -81,15 +81,12 @@ interface NavItem {
 // Setup: the first-run path. Connect the client first, then add integrations.
 const setupNav: NavItem[] = [
   { label: 'AI Harnesses', href: '/harness-setup', icon: <Wrench className="h-4 w-4" />, hint: 'Check MCP wiring, native Pi setup, bootstrap skills, and initialization for each AI harness' },
-  { label: 'Add integration', href: '/setup', icon: <Sparkles className="h-4 w-4" />, hint: 'Connect a tool server like GitHub, Linear, Postgres, or ClickUp to a workspace' },
 ]
 
 // Workspaces: the primary access-control concept. Clicking into a workspace
 // shows servers, routes, memory scope, and tasks scoped to it.
 const workspaceNav: NavItem[] = [
-  { label: 'Command center', href: '/workspaces', icon: <Layers className="h-4 w-4" />, hint: 'Start from a workspace: access, routes, actions, agents, and knowledge' },
-  { label: 'Server access', href: '/workspaces/routes', icon: <RouteIcon className="h-4 w-4" />, hint: 'Choose which servers, credentials, approvals, and matching rules each workspace can use' },
-  { label: 'Workspace setup', href: '/workspaces/manage', icon: <FolderOpen className="h-4 w-4" />, hint: 'Create workspace records and edit root paths, tags, and default policy' },
+  { label: 'Workspaces', href: '/workspaces', icon: <Layers className="h-4 w-4" />, hint: 'Configure each workspace: server access, credentials, activity, and settings' },
 ]
 
 const monitorNav: NavItem[] = [
@@ -135,6 +132,7 @@ const knowledgeNavBase: NavItem[] = [
 ]
 
 const networkNav: NavItem[] = [
+  { label: 'Access', href: '/workspaces/access', icon: <LockKeyhole className="h-4 w-4" />, hint: 'SSH identities, devices, workspace permissions, and sharing policy' },
   { label: 'Mesh', href: '/mesh', icon: <Radio className="h-4 w-4" />, hint: 'Peer-to-peer agent network: live agents, messages, file claims' },
   { label: 'Chat', href: '/chat', icon: <MessageSquare className="h-4 w-4" />, hint: 'Send and receive mesh broadcast messages' },
   { label: 'People', href: '/pairing?tab=people', icon: <UsersRound className="h-4 w-4" />, hint: 'People and the devices linked to them' },
@@ -182,10 +180,8 @@ function NavLink({ item, onNavigate }: { item: NavItem; onNavigate?: () => void 
     (hasSearch && location.pathname === itemPath && navSearchMatches(itemPath, itemSearch, location.search)) ||
     (!hasSearch &&
       (location.pathname === itemPath ||
-        // Workspaces: keep access, routing, and settings distinct in the sidebar.
-        (itemPath === '/workspaces' && location.pathname === '/workspaces') ||
-        (itemPath === '/workspaces/routes' && location.pathname.startsWith('/workspaces/routes')) ||
-        (itemPath === '/workspaces/manage' && location.pathname.startsWith('/workspaces/manage')) ||
+        // All workspace configuration lives in the canonical console.
+        (itemPath === '/workspaces' && location.pathname.startsWith('/workspaces')) ||
         // Advanced: /advanced and all sub-paths (/advanced/credentials, etc.).
         (itemPath === '/advanced' && location.pathname.startsWith('/advanced')) ||
         // Legacy /config/* deep links still highlight Advanced.
@@ -705,6 +701,12 @@ function ServerSidebarNav({
     })
   }
   if (p2pEnabled) {
+    serverNav.push({
+      label: 'Access',
+      href: '/workspaces/access',
+      icon: <LockKeyhole className="h-4 w-4" />,
+      hint: 'People, machines, and exact workspace permissions',
+    })
     serverNav.push({
       label: 'Mesh',
       href: '/mesh',

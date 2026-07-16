@@ -42,7 +42,7 @@ FROM debian:bookworm-slim AS runtime
 # curl is needed for the healthcheck; ca-certificates lets any outbound
 # https call (e.g. to model endpoints) validate. Both stay tiny on slim.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends ca-certificates curl \
+ && apt-get install -y --no-install-recommends ca-certificates curl openssh-client \
  && rm -rf /var/lib/apt/lists/*
 
 COPY --from=go /out/mcplexer /usr/local/bin/mcplexer

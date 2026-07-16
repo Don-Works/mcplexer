@@ -59,12 +59,15 @@ var (
 	ErrTaskExpired = errors.New("p2p: task envelope too old")
 	// ErrTaskTooLarge wraps the per-payload size cap.
 	ErrTaskTooLarge = errors.New("p2p: task payload exceeds size cap")
+	// ErrTaskConflict means an editor published against an older home
+	// revision. The home kept its canonical row unchanged.
+	ErrTaskConflict = errors.New("p2p: task edit conflicts with current home revision")
 )
 
 // TaskShareProvider is the offering-side hook: given a remote_task_id,
 // returns the full TaskPayloadEnvelope.
 type TaskShareProvider interface {
-	GetTaskPayload(ctx context.Context, remoteTaskID string) (*TaskPayloadEnvelope, error)
+	GetTaskPayload(ctx context.Context, requesterPeerID, requestNonce, remoteTaskID string) (*TaskPayloadEnvelope, error)
 }
 
 // TaskShareReceiver is the receiving-side hook: invoked when a Phase A

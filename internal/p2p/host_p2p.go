@@ -23,16 +23,17 @@ import (
 // Host wraps a libp2p host with the discovery, ping, and lifecycle hooks
 // the mcplexer daemon needs. Construct with NewHost; close with Close.
 type Host struct {
-	cfg       Config
-	h         host.Host
-	pinger    *ping.PingService
-	mdns      mdns.Service
-	dht       *dht.IpfsDHT      // optional; set when EnableDHT is true
-	discovery *DiscoveryService // optional; set by NewDiscoveryService
-	tracker   *holePunchTracker // optional; set when hole-punch tracing enabled
-	logger    *slog.Logger
-	closeMu   sync.Mutex
-	closed    bool
+	cfg         Config
+	h           host.Host
+	pinger      *ping.PingService
+	mdns        mdns.Service
+	dht         *dht.IpfsDHT // optional; set when EnableDHT is true
+	discoveryMu sync.RWMutex
+	discovery   *DiscoveryService // optional; set by NewDiscoveryService
+	tracker     *holePunchTracker // optional; set when hole-punch tracing enabled
+	logger      *slog.Logger
+	closeMu     sync.Mutex
+	closed      bool
 }
 
 // NewHost boots a libp2p Host using cfg. If cfg.Enabled is false, returns
@@ -321,7 +322,7 @@ func (n *mdnsNotifee) HandlePeerFound(pi peer.AddrInfo) {
 	}
 	n.h.logger.Debug("p2p mdns peer found", "peer", pi.ID, "addrs", pi.Addrs)
 	n.h.h.Peerstore().AddAddrs(pi.ID, pi.Addrs, peerstoreTTL)
-	if d := n.h.discovery; d != nil {
+	if d := n.h.Discovery(); d != nil {
 		go d.onMDNSFound(pi)
 	}
 }
@@ -332,7 +333,21 @@ func (h *Host) Discovery() *DiscoveryService {
 	if h == nil {
 		return nil
 	}
+	h.discoveryMu.RLock()
+	defer h.discoveryMu.RUnlock()
 	return h.discovery
+}
+
+// setDiscovery publishes a fully initialised discovery service. Readers use
+// Discovery so the lock also establishes a happens-before relationship for
+// the service fields populated by NewDiscoveryService.
+func (h *Host) setDiscovery(d *DiscoveryService) {
+	if h == nil {
+		return
+	}
+	h.discoveryMu.Lock()
+	h.discovery = d
+	h.discoveryMu.Unlock()
 }
 
 // LastSeenAddrs returns the peerstore-cached multiaddrs for a peer ID

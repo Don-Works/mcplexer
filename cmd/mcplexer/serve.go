@@ -24,6 +24,7 @@ import (
 	"github.com/don-works/mcplexer/internal/backup"
 	"github.com/don-works/mcplexer/internal/brain"
 	"github.com/don-works/mcplexer/internal/cache"
+	"github.com/don-works/mcplexer/internal/collaboration"
 	"github.com/don-works/mcplexer/internal/concierge"
 	"github.com/don-works/mcplexer/internal/config"
 	"github.com/don-works/mcplexer/internal/consent"
@@ -327,6 +328,7 @@ type serverDeps struct {
 	p2pLookup         *p2p.SQLPeerLookup
 	p2pReconnector    *p2p.Reconnector
 	p2pLiveness       *p2p.LivenessMonitor
+	collaboration     *collaboration.Manager
 	skillShare        *p2p.SkillShareService
 	registryShare     *p2p.RegistryShareService
 	skillRegistry     *skillregistry.Registry
@@ -335,6 +337,7 @@ type serverDeps struct {
 	memoryShare       *p2p.MemoryShareService
 	attachmentShare   *p2p.AttachmentShareService
 	taskSync          *p2p.TaskSyncService
+	taskSyncScheduler *taskSyncScheduler
 	// replicator silently fans local memory writes + skill installs to
 	// Tier-1 same-user paired peers. nil = auto-replication disabled
 	// (slim build or wiring failure); the manual share path still works.
@@ -463,6 +466,17 @@ func buildServerDeps(ctx context.Context, cfg *Config, db *sqlite.DB, settingsSv
 		slog.Warn("bootstrap self user failed", "error", suErr)
 	}
 	d.selfUser = selfUser
+	inviteSvc := p2p.NewCollaborationInviteService(d.p2pHost, db)
+	d.collaboration = collaboration.NewManager(db, inviteSvc)
+	if selfUser != nil {
+		if _, ownerErr := d.collaboration.EnsureLocalOwner(ctx, selfUser); ownerErr != nil {
+			slog.Warn("bootstrap collaboration owner failed", "error", ownerErr)
+		} else if d.p2pHost != nil {
+			if _, shareErr := d.collaboration.EnsureWorkspaceShares(ctx); shareErr != nil {
+				slog.Warn("bootstrap collaboration workspace shares failed", "error", shareErr)
+			}
+		}
+	}
 	d.consentResolver = newConsentResolver(db, selfUser)
 	attachSelfIdentity(d.p2pPairing, db, selfUser)
 	if d.p2pPairing != nil {
@@ -1135,7 +1149,6 @@ func buildServerDeps(ctx context.Context, cfg *Config, db *sqlite.DB, settingsSv
 	d.tasksSvc = tasks.New(db)
 	d.tasksSvc.SetBus(tasks.NewBus())
 	d.tasksSvc.SetWorkspaceLookup(db)
-	d.tasksSvc.SetPeerScopeLookup(db)
 	bridgeHumanTaskNotifications(ctx, d.tasksSvc.Bus(), d.notifyBus, db)
 	go humanTaskDueNotificationLoop(ctx, d.tasksSvc, db, d.notifyBus)
 
@@ -1178,26 +1191,29 @@ func buildServerDeps(ctx context.Context, cfg *Config, db *sqlite.DB, settingsSv
 	// be nil downstream.
 	d.attachmentShare = buildAttachmentShareService(d.p2pHost, db, d.auditor, d.consentResolver, d.selfUser)
 	// Cross-peer task sharing over /mcplexer/task/1.0.0 (Phase 3).
-	// The tasks service implements p2p.TaskShareReceiver so the wire
-	// handler runs the same scope/throttle/staleness checks as a local
-	// REST/MCP call would.
+	// The tasks service implements p2p.TaskShareReceiver so the wire handler
+	// applies proof-bound collaboration authorization, throttling, and
+	// staleness checks before accepting anything.
 	d.tasksSvc.SetTaskShare(buildTaskShareService(d.p2pHost, db, d.tasksSvc, d.auditor, d.consentResolver, d.selfUser))
-	// Cross-peer task-state gossip over /mcplexer/task-sync/1.0.0 —
-	// read-only catch-up replication for LINKED workspaces (migration
-	// 088). The inbound handler registers in both build modes (stub
-	// no-ops); the outbound scheduler only runs with a live p2p host.
-	// Server-side the stream is gated per workspace on the
-	// task_sync:<workspace> peer scope, which mcplexer__link_workspace
-	// grants (and unlink revokes) alongside task_assign.
+	// Cross-peer task-state sync over /mcplexer/task-sync/1.0.0 provides
+	// read-only catch-up for accepted workspace memberships. The inbound
+	// handler registers in both build modes (stub no-ops); the outbound
+	// scheduler only runs with a live p2p host. The workspace home resolves
+	// the live proof-bound device and exact read grants on every stream;
+	// legacy linked-workspace scopes are routing hints only.
 	d.taskSync = buildTaskSyncService(d.p2pHost, db, d.tasksSvc, d.auditor, d.consentResolver, d.selfUser)
 	d.defer_(d.taskSync.Stop)
 	if d.p2pHost != nil {
 		if sched := newTaskSyncScheduler(d.taskSync, db, db, slog.Default()); sched != nil {
+			d.taskSyncScheduler = sched
+			sched.SetOutbox(d.tasksSvc)
 			sched.Start(ctx)
 			if d.p2pReconnector != nil {
 				// Immediate catch-up when a peer transitions back online so a
 				// partition heals without waiting for the next 60s tick.
-				d.p2pReconnector.AddOnlineObserver(sched.SyncPeerNow)
+				d.p2pReconnector.AddOnlineObserver(func(peerID string) {
+					_ = sched.SyncPeerNow(peerID)
+				})
 			}
 			slog.Info("task-sync scheduler ready", "protocol", p2p.TaskSyncProtocol)
 		}
@@ -1648,6 +1664,8 @@ func runServer(ctx context.Context, cfg *Config, db *sqlite.DB, cfgSvc *config.S
 		P2PPairing:             d.p2pPairing,
 		P2PPeerLookup:          d.p2pLookup,
 		P2PReconnector:         d.p2pReconnector,
+		Collaboration:          d.collaboration,
+		CollaborationSync:      d.taskSyncScheduler,
 		SecretPrompts:          d.secretPromptMgr,
 		SecretPromptBus:        d.secretPromptBus,
 		BackupSvc:              d.backupSvc,

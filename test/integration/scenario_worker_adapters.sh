@@ -47,7 +47,7 @@ adapter_create_worker_body() {
             schedule_spec: "0 9 * * *",
             workspace_id: $ws,
             exec_mode: "autonomous",
-            enabled: false
+            enabled: true
         }'
 }
 
@@ -166,11 +166,9 @@ Set it externally (compose env or docker exec -e ...) AND re-run to exercise the
         skip "19.2 claude_cli stub run" "could not write stub into $CONT_C"
         return
     fi
-    local rresp run_id
-    rresp=$(api POST "$NODE_C/api/v1/workers/$worker_id/run-now" '{}')
-    run_id=$(echo "$rresp" | jq -r '.run_id // .id // empty')
-    if [ -z "$run_id" ]; then
-        fail "19.2 run-now returned no run_id" "$rresp"
+    local run_id
+    if ! run_id=$(dispatch_worker_run "$NODE_C" "$worker_id"); then
+        fail "19.2 run-now dispatch" "detached run did not materialise"
         return
     fi
     local final
@@ -237,11 +235,9 @@ scenario_worker_adapters_opencode_cli() {
         skip "20.2 opencode_cli stub run" "could not write stub into $CONT_C"
         return
     fi
-    local rresp run_id
-    rresp=$(api POST "$NODE_C/api/v1/workers/$worker_id/run-now" '{}')
-    run_id=$(echo "$rresp" | jq -r '.run_id // .id // empty')
-    if [ -z "$run_id" ]; then
-        fail "20.2 run-now returned no run_id" "$rresp"
+    local run_id
+    if ! run_id=$(dispatch_worker_run "$NODE_C" "$worker_id"); then
+        fail "20.2 run-now dispatch" "detached run did not materialise"
         return
     fi
     local final
@@ -308,11 +304,9 @@ scenario_worker_adapters_grok_cli() {
         skip "21.2 grok_cli stub run" "could not write stub into $CONT_C"
         return
     fi
-    local rresp run_id
-    rresp=$(api POST "$NODE_C/api/v1/workers/$worker_id/run-now" '{}')
-    run_id=$(echo "$rresp" | jq -r '.run_id // .id // empty')
-    if [ -z "$run_id" ]; then
-        fail "21.2 run-now returned no run_id" "$rresp"
+    local run_id
+    if ! run_id=$(dispatch_worker_run "$NODE_C" "$worker_id"); then
+        fail "21.2 run-now dispatch" "detached run did not materialise"
         return
     fi
     local final

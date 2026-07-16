@@ -1,9 +1,9 @@
 # mcplexer integration harness
 
-Multi-node docker harness that spins up three `mcplexer` daemons + an
+Multi-node Docker harness that spins up five `mcplexer` daemons + an
 OpenAI-compatible echo server on a shared bridge network, then exercises
-the public REST surface end-to-end: pairing, mesh broadcast, skill
-publish + fetch, worker run, audit propagation.
+the public REST and P2P surfaces end-to-end: collaboration, pairing, mesh
+broadcast, skill publish + fetch, worker run, and audit propagation.
 
 ```
                  ┌───────────────┐
@@ -11,10 +11,11 @@ publish + fetch, worker run, audit propagation.
                  └───────┬───────┘
                          │
          ┌───────────────┴───────────────┐
- :13333 │ :13334                 :13335 │  ports on the host
-  ┌──────┴──┐  ┌──────────┐  ┌───────────┴┐
-  │ node-a  │──│  node-b  │──│   node-c   │  libp2p mesh on
-  └─────────┘  └──────────┘  └────────────┘  mcplexer-test-net
+         │       mcplexer-test-net        │
+  ┌──────┴──┐  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐
+  │ node-a  │  │  node-b  │  │  node-c  │  │  node-d  │  │  node-e  │
+  │ :23333 │  │  :23334  │  │  :23335  │  │  :13336  │  │  :13337  │
+  └─────────┘  └──────────┘  └──────────┘  └──────────┘  └──────────┘
 ```
 
 ## Quick start
@@ -22,6 +23,7 @@ publish + fetch, worker run, audit propagation.
 ```
 make test-integration            # build + run + tear down
 TEST_KEEP=1 make test-integration  # keep containers up for debugging
+SCENARIO_MODE=collaboration bash test/integration/run.sh  # focused security gate
 ```
 
 The wrapper traps EXIT and tears down `docker compose down -v
@@ -35,10 +37,11 @@ lines, then a final summary count.
 
 | # | Scenario | Notes |
 |---|----------|-------|
-| 1 | Health   | All three nodes return `status=ok`, `p2p_enabled=true`. |
+| 1 | Health   | All three nodes return `status=ready`, `p2p_enabled=true`. |
 | 2 | Provision | Each node creates a workspace + auth scope via REST. |
 | 3 | P2P identity | Each node exposes a distinct libp2p PeerID. |
 | 4 | Pairing  | Tries `pair/start` + `pair/complete` between nodes. **May SKIP** — see "libp2p in Docker" below. |
+| 3.5–3.6 | Collaboration | Independent container SSH agents prove person/machine identities; one-time invites install local mirrors; visibility, redaction, revocation, write-only monitor publishing, access refresh, and same-device SSH-key rotation are verified across real libp2p streams. The focused gate currently contains 38 mandatory assertions. |
 | 5 | Mesh send | `POST /api/v1/mesh/send` on node-a; node-a observes its own broadcast in `/api/v1/mesh/status`. |
 | 6 | Skill registry | Publish a markdown skill on node-a, fetch it back, compare bodies. |
 | 7 | Worker run | Create an `openai_compat` worker on node-c pointed at `echo-llm`, fire run-now, poll until terminal status. |
@@ -52,15 +55,16 @@ informational and do not fail the run.
 * `Dockerfile.mcplexer` — three-stage build:
   1. Node 20 builds the React PWA → `internal/web/dist`.
   2. Go 1.25 builds `mcplexer-p2p` with `-tags p2p` (CGO off; modernc.org/sqlite is pure Go).
-  3. Debian-slim runtime + curl (healthcheck) + ca-certificates.
+  3. Debian-slim runtime + curl (healthcheck) + ca-certificates + OpenSSH client tooling for isolated test identities.
 * `Dockerfile.echo-llm` — single-file Go binary that responds to
   `/v1/chat/completions` with a static valid completion. Used by the
   worker scenario so we don't need a real LLM provider.
-* `entrypoint.sh` — preps `/data/p2p`, then `exec`s `mcplexer serve` so
-  PID 1 == the daemon (SIGTERM propagates cleanly).
-* `docker-compose.yml` — `node-a/b/c` on ports `3333/3334/3335`, each
-  with a named volume (`mcplexer-data-a/b/c`) and the shared
-  `mcplexer-test-net` bridge.
+* `entrypoint.sh` — preps `/data/p2p`, creates or loads a container-local
+  Ed25519 key through `ssh-agent`, then `exec`s `mcplexer serve` so PID 1 is
+  the daemon (SIGTERM propagates cleanly).
+* `docker-compose.yml` — `node-a` through `node-e`, each with an isolated named
+  data volume and SSH agent, on the shared `mcplexer-test-net` bridge. Host ports
+  are `23333`, `23334`, `23335`, `13336`, and `13337` respectively.
 
 ## Adding a new scenario
 

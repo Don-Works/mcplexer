@@ -38,8 +38,9 @@ var (
 // TaskSyncHelloWorkspace mirrors the p2p-build wire shape so wiring
 // code compiles in both modes.
 type TaskSyncHelloWorkspace struct {
-	WorkspaceID string `json:"workspace_id"`
-	SinceHLC    string `json:"since_hlc"`
+	WorkspaceID      string `json:"workspace_id"`
+	SinceHLC         string `json:"since_hlc"`
+	LocalWorkspaceID string `json:"local_workspace_id,omitempty"`
 }
 
 // TaskSyncHello mirrors the p2p-build wire shape.
@@ -62,6 +63,16 @@ type TaskSyncEvent struct {
 	FieldPatchesJSON json.RawMessage `json:"field_patches_json"`
 }
 
+type TaskSyncWorkspaceAccess struct {
+	Type             string   `json:"type"`
+	ShareID          string   `json:"share_id"`
+	WorkspaceID      string   `json:"workspace_id"`
+	LocalWorkspaceID string   `json:"-"`
+	AccessEpoch      int64    `json:"access_epoch"`
+	Capabilities     []string `json:"capabilities"`
+	Status           string   `json:"status"`
+}
+
 // TaskSyncBye mirrors the p2p-build wire shape.
 type TaskSyncBye struct {
 	Type      string    `json:"type"`
@@ -80,7 +91,7 @@ type TaskSyncError struct {
 // TaskSyncSource declared here for compile parity.
 type TaskSyncSource interface {
 	ListTasksSinceHLC(
-		ctx context.Context, workspaceID, sinceHLC string, limit int,
+		ctx context.Context, recipientPeerID, workspaceID, sinceHLC string, limit int,
 	) ([]TaskSyncEvent, error)
 	MaxHLCForWorkspace(ctx context.Context, workspaceID string) (string, error)
 }
@@ -88,6 +99,14 @@ type TaskSyncSource interface {
 // TaskSyncSink declared here for compile parity.
 type TaskSyncSink interface {
 	ApplyRemoteEvent(ctx context.Context, fromPeerID string, evt TaskSyncEvent) error
+}
+
+type TaskSyncAccessSource interface {
+	WorkspaceAccess(ctx context.Context, recipientPeerID, workspaceID string) (*TaskSyncWorkspaceAccess, error)
+}
+
+type TaskSyncAccessSink interface {
+	ApplyWorkspaceAccess(ctx context.Context, fromPeerID string, access TaskSyncWorkspaceAccess) error
 }
 
 // TaskSyncScopeChecker declared here for compile parity.

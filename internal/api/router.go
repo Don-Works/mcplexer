@@ -18,6 +18,7 @@ import (
 	"github.com/don-works/mcplexer/internal/backup"
 	"github.com/don-works/mcplexer/internal/brain"
 	"github.com/don-works/mcplexer/internal/cache"
+	"github.com/don-works/mcplexer/internal/collaboration"
 	"github.com/don-works/mcplexer/internal/concierge"
 	"github.com/don-works/mcplexer/internal/config"
 	"github.com/don-works/mcplexer/internal/downstream"
@@ -93,6 +94,8 @@ type RouterDeps struct {
 	P2PPairing            *p2p.PairingService     // optional; enables /api/p2p/pair/*
 	P2PPeerLookup         *p2p.SQLPeerLookup      // optional; enables /api/p2p/peers/{id}/status
 	P2PReconnector        *p2p.Reconnector        // optional; surfaces reconnect telemetry on peer list / status
+	Collaboration         *collaboration.Manager  // optional; proof-bound identities + workspace permissions
+	CollaborationSync     collaborationSyncer     // optional; manual pull for accepted workspace memberships
 	SkillRunner           SkillRunner             // optional; enables /api/skills/{id}/run
 	SkillsRoot            SkillsRoot              // optional; defaults to ~/.mcplexer/skills
 	SecretPrompts         *ephemeral.Manager      // optional; enables /api/v1/secrets/prompts
@@ -333,13 +336,17 @@ func NewRouter(deps RouterDeps) http.Handler {
 				return settingsSvc.Load(context.Background()).ShellGuardAllowChaining
 			}
 		}
-		mux.HandleFunc("POST /v1/hooks/pretool", hooks.pretool)
+		// Register each exact path without a method qualifier. The handlers
+		// enforce POST themselves and return 405 + Allow: POST for every
+		// other method. A method-qualified pattern lets GET fall through to
+		// the SPA catch-all and incorrectly return index.html with 200.
+		mux.HandleFunc("/v1/hooks/pretool", hooks.pretool)
 		// Memory-contract session hook. SessionStart injects a recall
 		// nudge + workspace memory digest; SessionEnd/Stop injects a
 		// capture nudge. Makes recall/capture an enforced session-
 		// lifecycle event instead of advisory-only (mirrors the task
 		// lease enforcement). See hooks_session.go.
-		mux.HandleFunc("POST /v1/hooks/session", hooks.session)
+		mux.HandleFunc("/v1/hooks/session", hooks.session)
 	}
 
 	if deps.ApprovalBus != nil {
@@ -762,6 +769,25 @@ func NewRouter(deps RouterDeps) http.Handler {
 	// `denial.code` to distinguish no_scope / scope_revoked /
 	// scope_out_of_band / cross_org_boundary.
 	mux.HandleFunc("POST /api/p2p/peers/{id}/scopes/check", pp.checkScope)
+
+	// Proof-bound collaboration administration. These routes deliberately
+	// coexist with legacy pairing while all authorization-bearing task paths
+	// use only principals/devices/exact grants from this surface.
+	collaborationStore, _ := deps.Store.(collaborationAdminStore)
+	collabH := &collaborationHandler{manager: deps.Collaboration, store: collaborationStore, syncer: deps.CollaborationSync}
+	mux.HandleFunc("GET /api/v1/collaboration", collabH.snapshot)
+	mux.HandleFunc("POST /api/v1/collaboration/identity/enroll", collabH.enrollIdentity)
+	mux.HandleFunc("POST /api/v1/collaboration/invitations", collabH.createInvitation)
+	mux.HandleFunc("POST /api/v1/collaboration/invitations/join", collabH.joinInvitation)
+	mux.HandleFunc("POST /api/v1/collaboration/memberships/{share_id}/sync", collabH.syncMembership)
+	mux.HandleFunc("DELETE /api/v1/collaboration/invitations/{id}", collabH.revokeInvitation)
+	mux.HandleFunc("PUT /api/v1/collaboration/shares/{share_id}/principals/{principal_id}", collabH.setGrants)
+	mux.HandleFunc("PUT /api/v1/collaboration/shares/{share_id}/policy", collabH.putPolicy)
+	mux.HandleFunc("POST /api/v1/collaboration/principals/{id}/revoke", collabH.revokePrincipal)
+	mux.HandleFunc("POST /api/v1/collaboration/devices/{peer_id}/revoke", collabH.revokeDevice)
+	mux.HandleFunc("POST /api/v1/collaboration/keys/{key_id}/revoke", collabH.revokeKey)
+	mux.HandleFunc("GET /api/v1/collaboration/tasks/{task_id}/visibility", collabH.getTaskVisibility)
+	mux.HandleFunc("PUT /api/v1/collaboration/tasks/{task_id}/visibility", collabH.setTaskVisibility)
 
 	// M7.1 — per-human user identity endpoints.
 	uh := &usersHandler{store: deps.Store}

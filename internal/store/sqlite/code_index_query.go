@@ -504,19 +504,6 @@ func scanCodeIndexSymbol(r scanner) (*store.CodeIndexSymbol, error) {
 	return &s, nil
 }
 
-func scanCodeIndexChunk(r scanner) (*store.CodeIndexChunk, error) {
-	var c store.CodeIndexChunk
-	var indexedAt string
-	err := r.Scan(&c.ID, &c.WorkspaceID, &c.FileID, &c.Path, &c.PathTokens, &c.Ordinal,
-		&c.Kind, &c.SymbolName, &c.SymbolTokens, &c.CodeTokens, &c.StartLine, &c.EndLine,
-		&c.Content, &c.ContentHash, &c.EmbedModel, &c.EmbedVersion, &indexedAt)
-	if err != nil {
-		return nil, err
-	}
-	c.IndexedAt = parseTime(indexedAt)
-	return &c, nil
-}
-
 func scanCodeIndexSymbolHits(rows *sql.Rows) ([]store.CodeIndexSymbolHit, error) {
 	var out []store.CodeIndexSymbolHit
 	for rows.Next() {

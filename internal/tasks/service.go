@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/don-works/mcplexer/internal/clock"
+	"github.com/don-works/mcplexer/internal/collaboration"
 	"github.com/don-works/mcplexer/internal/p2p"
 	"github.com/don-works/mcplexer/internal/store"
 )
@@ -37,11 +38,13 @@ const LeaseTTL = 5 * time.Minute
 // status enters terminal vocabulary" rule. Audit emission lives here
 // too so it stays adjacent to the mutation.
 type Service struct {
-	store      store.TaskStore
-	workspaces WorkspaceLookup
-	peerScopes PeerScopeLookup
-	bus        *Bus     // optional; nil disables event fan-out
-	emitter    *Emitter // optional; nil disables mesh task_event emission
+	store              store.TaskStore
+	workspaces         WorkspaceLookup
+	collaborationStore store.CollaborationStore
+	membershipStore    store.CollaborationMembershipStore
+	authorizer         *collaboration.Authorizer
+	bus                *Bus     // optional; nil disables event fan-out
+	emitter            *Emitter // optional; nil disables mesh task_event emission
 
 	// Phase 3 — cross-peer fields (see offer.go).
 	taskShare   *p2p.TaskShareService // wired by SetTaskShare; nil disables cross-peer surface
@@ -85,35 +88,37 @@ type WorkspaceLookup interface {
 	GetWorkspace(ctx context.Context, id string) (*store.Workspace, error)
 }
 
-// PeerScopeLookup is the slice of store.P2PPeerStore + scope helpers
-// the Service needs to gate inbound offers by peer scope. Returns
-// (false, nil) for unknown/revoked peers — callers treat both as no
-// permission.
-type PeerScopeLookup interface {
-	HasPeerScope(ctx context.Context, peerID, scope string) (bool, error)
-}
-
 // New constructs a Service. The store must satisfy store.TaskStore;
 // store.Store is the canonical caller. Runs the one-shot schema health
 // probe (health.go) so a broken tasks schema degrades loudly at boot
 // rather than opaquely at first use.
 func New(s store.TaskStore) *Service {
 	svc := &Service{store: s}
+	if collaborationStore, ok := s.(store.CollaborationStore); ok {
+		svc.SetCollaborationStore(collaborationStore)
+	}
+	if membershipStore, ok := s.(store.CollaborationMembershipStore); ok {
+		svc.membershipStore = membershipStore
+	}
 	svc.probeSchema(context.Background())
 	return svc
+}
+
+// SetCollaborationStore installs the principal/capability authority used by
+// every P2P task path. Without it cross-peer offers fail closed.
+func (s *Service) SetCollaborationStore(collaborationStore store.CollaborationStore) {
+	s.collaborationStore = collaborationStore
+	if collaborationStore == nil {
+		s.authorizer = nil
+		return
+	}
+	s.authorizer = collaboration.NewAuthorizer(collaborationStore)
 }
 
 // SetWorkspaceLookup wires the workspace resolver post-construction.
 // Nil-safe — offers will fall back to empty workspace names.
 func (s *Service) SetWorkspaceLookup(w WorkspaceLookup) {
 	s.workspaces = w
-}
-
-// SetPeerScopeLookup wires the peer-scope lookup post-construction.
-// Required for inbound offer scope checks; without it, all incoming
-// offers are denied.
-func (s *Service) SetPeerScopeLookup(p PeerScopeLookup) {
-	s.peerScopes = p
 }
 
 // SetLocalPeerID stamps the local libp2p peer id onto outgoing offer
@@ -218,6 +223,7 @@ type CreateOptions struct {
 	SourceSessionID    string
 	SourceToolCallID   string
 	CreatedBySessionID string
+	OwnerPrincipalID   string
 
 	// Phase-2 mesh plumbing. Triggering carries the upstream mesh
 	// message (when the mutation came from one) so the emitted
@@ -247,6 +253,9 @@ func (s *Service) Create(ctx context.Context, opts CreateOptions) (*store.Task, 
 	}
 	if strings.TrimSpace(opts.WorkspaceID) == "" {
 		return nil, errors.New("workspace_id is required")
+	}
+	if err := s.authorizeSharedWorkspaceDraft(ctx, opts.WorkspaceID); err != nil {
+		return nil, err
 	}
 	now := time.Now().UTC()
 	tagsJSON, err := json.Marshal(opts.Tags)
@@ -288,6 +297,7 @@ func (s *Service) Create(ctx context.Context, opts CreateOptions) (*store.Task, 
 		SourceSessionID:    opts.SourceSessionID,
 		SourceToolCallID:   opts.SourceToolCallID,
 		CreatedBySessionID: opts.CreatedBySessionID,
+		OwnerPrincipalID:   opts.OwnerPrincipalID,
 		StatusHistoryJSON:  historyJSON,
 		// Stamp a fresh HLC so the gossip watermark picks this row up
 		// immediately. Empty HlcAt would let the store fall back to a
@@ -453,6 +463,9 @@ func (s *Service) Rollback(ctx context.Context, workspaceID, id string, opts Rol
 	if workspaceID != "" && current.WorkspaceID != workspaceID {
 		return nil, store.ErrNotFound
 	}
+	if err := s.authorizeSharedTaskEdit(ctx, current); err != nil {
+		return nil, err
+	}
 	h, err := hs.GetTaskHistoryRevision(ctx, id, opts.Revision)
 	if err != nil {
 		return nil, err
@@ -608,6 +621,20 @@ func (s *Service) updateWithSignals(ctx context.Context, workspaceID, id string,
 	}
 	if workspaceID != "" && t.WorkspaceID != workspaceID {
 		return nil, nil, store.ErrNotFound
+	}
+	if p.WorkspaceID != nil && *p.WorkspaceID != t.WorkspaceID {
+		if _, shared, membershipErr := s.workspaceMembership(ctx, t.WorkspaceID); membershipErr != nil {
+			return nil, nil, membershipErr
+		} else if shared {
+			return nil, nil, fmt.Errorf("%w: mirrored tasks cannot be moved to another local workspace", ErrWorkspaceMembershipDenied)
+		}
+	}
+	extra := []string{}
+	if patchChangesAssignee(p) {
+		extra = append(extra, store.CapabilityTasksAssign)
+	}
+	if err := s.authorizeSharedTaskEdit(ctx, t, extra...); err != nil {
+		return nil, nil, err
 	}
 	// Snapshot pre-mutation state so the post-update emit decision can
 	// distinguish status_changed from closed (terminal entry) and
@@ -955,6 +982,9 @@ func (s *Service) Heartbeat(ctx context.Context, workspaceID, id, sessionID stri
 	if workspaceID != "" && t.WorkspaceID != workspaceID {
 		return store.ErrNotFound
 	}
+	if err := s.authorizeSharedTaskAction(ctx, t, store.CapabilityTasksAssign); err != nil {
+		return err
+	}
 	bumped, err := s.store.HeartbeatTask(ctx, id, sessionID, LeaseTTL)
 	if err != nil {
 		return err
@@ -1168,6 +1198,9 @@ func (s *Service) Delete(ctx context.Context, workspaceID, id string, mc ...Muta
 	if workspaceID != "" && t.WorkspaceID != workspaceID {
 		return store.ErrNotFound
 	}
+	if err := s.authorizeSharedTaskAction(ctx, t, store.CapabilityTasksDelete); err != nil {
+		return err
+	}
 	before := cloneTask(t)
 	if err := s.store.SoftDeleteTask(ctx, id); err != nil {
 		return err
@@ -1249,6 +1282,9 @@ func (s *Service) Claim(ctx context.Context, workspaceID, id, statusText, claima
 	}
 	if workspaceID != "" && current.WorkspaceID != workspaceID {
 		return nil, store.ErrNotFound
+	}
+	if err := s.authorizeSharedTaskEdit(ctx, current, store.CapabilityTasksAssign); err != nil {
+		return nil, err
 	}
 	before := cloneTask(current)
 	mctx := mutationContext(mc, claimantSession)
@@ -1408,6 +1444,9 @@ func (s *Service) SetWorkContext(
 	if workspaceID != "" && current.WorkspaceID != workspaceID {
 		return nil, store.ErrNotFound
 	}
+	if err := s.authorizeSharedTaskEdit(ctx, current); err != nil {
+		return nil, err
+	}
 	before := cloneTask(current)
 	mctx := mutationContext(mc, updatedBy)
 	newMeta, err := mergeWithClears(current.Meta, patch, clears)
@@ -1527,6 +1566,9 @@ func (s *Service) AppendNote(ctx context.Context, workspaceID, taskID, body, aut
 	}
 	if workspaceID != "" && parent.WorkspaceID != workspaceID {
 		return nil, store.ErrNotFound
+	}
+	if err := s.authorizeSharedTaskAction(ctx, parent, store.CapabilityTasksComment); err != nil {
+		return nil, err
 	}
 	before := cloneTask(parent)
 	mctx := mutationContext(mc, authorSession)
@@ -1662,6 +1704,9 @@ func (s *Service) Decompose(ctx context.Context, workspaceID, parentID, childID,
 	if workspaceID != "" && parent.WorkspaceID != workspaceID {
 		return store.ErrNotFound
 	}
+	if err := s.authorizeSharedTaskEdit(ctx, parent); err != nil {
+		return err
+	}
 	parentBefore := cloneTask(parent)
 	newMeta := removeMetaListLine(parent.Meta, "composes", childID)
 	if newMeta != parent.Meta {
@@ -1699,6 +1744,9 @@ func (s *Service) Decompose(ctx context.Context, workspaceID, parentID, childID,
 			return nil
 		}
 		return fmt.Errorf("decompose child: %w", err)
+	}
+	if err := s.authorizeSharedTaskEdit(ctx, child); err != nil {
+		return err
 	}
 	newChildMeta := removeMetaListLine(child.Meta, "composed_by", parentID)
 	if newChildMeta == child.Meta {
@@ -1748,6 +1796,9 @@ func (s *Service) composeAppend(ctx context.Context, workspaceID, parentID, chil
 	if workspaceID != "" && parent.WorkspaceID != workspaceID {
 		return store.ErrNotFound
 	}
+	if err := s.authorizeSharedTaskEdit(ctx, parent); err != nil {
+		return err
+	}
 	child, err := s.store.GetTask(ctx, childID)
 	if err != nil {
 		return fmt.Errorf("compose child: %w", err)
@@ -1756,6 +1807,9 @@ func (s *Service) composeAppend(ctx context.Context, workspaceID, parentID, chil
 	// no-existence-leak posture as the parent gate.
 	if workspaceID != "" && child.WorkspaceID != workspaceID {
 		return store.ErrNotFound
+	}
+	if err := s.authorizeSharedTaskEdit(ctx, child); err != nil {
+		return err
 	}
 
 	// Forward edge: parent.meta.composes += childID

@@ -24,7 +24,7 @@ export function ConnectionFilterChips({
   ]
 
   return (
-    <div className="flex flex-nowrap items-center gap-1.5 overflow-x-auto pb-1" data-testid="connections-filter-chips">
+    <div className="scrollbar-none flex flex-nowrap items-center gap-1.5 overflow-x-auto pb-1" data-testid="connections-filter-chips">
       {options.map((option) => {
         const active = filter === option.key
         return (

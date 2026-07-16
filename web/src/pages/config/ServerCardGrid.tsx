@@ -16,6 +16,7 @@ interface ServerCardGridProps {
   serverAuthScopes: Record<string, AuthScope>
   onAdd: (catalog: CatalogEntry) => void
   onEnable: (ds: DownstreamServer) => void
+  onDisable: (ds: DownstreamServer) => void
   onEdit: (ds: DownstreamServer) => void
   onDuplicate: (ds: DownstreamServer) => void
   onDelete: (ds: DownstreamServer) => void
@@ -31,6 +32,7 @@ export function ServerCardGrid({
   serverAuthScopes,
   onAdd,
   onEnable,
+  onDisable,
   onEdit,
   onDuplicate,
   onDelete,
@@ -80,6 +82,7 @@ export function ServerCardGrid({
                 serverAuthScopes={serverAuthScopes}
                 onAdd={onAdd}
                 onEnable={onEnable}
+                onDisable={onDisable}
                 onEdit={onEdit}
                 onDuplicate={onDuplicate}
                 onDelete={onDelete}

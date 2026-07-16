@@ -134,7 +134,7 @@ func (s *TaskShareService) handleTaskInboundRequest(
 		})
 		return
 	}
-	payload, err := s.provider.GetTaskPayload(ctx, req.RemoteTaskID)
+	payload, err := s.provider.GetTaskPayload(ctx, remote, req.EnvelopeNonce, req.RemoteTaskID)
 	if err != nil {
 		code := "not_found"
 		if !errors.Is(err, ErrTaskNotFound) {
@@ -203,6 +203,11 @@ func mapHandlerError(err error) taskShareError {
 		return taskShareError{
 			EnvelopeKind: TaskEnvelopeKindError,
 			Code:         "too_large", Message: err.Error(),
+		}
+	case errors.Is(err, ErrTaskConflict):
+		return taskShareError{
+			EnvelopeKind: TaskEnvelopeKindError,
+			Code:         "conflict", Message: err.Error(),
 		}
 	default:
 		return taskShareError{
@@ -296,6 +301,8 @@ func decodeTaskStreamError(line []byte) error {
 		return fmt.Errorf("%w: %s", ErrTaskExpired, e.Message)
 	case "too_large":
 		return fmt.Errorf("%w: %s", ErrTaskTooLarge, e.Message)
+	case "conflict":
+		return fmt.Errorf("%w: %s", ErrTaskConflict, e.Message)
 	default:
 		return fmt.Errorf("remote error: %s: %s", e.Code, e.Message)
 	}

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -35,6 +36,40 @@ func TestNewHostDisabled(t *testing.T) {
 	}
 	if h != nil {
 		t.Fatalf("NewHost(disabled) = %v, want nil", h)
+	}
+}
+
+// TestHostDiscoveryConcurrentPublication guards the discovery pointer's
+// publication boundary. It is most valuable under -race: mDNS callbacks may
+// read the service while daemon startup is attaching it.
+func TestHostDiscoveryConcurrentPublication(t *testing.T) {
+	t.Parallel()
+	h := &Host{}
+	services := make([]*DiscoveryService, 64)
+	for i := range services {
+		services[i] = &DiscoveryService{}
+	}
+
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for range 16 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			for range 512 {
+				_ = h.Discovery()
+			}
+		}()
+	}
+	close(start)
+	for _, service := range services {
+		h.setDiscovery(service)
+	}
+	wg.Wait()
+
+	if got := h.Discovery(); got != services[len(services)-1] {
+		t.Fatalf("Discovery() = %p, want latest service %p", got, services[len(services)-1])
 	}
 }
 

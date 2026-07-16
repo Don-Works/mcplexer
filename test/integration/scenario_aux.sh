@@ -45,7 +45,7 @@ scenario_health_detail() {
     step 15.2 "GET /api/v1/health exposes the system inventory"
     local body
     body=$(curl -fsS "$NODE_A/api/v1/health" 2>/dev/null || echo "{}")
-    assert_jq "health.status=ok" "$body" '.status == "ok"'
+    assert_jq "health.status=ready" "$body" '.status == "ready" or .status == "ok"'
     assert_jq "health.version is non-empty string" "$body" \
         '(.version // .system.version // "") | length > 0'
     assert_jq "health.system.p2p_enabled is bool" "$body" \

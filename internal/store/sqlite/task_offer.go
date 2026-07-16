@@ -17,7 +17,8 @@ import (
 	"github.com/oklog/ulid/v2"
 )
 
-const taskOfferSelectCols = `id, task_id, remote_task_id, from_peer_id, to_peer_id,
+const taskOfferSelectCols = `id, task_id, remote_task_id, share_id, sender_principal_id,
+	access_epoch, visibility_epoch, base_hlc, from_peer_id, to_peer_id,
 	remote_workspace_id, remote_workspace_name, workspace_id,
 	title, description_preview, meta_preview, status_preview, priority_preview, tags_json,
 	is_direct_assign, envelope_nonce, envelope_created_at,
@@ -53,13 +54,16 @@ func (d *DB) CreateTaskOffer(ctx context.Context, o *store.TaskOffer) error {
 
 	_, err := d.q.ExecContext(ctx, `
 		INSERT INTO task_offers (
-			id, task_id, remote_task_id, from_peer_id, to_peer_id,
+			id, task_id, remote_task_id, share_id, sender_principal_id,
+			access_epoch, visibility_epoch, base_hlc, from_peer_id, to_peer_id,
 			remote_workspace_id, remote_workspace_name, workspace_id,
 			title, description_preview, meta_preview, status_preview, priority_preview, tags_json,
 			is_direct_assign, envelope_nonce, envelope_created_at,
 			direction, state, accepted_at, declined_at, declined_reason, created_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		o.ID, nullString(o.TaskID), o.RemoteTaskID, o.FromPeerID, o.ToPeerID,
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		o.ID, nullString(o.TaskID), o.RemoteTaskID, nullString(o.ShareID),
+		nullString(o.SenderPrincipalID), o.AccessEpoch, o.VisibilityEpoch, o.BaseHLC,
+		o.FromPeerID, o.ToPeerID,
 		o.RemoteWorkspaceID, o.RemoteWorkspaceName, nullString(o.WorkspaceID),
 		o.Title, o.DescriptionPreview, o.MetaPreview, o.StatusPreview, o.PriorityPreview, tags,
 		directAssign, o.EnvelopeNonce, o.EnvelopeCreatedAt.Unix(),
@@ -202,17 +206,42 @@ func (d *DB) UpdateTaskOfferState(
 	return checkRowsAffected(res)
 }
 
+// RefreshTaskOfferForRetry rotates the replay nonce and re-bases a durable
+// outgoing publication immediately before another wire attempt. It is kept
+// narrow to pending outgoing rows so an accepted/conflicted offer can never be
+// resurrected by a background scheduler race.
+func (d *DB) RefreshTaskOfferForRetry(
+	ctx context.Context, id, nonce string, createdAt time.Time,
+	accessEpoch int64, baseHLC string,
+) error {
+	if id == "" || nonce == "" || accessEpoch < 1 {
+		return errors.New("refresh task offer: id, nonce, and access epoch required")
+	}
+	res, err := d.q.ExecContext(ctx, `
+		UPDATE task_offers SET envelope_nonce = ?, envelope_created_at = ?,
+			access_epoch = ?, base_hlc = ?, declined_at = NULL,
+			declined_reason = ''
+		WHERE id = ? AND direction = 'outgoing' AND state = 'pending'`,
+		nonce, createdAt.UTC().Unix(), accessEpoch, baseHLC, id)
+	if err != nil {
+		return fmt.Errorf("refresh task offer: %w", err)
+	}
+	return checkRowsAffected(res)
+}
+
 func scanTaskOffer(scan func(...any) error) (*store.TaskOffer, error) {
 	var (
-		o                                   store.TaskOffer
-		taskID, workspaceID, declinedReason sql.NullString
-		acceptedAt, declinedAt              sql.NullInt64
-		envelopeCreated, createdAt          int64
-		directAssign                        int
-		tags                                string
+		o                                  store.TaskOffer
+		taskID, shareID, senderPrincipalID sql.NullString
+		workspaceID, declinedReason        sql.NullString
+		acceptedAt, declinedAt             sql.NullInt64
+		envelopeCreated, createdAt         int64
+		directAssign                       int
+		tags                               string
 	)
 	if err := scan(
-		&o.ID, &taskID, &o.RemoteTaskID, &o.FromPeerID, &o.ToPeerID,
+		&o.ID, &taskID, &o.RemoteTaskID, &shareID, &senderPrincipalID,
+		&o.AccessEpoch, &o.VisibilityEpoch, &o.BaseHLC, &o.FromPeerID, &o.ToPeerID,
 		&o.RemoteWorkspaceID, &o.RemoteWorkspaceName, &workspaceID,
 		&o.Title, &o.DescriptionPreview, &o.MetaPreview, &o.StatusPreview, &o.PriorityPreview, &tags,
 		&directAssign, &o.EnvelopeNonce, &envelopeCreated,
@@ -223,6 +252,8 @@ func scanTaskOffer(scan func(...any) error) (*store.TaskOffer, error) {
 	if taskID.Valid {
 		o.TaskID = taskID.String
 	}
+	o.ShareID = shareID.String
+	o.SenderPrincipalID = senderPrincipalID.String
 	if workspaceID.Valid {
 		o.WorkspaceID = workspaceID.String
 	}

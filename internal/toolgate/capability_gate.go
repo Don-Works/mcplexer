@@ -62,7 +62,7 @@ func (f CapabilityFeatures) deniesTool(toolName string) (bool, string) {
 		}
 	}
 	if !derefBool(f.MayOfferTasks, true) {
-		if toolName == "task__offer" || toolName == "task__assign_remote" {
+		if toolName == "task__offer" || toolName == "task__assign_remote" || toolName == "task__publish_home" {
 			return true, "tool denied by capability feature flag (may_offer_tasks=false)"
 		}
 	}
@@ -98,7 +98,7 @@ func (f CapabilityFeatures) FeatureDenyGlobs() (tools []string, namespaces []str
 		tools = append(tools, "mcpx__delegate_worker", "mcpx__invoke_model", "mcpx__extend_delegation_budget")
 	}
 	if !derefBool(f.MayOfferTasks, true) {
-		tools = append(tools, "task__offer", "task__assign_remote")
+		tools = append(tools, "task__offer", "task__assign_remote", "task__publish_home")
 	}
 	if !derefBool(f.MayWriteTasks, true) {
 		tools = append(tools,

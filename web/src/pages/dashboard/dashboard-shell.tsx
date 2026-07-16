@@ -91,7 +91,7 @@ export function FirstRun() {
           </p>
         </Link>
         <Link
-          to="/setup"
+          to="/workspaces?view=add-server"
           data-testid="first-run-setup"
           className="group flex flex-col gap-1 border border-border bg-card p-4 transition-colors hover:border-primary/40 hover:bg-card/80"
         >

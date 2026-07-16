@@ -1524,3 +1524,65 @@ type SkillRefinementStore interface {
 	// resurfaces is still signal worth surfacing.
 	CountSimilarProposals(ctx context.Context, skillName, frictionSubstring string) (int, error)
 }
+
+// CollaborationStore is the persistence boundary for authenticated people,
+// machines, devices, and explicit workspace access. Cryptographic verification
+// happens before ActivateInvitedDevice; this store owns replay-safe consumption
+// and atomic authorization state changes.
+type CollaborationStore interface {
+	CreatePrincipal(ctx context.Context, principal *Principal) error
+	GetPrincipal(ctx context.Context, principalID string) (*Principal, error)
+	ListPrincipals(ctx context.Context) ([]Principal, error)
+	UpdatePrincipalDisplayName(ctx context.Context, principalID, displayName string, at time.Time) error
+	RevokePrincipal(ctx context.Context, principalID, reason string, at time.Time) error
+
+	AddPrincipalIdentityKey(ctx context.Context, key *PrincipalIdentityKey) error
+	GetPrincipalIdentityKey(ctx context.Context, keyID string) (*PrincipalIdentityKey, error)
+	GetPrincipalIdentityKeyByFingerprint(ctx context.Context, fingerprint string) (*PrincipalIdentityKey, error)
+	ListPrincipalIdentityKeys(ctx context.Context, principalID string) ([]PrincipalIdentityKey, error)
+	RevokePrincipalIdentityKey(ctx context.Context, keyID string, at time.Time) error
+
+	ResolveActivePrincipalForPeer(ctx context.Context, peerID string) (*PrincipalDevice, *Principal, error)
+	ListPrincipalDevices(ctx context.Context, principalID string) ([]PrincipalDevice, error)
+	RevokePrincipalDevice(ctx context.Context, peerID, reason string, at time.Time) error
+
+	CreatePrincipalInvitation(ctx context.Context, invitation *PrincipalInvitation, grants []InvitationWorkspaceGrant) error
+	GetPrincipalInvitation(ctx context.Context, invitationID string) (*PrincipalInvitation, []InvitationWorkspaceGrant, error)
+	ListPrincipalInvitations(ctx context.Context, principalID string) ([]PrincipalInvitation, error)
+	RevokePrincipalInvitation(ctx context.Context, invitationID string, at time.Time) error
+	CreatePrincipalIdentityChallenge(ctx context.Context, challenge *PrincipalIdentityChallenge) error
+	GetPrincipalIdentityChallenge(ctx context.Context, challengeID string) (*PrincipalIdentityChallenge, error)
+	ActivateInvitedDevice(ctx context.Context, activation InvitedDeviceActivation) (*PrincipalDevice, []WorkspaceGrant, error)
+
+	CreateWorkspaceShare(ctx context.Context, share *WorkspaceShare) error
+	GetWorkspaceShare(ctx context.Context, shareID string) (*WorkspaceShare, error)
+	GetWorkspaceShareByLocalWorkspaceID(ctx context.Context, workspaceID string) (*WorkspaceShare, error)
+	ListWorkspaceShares(ctx context.Context) ([]WorkspaceShare, error)
+	SetWorkspaceGrants(ctx context.Context, set WorkspaceGrantSet) (int64, []WorkspaceGrant, error)
+	ListWorkspaceGrants(ctx context.Context, shareID string, includeRevoked bool) ([]WorkspaceGrant, error)
+	HasWorkspaceCapability(ctx context.Context, principalID, shareID, capability string, at time.Time) (bool, error)
+	PutWorkspacePublicationPolicy(ctx context.Context, policy *WorkspacePublicationPolicy) error
+	GetWorkspacePublicationPolicy(ctx context.Context, shareID string) (*WorkspacePublicationPolicy, error)
+	GetTaskAccess(ctx context.Context, taskID string) (*TaskAccess, error)
+	SetTaskVisibility(ctx context.Context, change TaskVisibilityChange) (*TaskAccess, error)
+	CanPrincipalReadTask(ctx context.Context, principalID, taskID string, at time.Time) (bool, error)
+	RecordTaskDisclosure(ctx context.Context, disclosure *TaskDisclosure) error
+	ListTaskDisclosures(ctx context.Context, taskID string, limit int) ([]TaskDisclosure, error)
+
+	AppendCollaborationAudit(ctx context.Context, event *CollaborationAuditEvent) error
+	ListCollaborationAudit(ctx context.Context, shareID, subjectKind, subjectID string, limit int) ([]CollaborationAuditEvent, error)
+}
+
+// CollaborationMembershipStore is kept separate from CollaborationStore so
+// unrelated authorization fakes do not need to implement client-side mirror
+// routing. It records invitations accepted from a workspace home; it never
+// grants authority on that home.
+type CollaborationMembershipStore interface {
+	UpsertWorkspaceMembership(ctx context.Context, membership *WorkspaceMembership) error
+	GetWorkspaceMembership(ctx context.Context, shareID string) (*WorkspaceMembership, error)
+	GetWorkspaceMembershipByLocalWorkspaceID(ctx context.Context, workspaceID string) (*WorkspaceMembership, error)
+	ListWorkspaceMemberships(ctx context.Context) ([]WorkspaceMembership, error)
+	IsActiveWorkspaceHome(ctx context.Context, peerID string) (bool, error)
+	AdvanceWorkspaceMembershipCursor(ctx context.Context, shareID, hlc string, at time.Time) error
+	RevokeWorkspaceMembership(ctx context.Context, shareID string, at time.Time) error
+}

@@ -19,20 +19,26 @@ import {
 } from '@/components/ui/sheet'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { Label } from '@/components/ui/label'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import {
   createRoute,
   deleteRoute,
-  getOAuthAuthorizeURL,
   listOAuthProviders,
   updateRoute,
 } from '@/api/client'
 import type { AuthScope, DownstreamServer, OAuthProvider, RouteRule, Workspace } from '@/api/types'
-import { ExternalLink, Trash2 } from 'lucide-react'
+import { Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
-import { redirectToOAuth } from '@/lib/safe-redirect'
 import type { CellState } from './ConnectionCell'
 import { describeState } from './drawer-utils'
-import { InlineCredentialCreate } from './InlineCredentialCreate'
+import { ConnectionCredentialExtras } from './ConnectionCredentialExtras'
 import { RouteRuleFormFields } from '@/components/routes/RouteRuleFormFields'
 import {
   routeFormForConnection,
@@ -45,6 +51,7 @@ export function ConnectionDrawer({
   workspace,
   state,
   route,
+  routes,
   scopes,
   workspaces,
   downstreams,
@@ -58,6 +65,9 @@ export function ConnectionDrawer({
   // The existing route for (server, workspace), if any. Used to
   // pre-populate the form when editing.
   route: RouteRule | null
+  // Every rule for this server/workspace pair. The compact workspace view
+  // must never hide additional path/tool-specific rules.
+  routes: RouteRule[]
   scopes: AuthScope[]
   workspaces: Workspace[]
   downstreams: DownstreamServer[]
@@ -73,6 +83,7 @@ export function ConnectionDrawer({
   const [saveError, setSaveError] = useState<string | null>(null)
   const [deleting, setDeleting] = useState(false)
   const [providers, setProviders] = useState<OAuthProvider[]>([])
+  const [activeRoute, setActiveRoute] = useState<RouteRule | null>(route)
 
   // Fetch OAuth providers so the inline create form can offer the oauth2 path.
   useEffect(() => {
@@ -82,12 +93,17 @@ export function ConnectionDrawer({
       .catch(() => setProviders([]))
   }, [open])
 
-  // Reset form whenever the selected route or (server, workspace) pair changes.
+  useEffect(() => {
+    if (!open) return
+    setActiveRoute(route ?? routes[0] ?? null)
+  }, [open, route, routes])
+
+  // Reset form whenever the selected rule or (server, workspace) pair changes.
   useEffect(() => {
     if (!open) return
     setSaveError(null)
-    setForm(routeFormForConnection({ route, server, workspace }))
-  }, [open, route, server, workspace])
+    setForm(routeFormForConnection({ route: activeRoute, server, workspace }))
+  }, [open, activeRoute, server, workspace])
 
   const selectedScope = useMemo(
     () => scopes.find((s) => s.id === form.auth_scope_id) ?? null,
@@ -107,8 +123,8 @@ export function ConnectionDrawer({
     setSaving(true)
     setSaveError(null)
     try {
-      if (route) {
-        await updateRoute(route.id, form)
+      if (activeRoute) {
+        await updateRoute(activeRoute.id, form)
         toast.success('Route updated')
       } else {
         await createRoute(form)
@@ -125,13 +141,13 @@ export function ConnectionDrawer({
     } finally {
       setSaving(false)
     }
-  }, [server, workspace, route, form, selectedDownstream, selectedWorkspace, onChanged, onClose])
+  }, [server, workspace, activeRoute, form, selectedDownstream, selectedWorkspace, onChanged, onClose])
 
   const handleDelete = useCallback(async () => {
-    if (!route) return
+    if (!activeRoute) return
     setDeleting(true)
     try {
-      await deleteRoute(route.id)
+      await deleteRoute(activeRoute.id)
       toast.success('Route removed')
       onChanged()
       onClose()
@@ -140,24 +156,7 @@ export function ConnectionDrawer({
     } finally {
       setDeleting(false)
     }
-  }, [route, onChanged, onClose])
-
-  const handleAuthenticate = useCallback(async () => {
-    if (!selectedScope || selectedScope.type !== 'oauth2') return
-    try {
-      const { authorize_url } = await getOAuthAuthorizeURL(selectedScope.id)
-      redirectToOAuth(authorize_url)
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to start auth')
-    }
-  }, [selectedScope])
-
-  const handleAddSecrets = useCallback(() => {
-    if (!selectedScope) return
-    // Scroll to the credential in the config page (deep-link fallback for
-    // scopes that already exist — the inline create covers the new-cred path).
-    window.location.href = `/advanced/credentials?credential=${selectedScope.id}`
-  }, [selectedScope])
+  }, [activeRoute, onChanged, onClose])
 
   const handleInlineCreated = useCallback(
     (scope: AuthScope) => {
@@ -179,7 +178,7 @@ export function ConnectionDrawer({
     <Sheet open={open} onOpenChange={(o) => !o && onClose()}>
       <SheetContent className="w-full max-w-full sm:max-w-2xl" data-testid="connection-drawer">
         <SheetHeader>
-          <SheetTitle>{route ? 'Edit route' : 'Connect server'}</SheetTitle>
+          <SheetTitle>{activeRoute ? 'Edit access rule' : 'Connect server'}</SheetTitle>
           <SheetDescription>{stateLine}</SheetDescription>
         </SheetHeader>
 
@@ -188,78 +187,75 @@ export function ConnectionDrawer({
             <Badge variant="outline" className="font-mono text-xs">
               {title}
             </Badge>
-            {route && (
+            {activeRoute && (
               <Badge variant="secondary" className="font-mono text-[10px]">
-                {route.id}
+                {activeRoute.id}
               </Badge>
             )}
           </div>
+
+          {routes.length > 0 && (
+            <div className="space-y-2 border-b border-border/50 pb-4">
+              <div className="flex items-center justify-between gap-3">
+                <Label className="text-xs text-muted-foreground">
+                  Access rule {routes.length > 1 ? `(${routes.length} for this server)` : ''}
+                </Label>
+                <button
+                  type="button"
+                  className="text-xs text-primary hover:underline"
+                  onClick={() => setActiveRoute(null)}
+                >
+                  Add another rule
+                </button>
+              </div>
+              <Select
+                value={activeRoute?.id ?? '__new__'}
+                onValueChange={(id) => {
+                  setActiveRoute(id === '__new__' ? null : routes.find((item) => item.id === id) ?? null)
+                }}
+              >
+                <SelectTrigger data-testid="connection-drawer-rule-select">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {routes.map((item) => (
+                    <SelectItem key={item.id} value={item.id}>
+                      {item.name || item.path_glob || item.id} · {item.policy}
+                    </SelectItem>
+                  ))}
+                  <SelectItem value="__new__">New access rule</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          )}
 
           <RouteRuleFormFields
             form={form}
             setForm={setForm}
             visible={open}
-            resetKey={route?.id ?? `${server?.id ?? 'server'}:${workspace?.id ?? 'workspace'}:new`}
+            resetKey={activeRoute?.id ?? `${server?.id ?? 'server'}:${workspace?.id ?? 'workspace'}:new`}
             workspaces={workspaces}
             downstreams={downstreams}
             authScopes={scopes}
             saveError={saveError}
             authScopeExtras={
               form.policy === 'allow' ? (
-                <div className="space-y-3">
-                  <InlineCredentialCreate
-                    server={selectedDownstream}
-                    providers={providers}
-                    onCreated={handleInlineCreated}
-                    onCancel={() => {}}
-                  />
-
-                  {selectedScope && selectedScope.type === 'oauth2' && (
-                    <div className="rounded-md border border-border/40 bg-muted/20 px-3 py-2.5 text-sm">
-                      <div className="flex items-center justify-between">
-                        <span className="text-muted-foreground">OAuth session</span>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={handleAuthenticate}
-                          data-testid="connection-drawer-authenticate"
-                        >
-                          <ExternalLink className="mr-1.5 h-3 w-3" />
-                          Authenticate
-                        </Button>
-                      </div>
-                    </div>
-                  )}
-
-                  {selectedScope &&
-                    (selectedScope.type === 'env' ||
-                      selectedScope.type === 'header' ||
-                      selectedScope.type === 'hawk' ||
-                      selectedScope.type === 'client_credentials') &&
-                    !selectedScope.has_secrets && (
-                      <div className="rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2.5 text-sm">
-                        <div className="flex items-center justify-between gap-3">
-                          <span className="text-amber-700">No secrets stored yet</span>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={handleAddSecrets}
-                            data-testid="connection-drawer-add-secrets"
-                          >
-                            Add secrets
-                          </Button>
-                        </div>
-                      </div>
-                    )}
-                </div>
+                <ConnectionCredentialExtras
+                  scope={selectedScope}
+                  server={selectedDownstream}
+                  providers={providers}
+                  onCreated={handleInlineCreated}
+                  onChanged={onChanged}
+                />
               ) : null
             }
           />
 
           <div className="flex flex-wrap items-center justify-between gap-2 pt-2">
             <div>
-              {route && (
+              {activeRoute && (
                 <Button
+                  type="button"
                   variant="ghost"
                   size="sm"
                   className="text-destructive hover:bg-destructive/10"
@@ -273,10 +269,11 @@ export function ConnectionDrawer({
               )}
             </div>
             <div className="flex gap-2">
-              <Button variant="ghost" onClick={onClose} disabled={saving}>
+              <Button type="button" variant="ghost" onClick={onClose} disabled={saving}>
                 Cancel
               </Button>
               <Button
+                type="button"
                 onClick={handleSave}
                 disabled={
                   saving ||
@@ -287,7 +284,7 @@ export function ConnectionDrawer({
                 }
                 data-testid="connection-drawer-save"
               >
-                {saving ? 'Saving...' : route ? 'Save changes' : 'Connect'}
+                {saving ? 'Saving...' : activeRoute ? 'Save changes' : routes.length > 0 ? 'Add rule' : 'Connect'}
               </Button>
             </div>
           </div>

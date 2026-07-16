@@ -192,15 +192,17 @@ scenario_memory_supersede() {
     step 8.3 "saving a fact with same name supersedes the prior row"
 
     # Use a unique name so this scenario doesn't entangle with 8.1/8.2.
+    # Bodies intentionally exceed the service's eight-character junk floor;
+    # this scenario tests supersession, not short-memory validation.
     local nm="bitemp-fact-$$"
     api POST "$NODE_A/api/v1/memory" \
         "$(jq -nc --arg n "$nm" \
-            '{name:$n,content:"vim",kind:"fact",tags:["editor-bitemp"]}')" \
+            '{name:$n,content:"preferred vim editor",kind:"fact",tags:["editor-bitemp"]}')" \
         >/dev/null 2>&1 \
         || { fail "REST seed $nm v1=vim"; return; }
     api POST "$NODE_A/api/v1/memory" \
         "$(jq -nc --arg n "$nm" \
-            '{name:$n,content:"emacs",kind:"fact",tags:["editor-bitemp"]}')" \
+            '{name:$n,content:"preferred emacs editor",kind:"fact",tags:["editor-bitemp"]}')" \
         >/dev/null 2>&1 \
         || { fail "REST seed $nm v2=emacs"; return; }
     pass "seeded $nm twice (vim then emacs)"
@@ -213,8 +215,8 @@ scenario_memory_supersede() {
         | jq --arg n "$nm" '[.[]? | select(.name == $n)] | length')
     active_content=$(echo "$active_resp" \
         | jq -r --arg n "$nm" '[.[]? | select(.name == $n)] | .[0].content // empty')
-    if [ "$active_n" = "1" ] && [ "$active_content" = "emacs" ]; then
-        pass "active-only list: 1 row with content=emacs"
+    if [ "$active_n" = "1" ] && [ "$active_content" = "preferred emacs editor" ]; then
+        pass "active-only list: 1 row with content=preferred emacs editor"
     else
         fail "active-only list off (n=$active_n, content=$active_content)" \
             "head: $(echo "$active_resp" | jq -c '.[:5]' | head -c 400)"

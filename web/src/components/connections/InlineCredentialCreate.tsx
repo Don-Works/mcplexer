@@ -1,26 +1,7 @@
-// InlineCredentialCreate — a self-contained inline form for creating a new
-// credential (auth scope) and immediately seeding its secret material, all
-// without leaving the surface that mounted it.
-//
-// Design:
-//   1. The credential type is INFERRED from the server's transport:
-//      - stdio → "env"   (environment variables injected into the process)
-//      - http  → "header" (Authorization / API-key header)
-//      - When server is null, we default to "env".
-//   2. For env / header types the form stays expanded; the user pastes values
-//      and hits "Create credential". NOTHING is persisted until all fields
-//      have a value (Save button disabled guard).
-//   3. For oauth2 we short-circuit to the OAuthProvider picker + popup flow.
-//      The caller receives `onCreated` once the scope exists (OAuth auth
-//      happens separately — the drawer handles the "Authenticate" button).
-//
-// Usage:
-//   <InlineCredentialCreate
-//     server={selectedServer}
-//     providers={oauthProviders}
-//     onCreated={(scope) => setScopeId(scope.id)}
-//     onCancel={() => setShowCreate(false)}
-//   />
+// Creates an auth scope and its first secret without leaving the access
+// drawer. Transport selects a sensible env/header default, but the method
+// stays explicit so OAuth is always reachable. Nothing persists until all
+// required fields are present; OAuth authentication follows scope creation.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
@@ -34,10 +15,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { Eye, EyeOff, Loader2 } from 'lucide-react'
+import { Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { createAuthScope, putSecret } from '@/api/client'
 import type { AuthScope, DownstreamServer, OAuthProvider } from '@/api/types'
+import { FreeEnvForm, HeaderForm, OAuthProviderField } from './CredentialSecretFields'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -79,109 +61,6 @@ function buildBearerSecret(token: string): { key: string; value: string } {
   return { key: 'Authorization', value: token.trim() ? `Bearer ${token.trim()}` : '' }
 }
 
-// ---------------------------------------------------------------------------
-// Sub-component: FreeEnvForm (no pre-defined fields, single key/value pair)
-// ---------------------------------------------------------------------------
-
-function FreeEnvForm({
-  envKey,
-  setEnvKey,
-  envValue,
-  setEnvValue,
-  showValue,
-  setShowValue,
-}: {
-  envKey: string
-  setEnvKey: (v: string) => void
-  envValue: string
-  setEnvValue: (v: string) => void
-  showValue: boolean
-  setShowValue: (v: boolean) => void
-}) {
-  return (
-    <div className="grid gap-3 sm:grid-cols-2">
-      <div className="space-y-1">
-        <Label className="text-xs text-muted-foreground">Variable name</Label>
-        <Input
-          className="font-mono text-sm"
-          value={envKey}
-          onChange={(e) => setEnvKey(e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, ''))}
-          placeholder="API_KEY"
-          autoComplete="off"
-        />
-      </div>
-      <div className="space-y-1">
-        <Label className="text-xs text-muted-foreground">Value</Label>
-        <div className="relative">
-          <Input
-            className="pr-8 font-mono text-sm"
-            type={showValue ? 'text' : 'password'}
-            value={envValue}
-            onChange={(e) => setEnvValue(e.target.value)}
-            placeholder="sk-..."
-            autoComplete="off"
-          />
-          <button
-            type="button"
-            className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-            aria-label={showValue ? 'Hide secret value' : 'Show secret value'}
-            onClick={() => setShowValue(!showValue)}
-          >
-            {showValue ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
-          </button>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-// ---------------------------------------------------------------------------
-// Sub-component: HeaderForm
-// ---------------------------------------------------------------------------
-
-function HeaderForm({
-  token,
-  setToken,
-  showToken,
-  setShowToken,
-}: {
-  token: string
-  setToken: (v: string) => void
-  showToken: boolean
-  setShowToken: (v: boolean) => void
-}) {
-  return (
-    <div className="space-y-1">
-      <Label className="text-xs text-muted-foreground">Bearer token / API key</Label>
-      <div className="relative">
-        <Input
-          className="pr-8 font-mono text-sm"
-          type={showToken ? 'text' : 'password'}
-          value={token}
-          onChange={(e) => setToken(e.target.value)}
-          placeholder="sk-..."
-          autoComplete="off"
-        />
-        <button
-          type="button"
-          className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-          onClick={() => setShowToken(!showToken)}
-        >
-          {showToken ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
-        </button>
-      </div>
-      <p className="text-[11px] text-muted-foreground">
-        Stored as{' '}
-        <code className="rounded bg-muted px-1 py-0.5 font-mono">Authorization: Bearer &lt;token&gt;</code>
-      </p>
-    </div>
-  )
-}
-
-// ---------------------------------------------------------------------------
-// Main component
-// ---------------------------------------------------------------------------
-
 export function InlineCredentialCreate({
   server,
   providers,
@@ -192,7 +71,8 @@ export function InlineCredentialCreate({
   const [expanded, setExpanded] = useState(false)
   const [saving, setSaving] = useState(false)
 
-  const credType = useMemo(() => inferCredentialType(server), [server])
+  const inferredType = useMemo(() => inferCredentialType(server), [server])
+  const [credType, setCredType] = useState<CredentialType>(inferredType)
   const defaultSlug = useMemo(
     () => (server ? deriveSlug(server.name, credType) : `new_${credType}_credential`),
     [server, credType],
@@ -205,9 +85,15 @@ export function InlineCredentialCreate({
     const newId = server?.id ?? null
     if (newId !== prevServerIdRef.current) {
       prevServerIdRef.current = newId
-      setSlug(server ? deriveSlug(server.name, credType) : `new_${credType}_credential`)
+      setCredType(inferredType)
+      setSlug(server ? deriveSlug(server.name, inferredType) : `new_${inferredType}_credential`)
     }
-  }, [server, credType])
+  }, [server, inferredType])
+
+  useEffect(() => {
+    if (!expanded) return
+    setSlug(server ? deriveSlug(server.name, credType) : `new_${credType}_credential`)
+  }, [credType, expanded, server])
 
   // ENV path — pre-defined fields (from server env_field hints if available)
   // For now there are no per-server env_fields at the server level — those
@@ -246,6 +132,7 @@ export function InlineCredentialCreate({
       setHeaderToken('')
       setShowHeaderToken(false)
       setOauthProviderId('')
+      setCredType(inferredType)
       setSlug(defaultSlug)
       setExpanded(true)
     }
@@ -318,6 +205,20 @@ export function InlineCredentialCreate({
         </button>
       </div>
 
+      <div className="space-y-1">
+        <Label className="text-xs text-muted-foreground">Credential method</Label>
+        <Select value={credType} onValueChange={(value) => setCredType(value as CredentialType)}>
+          <SelectTrigger data-testid="inline-credential-type">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="env">Environment variable</SelectItem>
+            <SelectItem value="header">HTTP bearer / API key</SelectItem>
+            <SelectItem value="oauth2">OAuth 2.0</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+
       {/* Slug field */}
       <div className="space-y-1">
         <Label className="text-xs text-muted-foreground">Slug</Label>
@@ -355,38 +256,20 @@ export function InlineCredentialCreate({
       )}
 
       {credType === 'oauth2' && (
-        <div className="space-y-1">
-          <Label className="text-xs text-muted-foreground">OAuth provider</Label>
-          {providers.length === 0 ? (
-            <p className="text-xs text-muted-foreground">
-              No OAuth providers configured. Set one up via Quick Setup first.
-            </p>
-          ) : (
-            <Select value={oauthProviderId} onValueChange={setOauthProviderId}>
-              <SelectTrigger data-testid="inline-credential-oauth-provider">
-                <SelectValue placeholder="Select a provider..." />
-              </SelectTrigger>
-              <SelectContent>
-                {providers.map((p) => (
-                  <SelectItem key={p.id} value={p.id}>
-                    {p.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          )}
-          <p className="text-[11px] text-muted-foreground">
-            After creating, use the Authenticate button to complete the OAuth flow.
-          </p>
-        </div>
+        <OAuthProviderField
+          providers={providers}
+          providerId={oauthProviderId}
+          onProviderChange={setOauthProviderId}
+        />
       )}
 
       {/* Actions */}
       <div className="flex justify-end gap-2">
-        <Button variant="ghost" size="sm" onClick={handleToggle} disabled={saving}>
+        <Button type="button" variant="ghost" size="sm" onClick={handleToggle} disabled={saving}>
           Cancel
         </Button>
         <Button
+          type="button"
           size="sm"
           onClick={handleSave}
           disabled={!canSave || saving}

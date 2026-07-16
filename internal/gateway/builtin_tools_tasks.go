@@ -122,6 +122,27 @@ func taskToolDefinitions() []Tool {
 			}),
 		},
 		{
+			Name:        "task__set_visibility",
+			Description: "Choose who may receive a task over P2P collaboration. This is separate from workspace permissions: a recipient needs workspace.view + tasks.read AND this task must be visible to them. `private` is the safe default; `restricted` requires `audience` entries (stable principal IDs or exact, uniquely-resolving display names); `workspace` includes every reader in the workspace. Agents may always narrow visibility. Widening is limited by the workspace's agent visibility ceiling and returns a human-approval-required result when policy demands it. The operation advances a visibility epoch and is audited; generic task__update cannot change this field.",
+			InputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"id": {"type": "string", "description": "Task id."},
+					"visibility": {"type": "string", "enum": ["private", "restricted", "workspace"]},
+					"audience": {"type": "array", "items": {"type": "string"}, "description": "For restricted visibility: principal IDs or exact display names."},
+					"workspace_id": {"type": "string", "description": "Override session-bound workspace."}
+				},
+				"required": ["id", "visibility"]
+			}`),
+			Extras: withAnnotations(ToolAnnotations{
+				Title:           "Set Task Visibility",
+				ReadOnlyHint:    boolPtr(false),
+				DestructiveHint: boolPtr(false),
+				IdempotentHint:  boolPtr(true),
+				OpenWorldHint:   boolPtr(false),
+			}),
+		},
+		{
 			Name:        "task__assign",
 			Description: "Assign a task to an agent (the common shortcut — equivalent to task__update with just the assignee patch). `assignee` is a single string: `\"me\"` | `\"<agent_name>\"` | `\"<peer>:<agent>\"` | null to unassign. Returns the compact post-write shape; pass `full: true` for the historical envelope.",
 			InputSchema: json.RawMessage(`{
@@ -305,7 +326,7 @@ func taskToolDefinitions() []Tool {
 		},
 		{
 			Name:        "task__offer",
-			Description: "Share / suggest / delegate / hand off / send-to-peer a task to a paired libp2p peer. Sends a thin preview (title + ≤256-char description/meta previews + tags); the receiving daemon stores it as a pending offer their user/agent can accept or decline. Requires the receiving peer has granted you `task_offer:<workspace>` scope (or wildcard). Use `to` to address the peer by device name (\"alice-laptop\") or full peer id. Optional `message` is a short note shown alongside the offer.",
+			Description: "Offer a task to an SSH-verified collaboration device for review before import. Sends only the workspace's safe egress projection and requires the recipient principal's live exact workspace.view + tasks.create grants; legacy wildcard scopes do not authorize it. Use `to` for a device name or peer id. For a task created inside a workspace shared from another peer, prefer task__publish_home so no peer id is needed.",
 			InputSchema: json.RawMessage(`{
 				"type": "object",
 				"properties": {
@@ -325,7 +346,7 @@ func taskToolDefinitions() []Tool {
 		},
 		{
 			Name:        "task__assign_remote",
-			Description: "Directly assign / push / fast-path a task to a paired peer's workspace, skipping the accept-review step. Higher-trust variant of `task__offer` — requires the receiving peer has granted you `task_assign:<workspace>` scope, throttled at 60 envelopes / 60s per (peer, workspace). The task lands on the peer with `notify_user=true` so the receiver knows. Use only for explicit hand-offs to teammates / contractors / scheduled-agents you both trust.",
+			Description: "Directly push a task to an SSH-verified collaboration device, skipping accept-review. The receiver re-authorizes the sender principal against live exact grants and access epoch; creating requires tasks.publish or workspace.view + tasks.create, while changing an existing home task requires tasks.edit. Payloads use the workspace's safe egress projection and are throttled. Prefer task__publish_home inside an accepted shared workspace.",
 			InputSchema: json.RawMessage(`{
 				"type": "object",
 				"properties": {
@@ -337,6 +358,26 @@ func taskToolDefinitions() []Tool {
 			}`),
 			Extras: withAnnotations(ToolAnnotations{
 				Title:           "Assign Task to Peer",
+				ReadOnlyHint:    boolPtr(false),
+				DestructiveHint: boolPtr(false),
+				IdempotentHint:  boolPtr(false),
+				OpenWorldHint:   boolPtr(true),
+			}),
+		},
+		{
+			Name:        "task__publish_home",
+			Description: "Publish a local task to the authoritative home of an accepted shared workspace without supplying a device name or peer id. This is the normal log-monitor/machine workflow: create a task in the local shared-workspace mirror, then publish it home. Routing comes only from the SSH-proven invitation membership. The home re-checks the live tasks.publish grant and access epoch, sanitizes the payload, and rejects revoked access.",
+			InputSchema: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"task_id": {"type": "string", "description": "Local task id to publish."},
+					"message": {"type": "string", "description": "Optional cover-note for the workspace home."},
+					"workspace_id": {"type": "string", "description": "Shared local workspace id. Omit to use the session-bound workspace."}
+				},
+				"required": ["task_id"]
+			}`),
+			Extras: withAnnotations(ToolAnnotations{
+				Title:           "Publish Task to Workspace Home",
 				ReadOnlyHint:    boolPtr(false),
 				DestructiveHint: boolPtr(false),
 				IdempotentHint:  boolPtr(false),

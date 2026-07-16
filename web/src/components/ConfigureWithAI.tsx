@@ -27,8 +27,12 @@ const PROMPT_TEMPLATE_BY_PAGE: Record<string, string> = {
   default: 'Help me configure mcplexer using mcpx__* tools. Run mcpx__search_tools first to see what is available.',
 }
 
-function pageContextFromPath(pathname: string): string {
-  // /workspaces/routes → "routes", /create-mcp → "create-mcp", / → "default"
+function pageContextFromPath(pathname: string, search: string): string {
+  if (pathname === '/workspaces') {
+    const view = new URLSearchParams(search).get('view')
+    if (view === 'settings' || view === 'new-workspace') return 'workspaces'
+    if (!view || view === 'access') return 'routes'
+  }
   const seg = pathname.split('/').filter(Boolean).pop() ?? ''
   return PROMPT_TEMPLATE_BY_PAGE[seg] ? seg : 'default'
 }
@@ -38,7 +42,7 @@ export function ConfigureWithAI({ variant = 'sidebar', className }: Props) {
   const [dataDir, setDataDir] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
   const location = useLocation()
-  const pageContext = pageContextFromPath(location.pathname)
+  const pageContext = pageContextFromPath(location.pathname, location.search)
 
   useEffect(() => {
     let cancelled = false

@@ -250,15 +250,15 @@ func (s *Service) ContextPack(ctx context.Context, req ContextRequest) (*Context
 
 // Status reports the freshness verdict. A never-built workspace returns
 // ErrNotBuilt (the handler surfaces a "run index__build" hint).
-func (s *Service) Status(ctx context.Context, workspaceID, root string) (*Status, error) {
+func (s *Service) Status(ctx context.Context, _ string, root string) (*Status, error) {
 	if err := validateRoot(root); err != nil {
 		return nil, err
 	}
 	if err := requireDir(root); err != nil {
 		return nil, err
 	}
-	workspaceID = indexIDForRoot(root)
-	build, err := s.store.GetCodeIndexBuild(ctx, workspaceID)
+	indexID := indexIDForRoot(root)
+	build, err := s.store.GetCodeIndexBuild(ctx, indexID)
 	if err != nil {
 		if isNotFound(err) {
 			return nil, ErrNotBuilt
@@ -266,16 +266,16 @@ func (s *Service) Status(ctx context.Context, workspaceID, root string) (*Status
 		return nil, err
 	}
 	git := newGitRunner(root, s.logger)
-	s.startEmbeddingBackfill(workspaceID)
+	s.startEmbeddingBackfill(indexID)
 	head, _ := git.head(ctx)
 	dirty, _ := git.dirtyCount(ctx)
 	return &Status{
-		IndexID:     workspaceID,
+		IndexID:     indexID,
 		Built:       true,
 		BuiltAt:     build.BuiltAt,
 		GitHead:     build.GitHead,
 		CurrentHead: head,
-		Stale:       contextStale(ctx, git, build, s.store, workspaceID, root),
+		Stale:       contextStale(ctx, git, build, s.store, indexID, root),
 		DirtyFiles:  dirty,
 		FileCount:   build.FileCount,
 		SymbolCount: build.SymbolCount,
@@ -283,6 +283,6 @@ func (s *Service) Status(ctx context.Context, workspaceID, root string) (*Status
 		Complete:    build.Complete,
 		DurationMS:  build.DurationMS,
 		Warnings:    parseWarnings(build.WarningsJSON),
-		Embeddings:  s.embeddingStatus(ctx, workspaceID),
+		Embeddings:  s.embeddingStatus(ctx, indexID),
 	}, nil
 }

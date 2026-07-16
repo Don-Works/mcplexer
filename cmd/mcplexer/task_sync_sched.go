@@ -43,6 +43,10 @@ type taskSyncLinkLister interface {
 	ListWorkspaceLinks(ctx context.Context) ([]store.WorkspacePeerBinding, error)
 }
 
+type taskSyncMembershipLister interface {
+	ListWorkspaceMemberships(ctx context.Context) ([]store.WorkspaceMembership, error)
+}
+
 // taskSyncWatermarks resolves the local per-workspace HLC high-water
 // mark sent in the Hello. Synced rows land under the REMOTE workspace
 // id (gossip v1 has no cross-workspace remapping), so the watermark is
@@ -51,15 +55,27 @@ type taskSyncWatermarks interface {
 	MaxHLCForWorkspace(ctx context.Context, workspaceID string) (string, error)
 }
 
+type taskSyncOutbox interface {
+	RetryPendingHomePublications(ctx context.Context, homePeerID string) (attempted, delivered int, err error)
+}
+
 // taskSyncScheduler drives periodic + on-reconnect catch-up pulls.
 type taskSyncScheduler struct {
-	dialer     taskSyncDialer
-	links      taskSyncLinkLister
-	watermarks taskSyncWatermarks
-	logger     *slog.Logger
-	interval   time.Duration
-	jitterMax  time.Duration
-	peerBudget time.Duration
+	dialer      taskSyncDialer
+	links       taskSyncLinkLister
+	memberships taskSyncMembershipLister
+	watermarks  taskSyncWatermarks
+	outbox      taskSyncOutbox
+	logger      *slog.Logger
+	interval    time.Duration
+	jitterMax   time.Duration
+	peerBudget  time.Duration
+}
+
+func (s *taskSyncScheduler) SetOutbox(outbox taskSyncOutbox) {
+	if s != nil {
+		s.outbox = outbox
+	}
 }
 
 // newTaskSyncScheduler builds a scheduler with production cadence.
@@ -78,8 +94,12 @@ func newTaskSyncScheduler(
 		logger = slog.Default()
 	}
 	return &taskSyncScheduler{
-		dialer:     dialer,
-		links:      links,
+		dialer: dialer,
+		links:  links,
+		memberships: func() taskSyncMembershipLister {
+			memberships, _ := links.(taskSyncMembershipLister)
+			return memberships
+		}(),
 		watermarks: watermarks,
 		logger:     logger,
 		interval:   taskSyncInterval,
@@ -131,7 +151,9 @@ func (s *taskSyncScheduler) syncAll(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
-		s.syncPeer(ctx, peerID, workspaces)
+		if err := s.syncPeer(ctx, peerID, workspaces); err != nil {
+			s.logger.Debug("task-sync: peer catch-up failed", "peer", peerID, "err", err)
+		}
 	}
 }
 
@@ -139,19 +161,20 @@ func (s *taskSyncScheduler) syncAll(ctx context.Context) {
 // the reconnector's online-transition observer so a peer coming back
 // from a partition is reconciled without waiting for the next tick.
 // Safe to call from any goroutine; no-op when the peer has no links.
-func (s *taskSyncScheduler) SyncPeerNow(peerID string) {
+func (s *taskSyncScheduler) SyncPeerNow(peerID string) error {
 	if s == nil || peerID == "" {
-		return
+		return nil
 	}
 	ctx := context.Background()
 	byPeer, err := s.linkedWorkspacesByPeer(ctx, peerID)
 	if err != nil {
 		s.logger.Debug("task-sync: list links for peer", "peer", peerID, "err", err)
-		return
+		return err
 	}
 	if workspaces := byPeer[peerID]; len(workspaces) > 0 {
-		s.syncPeer(ctx, peerID, workspaces)
+		return s.syncPeer(ctx, peerID, workspaces)
 	}
+	return nil
 }
 
 // linkedWorkspacesByPeer groups the linked bindings into per-peer Hello
@@ -160,6 +183,31 @@ func (s *taskSyncScheduler) SyncPeerNow(peerID string) {
 func (s *taskSyncScheduler) linkedWorkspacesByPeer(
 	ctx context.Context, onlyPeer string,
 ) (map[string][]p2p.TaskSyncHelloWorkspace, error) {
+	// Production stores expose explicit collaboration memberships. When
+	// available they are the sole routing authority: legacy linked-workspace
+	// rows intentionally do not resume replication after the security upgrade.
+	if s.memberships != nil {
+		memberships, err := s.memberships.ListWorkspaceMemberships(ctx)
+		if err != nil {
+			return nil, err
+		}
+		out := make(map[string][]p2p.TaskSyncHelloWorkspace)
+		for _, membership := range memberships {
+			if membership.Status != store.WorkspaceShareStatusActive || membership.HomePeerID == "" ||
+				membership.RemoteWorkspaceID == "" || membership.LocalWorkspaceID == "" {
+				continue
+			}
+			if onlyPeer != "" && membership.HomePeerID != onlyPeer {
+				continue
+			}
+			out[membership.HomePeerID] = append(out[membership.HomePeerID], p2p.TaskSyncHelloWorkspace{
+				WorkspaceID:      membership.RemoteWorkspaceID,
+				LocalWorkspaceID: membership.LocalWorkspaceID,
+				SinceHLC:         membership.CursorHLC,
+			})
+		}
+		return out, nil
+	}
 	links, err := s.links.ListWorkspaceLinks(ctx)
 	if err != nil {
 		return nil, err
@@ -190,7 +238,7 @@ func (s *taskSyncScheduler) linkedWorkspacesByPeer(
 // are routine (peer offline) — logged at debug, retried next tick.
 func (s *taskSyncScheduler) syncPeer(
 	ctx context.Context, peerID string, workspaces []p2p.TaskSyncHelloWorkspace,
-) {
+) error {
 	for start := 0; start < len(workspaces); start += p2p.MaxTaskSyncWorkspacesPerHello {
 		end := start + p2p.MaxTaskSyncWorkspacesPerHello
 		if end > len(workspaces) {
@@ -202,7 +250,21 @@ func (s *taskSyncScheduler) syncPeer(
 		if err != nil {
 			s.logger.Debug("task-sync: catch-up dial failed",
 				"peer", peerID, "workspaces", end-start, "err", err)
-			return
+			return err
 		}
 	}
+	if s.outbox != nil {
+		retryCtx, cancel := context.WithTimeout(ctx, s.peerBudget)
+		attempted, delivered, err := s.outbox.RetryPendingHomePublications(retryCtx, peerID)
+		cancel()
+		if err != nil {
+			s.logger.Debug("task-sync: pending publication retry", "peer", peerID,
+				"attempted", attempted, "delivered", delivered, "err", err)
+			return err
+		} else if delivered > 0 {
+			s.logger.Info("task-sync: delivered pending home publications",
+				"peer", peerID, "count", delivered)
+		}
+	}
+	return nil
 }

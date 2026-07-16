@@ -54,7 +54,7 @@ services:
     networks:
       - mcplexer-test
     ports:
-      - "13333:3333"
+      - "23333:3333"
     volumes:
       - mcplexer-data-a:/data
     environment:

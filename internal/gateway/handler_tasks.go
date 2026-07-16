@@ -50,14 +50,14 @@ func (h *handler) dispatchTaskTool(
 	if h.tasksSvc == nil {
 		switch name {
 		case "task__create", "task__list", "task__get",
-			"task__update", "task__assign", "task__delete",
+			"task__update", "task__set_visibility", "task__assign", "task__delete",
 			"task__append_note", "task__claim",
 			"task__history", "task__rollback",
 			"task__compose", "task__decompose",
 			"task__set_work_context",
 			"task__recent_activity",
 			"task__attach", "task__list_attachments", "task__get_attachment",
-			"task__offer", "task__assign_remote",
+			"task__offer", "task__assign_remote", "task__publish_home",
 			"task__accept_offer", "task__decline_offer", "task__list_offers",
 			"task_status_vocabulary__upsert":
 			return marshalErrorResult("Tasks subsystem is not enabled."), nil, true
@@ -85,6 +85,9 @@ func (h *handler) dispatchTaskTool(
 		return resp, err, true
 	case "task__update":
 		resp, err := h.handleTaskUpdate(ctx, raw)
+		return resp, err, true
+	case "task__set_visibility":
+		resp, err := h.handleTaskSetVisibility(ctx, raw)
 		return resp, err, true
 	case "task__assign":
 		resp, err := h.handleTaskAssign(ctx, raw)
@@ -124,7 +127,7 @@ func (h *handler) dispatchTaskTool(
 		return resp, err, true
 	case "task__attach", "task__list_attachments", "task__get_attachment":
 		return h.dispatchTaskAttachmentTool(ctx, name, raw)
-	case "task__offer", "task__assign_remote",
+	case "task__offer", "task__assign_remote", "task__publish_home",
 		"task__accept_offer", "task__decline_offer", "task__list_offers":
 		return h.dispatchTaskOfferTool(ctx, name, raw)
 	case "task_status_vocabulary__upsert":
@@ -948,6 +951,53 @@ func (h *handler) handleTaskGet(
 		return marshalErrorResult(fmt.Sprintf("Get failed: %v", err)), nil
 	}
 	return h.marshalTaskWithEnvelope(ctx, t, t.WorkspaceID, envelopeModeSingle)
+}
+
+// handleTaskSetVisibility is the model-facing audience control. The task
+// service applies the workspace's agent ceiling and approval rule; this
+// handler only resolves workspace scope and keeps cross-workspace existence
+// fail-closed like task__get.
+func (h *handler) handleTaskSetVisibility(
+	ctx context.Context, raw json.RawMessage,
+) (json.RawMessage, *RPCError) {
+	var args struct {
+		ID          string   `json:"id"`
+		WorkspaceID string   `json:"workspace_id"`
+		Visibility  string   `json:"visibility"`
+		Audience    []string `json:"audience"`
+	}
+	if err := json.Unmarshal(raw, &args); err != nil {
+		return nil, &RPCError{Code: CodeInvalidParams, Message: err.Error()}
+	}
+	if strings.TrimSpace(args.ID) == "" || strings.TrimSpace(args.Visibility) == "" {
+		return nil, &RPCError{Code: CodeInvalidParams, Message: "id and visibility are required"}
+	}
+	wsID := strings.TrimSpace(args.WorkspaceID)
+	if wsID == "" {
+		wsID = h.currentWorkspaceID(ctx)
+	}
+	if wsID == "" {
+		return marshalErrorResult("No workspace bound to this session — open a terminal in a project directory, or pass workspace_id."), nil
+	}
+	if rpc := h.requireWorkspaceWrite(ctx, wsID); rpc != nil {
+		return nil, rpc
+	}
+	access, err := h.tasksSvc.SetVisibility(ctx, wsID, args.ID, args.Visibility, args.Audience)
+	if err != nil {
+		if errors.Is(err, tasks.ErrVisibilityApprovalRequired) {
+			return marshalErrorResult("Visibility widening requires human approval. Ask the operator to approve it on the task page, or choose a narrower audience."), nil
+		}
+		if errors.Is(err, store.ErrNotFound) {
+			return marshalErrorResult("Task not found in this workspace."), nil
+		}
+		return marshalErrorResult(fmt.Sprintf("Set visibility failed: %v", err)), nil
+	}
+	return marshalJSONResult(map[string]any{
+		"ok": true, "id": access.TaskID,
+		"visibility":             access.Visibility,
+		"visibility_epoch":       access.VisibilityEpoch,
+		"audience_principal_ids": access.AudiencePrincipalIDs,
+	})
 }
 
 // envelopeMode controls which `known_*` fields the discovery envelope

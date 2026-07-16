@@ -1,6 +1,6 @@
 // offer_inbound.go — Phase A receiver path. Implements
 // p2p.TaskShareReceiver on *Service via HandleIncomingTaskOffer, runs
-// the three gates (scope / throttle / staleness) before persisting,
+// the three gates (authorization / throttle / staleness) before persisting,
 // and provides the helper functions used by the outbound flow in
 // offer.go (resolveAcceptWorkspace, materializeOfferedTask).
 package tasks
@@ -18,9 +18,9 @@ import (
 )
 
 // HandleIncomingTaskOffer implements p2p.TaskShareReceiver. Runs the
-// three gates (scope, throttle, staleness) before deciding whether to
+// three gates (authorization, throttle, staleness) before deciding whether to
 // persist the offer row as pending OR (for direct-assign with
-// task_assign scope) auto-accept and trigger Phase B.
+// an exact collaboration grant) auto-accept and trigger Phase B.
 //
 // Return contract:
 //
@@ -38,20 +38,18 @@ func (s *Service) HandleIncomingTaskOffer(
 		s.recordRejected(ctx, fromPeerID, env, store.TaskOfferExpired)
 		return store.TaskOfferExpired, "", err
 	}
-	scope := s.requiredScope(env)
-	allowed, err := s.checkPeerScope(ctx, fromPeerID, env.RemoteWorkspaceName, env.IsDirectAssign)
+	sanitizeIncomingTaskOffer(env)
+	workspaceID, principalID, autoAccept, err := s.authorizeIncomingOffer(ctx, fromPeerID, env)
 	if err != nil {
-		return "", "", err
-	}
-	if !allowed {
-		// Audit + persist a rejection row so the user can see "X tried
-		// to send N tasks without permission". State is one of the
-		// rejected_* vocabulary values.
+		if errors.Is(err, p2p.ErrTaskConflict) {
+			s.recordRejected(ctx, fromPeerID, env, store.TaskOfferConflict)
+			return store.TaskOfferConflict, "", err
+		}
 		s.recordRejected(ctx, fromPeerID, env, store.TaskOfferRejectedUnscoped)
 		return store.TaskOfferRejectedUnscoped, "",
-			fmt.Errorf("%w: %s scope required", p2p.ErrTaskOfferDenied, scope)
+			fmt.Errorf("%w: collaboration grant required", p2p.ErrTaskOfferDenied)
 	}
-	throttled, terr := s.checkAndStampThrottle(ctx, fromPeerID, env.RemoteWorkspaceID, time.Now().UTC())
+	throttled, terr := s.checkAndStampThrottle(ctx, fromPeerID, env.ShareID, time.Now().UTC())
 	if terr != nil {
 		return "", "", terr
 	}
@@ -60,21 +58,79 @@ func (s *Service) HandleIncomingTaskOffer(
 		return store.TaskOfferRejectedThrottle, "",
 			fmt.Errorf("%w: throttle exceeded", p2p.ErrTaskOfferDenied)
 	}
-	offerID, state, err := s.persistIncoming(ctx, fromPeerID, env)
+	offerID, state, err := s.persistIncoming(ctx, fromPeerID, env, workspaceID, principalID, autoAccept)
 	if err != nil {
 		return "", "", err
 	}
-	// Direct-assign auto-accept: when the sender carries the task_assign
-	// scope, eagerly fetch the payload + materialize the local task.
+	// Direct-assign auto-accept: once exact collaboration authorization has
+	// succeeded, eagerly fetch the payload and materialize the local task.
 	if env.IsDirectAssign && state == store.TaskOfferAutoAccepted {
 		if _, err := s.autoAcceptOffer(ctx, offerID); err != nil {
-			// Auto-accept failed mid-way — leave the offer in
-			// auto_accepted state so the dashboard can show the
-			// half-finished transition. The sender already got an ack.
-			return state, offerID, nil
+			// The offer row remains as an auditable half-finished transition,
+			// but the wire caller must not receive a success ack for a task
+			// that was never materialized or updated.
+			return state, offerID, fmt.Errorf("auto-accept task: %w", err)
 		}
 	}
 	return state, offerID, nil
+}
+
+// authorizeIncomingOffer binds the claimed share to this node's local
+// workspace and checks exact principal capabilities. A publisher may push
+// directly without read access; an ordinary direct assignment needs create +
+// assign, while a reviewable offer needs view + create.
+func (s *Service) authorizeIncomingOffer(
+	ctx context.Context, peerID string, env *p2p.TaskOfferEnvelope,
+) (workspaceID, principalID string, autoAccept bool, err error) {
+	if s.authorizer == nil || env == nil || env.ShareID == "" {
+		return "", "", false, p2p.ErrTaskOfferDenied
+	}
+	base, baseErr := s.authorizer.AuthorizeWorkspace(ctx, peerID, env.ShareID)
+	if baseErr != nil || env.AccessEpoch != base.AccessEpoch {
+		return "", "", false, p2p.ErrTaskOfferDenied
+	}
+	// A direct publish carrying the id of a live home task is an update,
+	// never a create. This makes local mirrors useful for contribution while
+	// preventing publisher-only machines from overwriting existing work.
+	existing, taskErr := s.store.GetTask(ctx, env.RemoteTaskID)
+	if taskErr == nil {
+		if !env.IsDirectAssign || existing.WorkspaceID != base.Share.LocalWorkspaceID {
+			return "", "", false, p2p.ErrTaskOfferDenied
+		}
+		editor, editErr := s.authorizer.AuthorizeWorkspace(ctx, peerID, env.ShareID, store.CapabilityTasksEdit)
+		if editErr != nil || env.AccessEpoch != editor.AccessEpoch {
+			return "", "", false, p2p.ErrTaskOfferDenied
+		}
+		if env.BaseHLC == "" || env.BaseHLC != existing.HlcAt {
+			return "", "", false, fmt.Errorf("%w: base=%q current=%q",
+				p2p.ErrTaskConflict, env.BaseHLC, existing.HlcAt)
+		}
+		return editor.Share.LocalWorkspaceID, editor.Principal.ID, true, nil
+	}
+	if !errors.Is(taskErr, store.ErrNotFound) {
+		return "", "", false, p2p.ErrTaskOfferDenied
+	}
+	if env.IsDirectAssign {
+		publisher, publishErr := s.authorizer.AuthorizeWorkspace(ctx, peerID, env.ShareID, store.CapabilityTasksPublish)
+		if publishErr == nil {
+			if env.AccessEpoch != publisher.AccessEpoch {
+				return "", "", false, p2p.ErrTaskOfferDenied
+			}
+			return publisher.Share.LocalWorkspaceID, publisher.Principal.ID, true, nil
+		}
+		contributor, contributorErr := s.authorizer.AuthorizeWorkspace(ctx, peerID, env.ShareID,
+			store.CapabilityWorkspaceView, store.CapabilityTasksCreate)
+		if contributorErr != nil || env.AccessEpoch != contributor.AccessEpoch {
+			return "", "", false, p2p.ErrTaskOfferDenied
+		}
+		return contributor.Share.LocalWorkspaceID, contributor.Principal.ID, true, nil
+	}
+	contributor, err := s.authorizer.AuthorizeWorkspace(ctx, peerID, env.ShareID,
+		store.CapabilityWorkspaceView, store.CapabilityTasksCreate)
+	if err != nil || env.AccessEpoch != contributor.AccessEpoch {
+		return "", "", false, p2p.ErrTaskOfferDenied
+	}
+	return contributor.Share.LocalWorkspaceID, contributor.Principal.ID, false, nil
 }
 
 // checkOfferStaleness rejects envelopes whose envelope_created_at is
@@ -95,65 +151,6 @@ func checkOfferStaleness(env *p2p.TaskOfferEnvelope, now time.Time) error {
 			p2p.ErrTaskExpired, env.EnvelopeCreatedAt.Format(time.RFC3339), taskOfferStalenessWindow)
 	}
 	return nil
-}
-
-// requiredScope returns the scope string a peer must hold for the
-// given envelope. Direct-assign requires task_assign:<ws>; plain
-// offers require task_offer:<ws>. The workspace name comes off the
-// envelope so the receiving daemon doesn't need to look it up.
-func (s *Service) requiredScope(env *p2p.TaskOfferEnvelope) string {
-	prefix := "task_offer:"
-	if env.IsDirectAssign {
-		prefix = "task_assign:"
-	}
-	ws := env.RemoteWorkspaceName
-	if ws == "" {
-		ws = "*" // wildcard fallback — sender didn't name the workspace
-	}
-	return prefix + ws
-}
-
-// checkPeerScope returns true iff the peer holds either the exact
-// scope OR the wildcard form (task_offer:* / task_assign:*). For
-// direct-assign envelopes we additionally accept task_offer:<ws> +
-// task_assign:<ws> permissions both being granted is implicit (a peer
-// authorized to assign is authorized to offer).
-func (s *Service) checkPeerScope(
-	ctx context.Context, peerID, workspaceName string, directAssign bool,
-) (bool, error) {
-	if s.peerScopes == nil {
-		return false, nil
-	}
-	checks := []string{}
-	prefix := "task_offer:"
-	if directAssign {
-		prefix = "task_assign:"
-	}
-	if workspaceName != "" {
-		checks = append(checks, prefix+workspaceName)
-	}
-	checks = append(checks, prefix+"*")
-	for _, scope := range checks {
-		ok, err := s.peerScopes.HasPeerScope(ctx, peerID, scope)
-		if err != nil {
-			return false, err
-		}
-		if ok {
-			return true, nil
-		}
-	}
-	return false, nil
-}
-
-// hasDirectAssignScope is a convenience used by persistIncoming to
-// decide between pending vs auto_accepted on direct-assign envelopes.
-// Returns false on lookup errors — fail closed.
-func (s *Service) hasDirectAssignScope(ctx context.Context, peerID, workspaceName string) bool {
-	ok, err := s.checkPeerScope(ctx, peerID, workspaceName, true)
-	if err != nil {
-		return false
-	}
-	return ok
 }
 
 // checkAndStampThrottle is the rolling-window budget check. Returns
@@ -197,23 +194,29 @@ func (s *Service) checkAndStampThrottle(
 }
 
 // persistIncoming inserts the offer row with the right state. For
-// plain offers the state is always "pending". For direct-assign
-// envelopes where the peer has task_assign scope, the state is
-// "auto_accepted" and the caller triggers Phase B in-process.
+// plain offers the state is always "pending". An authorized direct-assign
+// envelope is "auto_accepted" and the caller triggers Phase B in-process.
 func (s *Service) persistIncoming(
 	ctx context.Context, fromPeerID string, env *p2p.TaskOfferEnvelope,
+	workspaceID, principalID string, autoAccept bool,
 ) (offerID, state string, err error) {
 	state = store.TaskOfferPending
-	if env.IsDirectAssign && s.hasDirectAssignScope(ctx, fromPeerID, env.RemoteWorkspaceName) {
+	if env.IsDirectAssign && autoAccept {
 		state = store.TaskOfferAutoAccepted
 	}
 	row := &store.TaskOffer{
 		ID:                  ulid.Make().String(),
 		RemoteTaskID:        env.RemoteTaskID,
+		ShareID:             env.ShareID,
+		SenderPrincipalID:   principalID,
+		AccessEpoch:         env.AccessEpoch,
+		VisibilityEpoch:     env.VisibilityEpoch,
+		BaseHLC:             env.BaseHLC,
 		FromPeerID:          fromPeerID,
 		ToPeerID:            s.selfPeerID(),
 		RemoteWorkspaceID:   env.RemoteWorkspaceID,
 		RemoteWorkspaceName: env.RemoteWorkspaceName,
+		WorkspaceID:         workspaceID,
 		Title:               env.Title,
 		DescriptionPreview:  env.DescriptionPreview,
 		MetaPreview:         env.MetaPreview,
@@ -249,6 +252,10 @@ func (s *Service) recordRejected(
 	row := &store.TaskOffer{
 		ID:                  ulid.Make().String(),
 		RemoteTaskID:        env.RemoteTaskID,
+		ShareID:             env.ShareID,
+		AccessEpoch:         env.AccessEpoch,
+		VisibilityEpoch:     env.VisibilityEpoch,
+		BaseHLC:             env.BaseHLC,
 		FromPeerID:          fromPeerID,
 		ToPeerID:            s.selfPeerID(),
 		RemoteWorkspaceID:   env.RemoteWorkspaceID,
@@ -296,8 +303,14 @@ func (s *Service) autoAcceptOffer(ctx context.Context, offerID string) (*store.T
 	if err != nil {
 		return nil, err
 	}
+	if s.taskShare == nil {
+		return nil, errors.New("task share service not wired (p2p not enabled?)")
+	}
 	payload, err := s.taskShare.RequestTaskPayload(ctx, offer.FromPeerID, offer.EnvelopeNonce, offer.RemoteTaskID)
 	if err != nil {
+		return nil, err
+	}
+	if err := s.validateIncomingTaskPayload(ctx, offer, payload); err != nil {
 		return nil, err
 	}
 	// Linked-workspace convergence: if a prior accepted offer from this
@@ -305,7 +318,11 @@ func (s *Service) autoAcceptOffer(ctx context.Context, offerID string) (*store.T
 	// in place rather than creating a duplicate. This is what turns
 	// repeated AssignRemote pushes (one per task mutation on the sender)
 	// into status/note SYNC instead of a pile of clones.
-	t, err := s.convergeOrMaterialize(ctx, offer, payload, wsID)
+	t, created, err := s.convergeOrMaterializeWithState(ctx, offer, payload, wsID)
+	if err != nil {
+		return nil, err
+	}
+	t, err = s.applyIncomingTaskVisibility(ctx, offer, payload, t, created)
 	if err != nil {
 		return nil, err
 	}
