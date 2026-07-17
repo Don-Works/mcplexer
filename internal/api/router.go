@@ -758,7 +758,7 @@ func NewRouter(deps RouterDeps) http.Handler {
 	mux.HandleFunc("POST /api/p2p/connect", ph.connect)
 
 	// p2p pairing routes — registered unconditionally for the same reason.
-	pp := &p2pPairingHandler{svc: deps.P2PPairing, store: deps.Store, users: deps.Store, reconnector: deps.P2PReconnector}
+	pp := &p2pPairingHandler{svc: deps.P2PPairing, store: deps.Store, users: deps.Store, reconnector: deps.P2PReconnector, host: deps.P2PHost}
 	mux.HandleFunc("POST /api/p2p/pair/start", pp.pairStart)
 	mux.HandleFunc("POST /api/p2p/pair/complete", pp.pairComplete)
 	mux.HandleFunc("GET /api/p2p/peers", pp.listPeers)

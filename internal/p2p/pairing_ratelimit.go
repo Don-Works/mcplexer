@@ -25,9 +25,22 @@ type pairingRateLimiter struct {
 }
 
 type peerAttemptCounter struct {
-	hits        []time.Time
+	hits []time.Time
+	// lockoutHits is a SEPARATE, longer-window (lockoutWindow) attempt history
+	// used to drive the hard lockout. The rolling-window hits slice is trimmed
+	// to `window` and capped at perPeerMax, so it can never reach lockoutAfter
+	// — the lockout was previously unreachable dead code. Every attempt (incl.
+	// window/global-rejected ones) counts here so sustained hammering locks a
+	// peer out.
+	lockoutHits []time.Time
 	lockedUntil time.Time
 }
+
+// maxPairingRateLimitPeers bounds the perPeer map. Pairing streams are
+// reachable pre-pairing and the peer ID is attacker-chosen, so without
+// eviction the map grows one entry per distinct ID forever. When it crosses
+// this, entries whose windows have fully drained and are not locked are swept.
+const maxPairingRateLimitPeers = 4096
 
 func newPairingRateLimiter() *pairingRateLimiter {
 	return &pairingRateLimiter{
@@ -48,11 +61,11 @@ func (l *pairingRateLimiter) allow(peerID string, now time.Time) bool {
 	defer l.mu.Unlock()
 
 	cutoff := now.Add(-l.window)
+	lockoutCutoff := now.Add(-l.lockoutWindow)
 
-	// Global window check.
 	l.globalHits = trimTimes(l.globalHits, cutoff)
-	if len(l.globalHits) >= l.globalMax {
-		return false
+	if len(l.perPeer) > maxPairingRateLimitPeers {
+		l.prunePeersLocked(cutoff, lockoutCutoff, now)
 	}
 
 	pc, ok := l.perPeer[peerID]
@@ -61,29 +74,55 @@ func (l *pairingRateLimiter) allow(peerID string, now time.Time) bool {
 		l.perPeer[peerID] = pc
 	}
 
-	// Hard lockout: persistent attackers stay out of the pool.
+	// countLockout records the attempt toward the hard lockout and engages it
+	// once cumulative pressure crosses the threshold.
+	countLockout := func() {
+		pc.lockoutHits = trimTimes(pc.lockoutHits, lockoutCutoff)
+		pc.lockoutHits = append(pc.lockoutHits, now)
+		if len(pc.lockoutHits) >= l.lockoutAfter {
+			pc.lockedUntil = now.Add(l.lockoutWindow)
+		}
+	}
+
+	// Hard lockout from a prior threshold crossing: reject and re-arm so a
+	// peer that keeps hammering stays out for the full window.
 	if !pc.lockedUntil.IsZero() && now.Before(pc.lockedUntil) {
+		countLockout()
 		return false
 	}
 
+	// Global window check.
+	if len(l.globalHits) >= l.globalMax {
+		return false
+	}
+
+	// Per-peer rolling window cap. A rejection here still counts toward the
+	// lockout so sustained per-minute-cap hammering eventually locks out.
 	pc.hits = trimTimes(pc.hits, cutoff)
 	if len(pc.hits) >= l.perPeerMax {
-		// Rolling window cap reached for this peer.
+		countLockout()
 		return false
 	}
 
 	pc.hits = append(pc.hits, now)
 	l.globalHits = append(l.globalHits, now)
-
-	// Engage lockout once cumulative recent failure pressure crosses the
-	// threshold. We use the per-peer hit list (any-window) length as a
-	// proxy. With perPeerMax=8 and lockoutAfter=20 we never trigger from
-	// allowed traffic; only sustained attempts fed by a peer that resets
-	// the rolling window bucket can hit this.
-	if len(pc.hits) >= l.lockoutAfter {
-		pc.lockedUntil = now.Add(l.lockoutWindow)
-	}
+	countLockout()
 	return true
+}
+
+// prunePeersLocked evicts perPeer entries whose rolling and lockout windows
+// have both fully drained and which are not currently locked. Caller holds mu.
+func (l *pairingRateLimiter) prunePeersLocked(cutoff, lockoutCutoff, now time.Time) {
+	for id, pc := range l.perPeer {
+		if !pc.lockedUntil.IsZero() && now.Before(pc.lockedUntil) {
+			continue
+		}
+		pc.hits = trimTimes(pc.hits, cutoff)
+		pc.lockoutHits = trimTimes(pc.lockoutHits, lockoutCutoff)
+		if len(pc.hits) == 0 && len(pc.lockoutHits) == 0 {
+			delete(l.perPeer, id)
+		}
+	}
 }
 
 // trimTimes returns ts trimmed to entries strictly after cutoff. The slice

@@ -84,7 +84,11 @@ func (p *taskShareProvider) GetTaskPayload(
 		return nil, p2p.ErrTaskNotFound
 	}
 	offers, err := p.store.ListTaskOffers(ctx, store.TaskOfferFilter{
-		Direction: "outgoing", PeerID: requesterPeerID, Limit: 500,
+		Direction: "outgoing", PeerID: requesterPeerID,
+		// Scope to the exact offer in SQL: the envelope nonce is unique per
+		// offer, so this returns at most a handful of rows and a valid offer
+		// can never fall outside the row cap under load.
+		EnvelopeNonce: requestNonce, RemoteTaskID: remoteID, Limit: 500,
 	})
 	if err != nil {
 		return nil, err

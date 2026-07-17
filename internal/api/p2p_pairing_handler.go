@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -25,6 +26,7 @@ type p2pPairingHandler struct {
 	store       store.P2PPeerStore
 	users       store.UserStore  // optional: M7.1 link of remote peer → user
 	reconnector *p2p.Reconnector // optional; enables reconnect_* fields on list
+	host        *p2p.Host        // optional; used to stop redialing a revoked peer
 }
 
 // peerListRow embeds a paired-peer row with optional reconnector telemetry.
@@ -407,6 +409,14 @@ func (h *p2pPairingHandler) revokePeer(w http.ResponseWriter, r *http.Request) {
 		}
 		writeError(w, http.StatusInternalServerError, "revoke: "+err.Error())
 		return
+	}
+	// Stop re-dialing the revoked peer's persisted static address every 60s.
+	// Authorization is already denied post-revoke (IsPaired excludes revoked
+	// rows); this just stops the wasteful redial loop. Best-effort.
+	if h.host != nil {
+		if err := h.host.PruneStaticDial(id); err != nil {
+			slog.Warn("p2p revoke: prune static dial", "peer", id, "error", err)
+		}
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

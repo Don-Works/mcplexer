@@ -13,6 +13,26 @@ import (
 // the protocol's byte cap.
 var ErrShareLineTooLarge = errors.New("p2p share: stream line exceeds cap")
 
+// maxCachedOffers bounds each share service's in-memory offer cache. The cache
+// is a best-effort convenience (the durable record lives in the DB), so a
+// paired peer streaming offers with unique remote_ids must not grow it without
+// limit.
+const maxCachedOffers = 4096
+
+// evictOffersLocked drops entries from a full offer cache down to half its cap.
+// Eviction order is irrelevant to correctness — a re-offer repopulates — so it
+// deletes arbitrary entries (Go's randomized map iteration). The caller holds
+// the map's lock.
+func evictOffersLocked[V any](m map[string]V) {
+	target := maxCachedOffers / 2
+	for k := range m {
+		if len(m) <= target {
+			break
+		}
+		delete(m, k)
+	}
+}
+
 // maxShareControlLineBytes bounds control/metadata frames (registry entries,
 // hub index/search responses, request headers) that carry no large blob body.
 const maxShareControlLineBytes int64 = 16 * 1024 * 1024

@@ -88,6 +88,9 @@ func (s *MemoryShareService) handleMemoryInboundOffer(
 		return
 	}
 	s.mu.Lock()
+	if len(s.offers) >= maxCachedOffers {
+		evictOffersLocked(s.offers)
+	}
 	s.offers[remote+"|"+off.RemoteID] = off
 	s.mu.Unlock()
 	if s.recorder != nil {

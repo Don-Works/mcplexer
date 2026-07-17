@@ -241,6 +241,14 @@ func (s *Service) persistIncoming(
 // to send a task you didn't allow". Idempotent on the uniq_task_offers
 // index — re-tries from the same peer with the same nonce silently
 // no-op (the store's CreateTaskOffer maps duplicate to nil).
+// taskOfferRejectThrottleKey is a sentinel "workspace" giving each peer a
+// single rejection-row budget, independent of the per-share assign throttle.
+// Every rejection is a fresh task_offers INSERT, so without this a peer
+// spamming unauthorized/stale/rotating-share-id offers grows the table without
+// bound. Once the budget is spent the rejection is still acked on the wire; we
+// just stop persisting a row.
+const taskOfferRejectThrottleKey = "\x00task-offer-reject"
+
 func (s *Service) recordRejected(
 	ctx context.Context, fromPeerID string, env *p2p.TaskOfferEnvelope, state string,
 ) {
@@ -248,6 +256,14 @@ func (s *Service) recordRejected(
 		return
 	}
 	now := time.Now().UTC()
+	// Per-peer rejection-row throttle. checkAndStampThrottle upserts a single
+	// throttle row per peer (coalesced), so this bounds row growth to one
+	// throttle row instead of an unbounded stream of rejection rows.
+	if fromPeerID != "" {
+		if throttled, err := s.checkAndStampThrottle(ctx, fromPeerID, taskOfferRejectThrottleKey, now); err == nil && throttled {
+			return
+		}
+	}
 	declined := now
 	row := &store.TaskOffer{
 		ID:                  ulid.Make().String(),

@@ -54,6 +54,11 @@ func (h *Host) PersistStaticDial(addr string) error {
 	if h == nil || addr == "" {
 		return nil
 	}
+	// Serialize the read-modify-write: concurrent POST /api/p2p/connect
+	// requests would otherwise each load, mutate, and overwrite the file,
+	// losing entries from the racing writer.
+	h.staticDialMu.Lock()
+	defer h.staticDialMu.Unlock()
 	path := h.staticDialFile()
 	newID := peerIDInAddr(addr)
 	var kept []string
@@ -68,6 +73,37 @@ func (h *Host) PersistStaticDial(addr string) error {
 	}
 	kept = append(kept, addr)
 	sort.Strings(kept)
+	data, err := json.MarshalIndent(kept, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0o600)
+}
+
+// PruneStaticDial removes every persisted static address for peerID. Called
+// when a peer is revoked so the daemon stops re-dialing it every 60s forever
+// (its address was otherwise never removed). Best-effort; safe on a nil host.
+func (h *Host) PruneStaticDial(peerID string) error {
+	if h == nil || peerID == "" {
+		return nil
+	}
+	h.staticDialMu.Lock()
+	defer h.staticDialMu.Unlock()
+	path := h.staticDialFile()
+	existing := loadStaticDials(path)
+	var kept []string
+	for _, a := range existing {
+		if peerIDInAddr(a) == peerID {
+			continue
+		}
+		kept = append(kept, a)
+	}
+	if len(kept) == len(existing) {
+		return nil // nothing to prune
+	}
 	data, err := json.MarshalIndent(kept, "", "  ")
 	if err != nil {
 		return err

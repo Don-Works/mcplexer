@@ -75,3 +75,28 @@ func TestPairingRateLimiter_Lockout(t *testing.T) {
 		t.Fatal("attacker should be allowed after lockoutWindow")
 	}
 }
+
+// TestPairingRateLimiter_LockoutReachableUnderProdConfig is the regression for
+// the dead-lockout finding: with the shipped defaults (perPeerMax=8,
+// window=1min, lockoutAfter=20) the window-trimmed rolling counter can never
+// reach lockoutAfter, so the lockout used to be unreachable. Sustained
+// hammering that keeps hitting the per-minute cap must now engage it.
+func TestPairingRateLimiter_LockoutReachableUnderProdConfig(t *testing.T) {
+	l := newPairingRateLimiter() // perPeerMax=8, window=1min, lockoutAfter=20
+	l.globalMax = 100000         // don't let the global cap mask the per-peer path
+
+	now := time.Now()
+	// Hammer well past lockoutAfter within a single window; most are rejected
+	// by the per-minute cap, but every attempt counts toward lockout.
+	for i := 0; i < l.lockoutAfter+5; i++ {
+		l.allow("attacker", now.Add(time.Duration(i)*time.Millisecond))
+	}
+	pc := l.perPeer["attacker"]
+	if pc == nil || pc.lockedUntil.IsZero() {
+		t.Fatal("sustained hammering should have engaged the hard lockout")
+	}
+	// And a fresh attempt inside the lockout window is rejected.
+	if l.allow("attacker", now.Add(time.Second)) {
+		t.Fatal("attacker should be locked out after crossing lockoutAfter")
+	}
+}

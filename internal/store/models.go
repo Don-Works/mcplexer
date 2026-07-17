@@ -1923,8 +1923,14 @@ type TaskOfferFilter struct {
 	Direction string // ""|incoming|outgoing
 	State     string // ""|pending|accepted|...
 	PeerID    string // ""|<peer_id>
-	Since     *time.Time
-	Limit     int
+	// EnvelopeNonce and RemoteTaskID scope the query to a single offer. The
+	// cross-peer Phase B payload lookup uses them so the authorization match
+	// runs in SQL rather than by paging a bounded list (a valid offer beyond
+	// the row cap was otherwise spuriously denied under load).
+	EnvelopeNonce string
+	RemoteTaskID  string
+	Since         *time.Time
+	Limit         int
 }
 
 // MilestoneBurndown is the aggregate view of one milestone-tagged epic

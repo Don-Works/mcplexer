@@ -31,9 +31,10 @@ type Host struct {
 	discoveryMu sync.RWMutex
 	discovery   *DiscoveryService // optional; set by NewDiscoveryService
 	tracker     *holePunchTracker // optional; set when hole-punch tracing enabled
-	logger      *slog.Logger
-	closeMu     sync.Mutex
-	closed      bool
+	logger       *slog.Logger
+	closeMu      sync.Mutex
+	closed       bool
+	staticDialMu sync.Mutex // serializes static-dial.json read-modify-write
 }
 
 // NewHost boots a libp2p Host using cfg. If cfg.Enabled is false, returns

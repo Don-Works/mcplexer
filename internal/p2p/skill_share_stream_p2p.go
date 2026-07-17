@@ -78,6 +78,9 @@ func (s *SkillShareService) handleInboundOffer(
 		return
 	}
 	s.mu.Lock()
+	if len(s.offers) >= maxCachedOffers {
+		evictOffersLocked(s.offers)
+	}
 	s.offers[remote+"|"+off.Name] = off
 	s.mu.Unlock()
 	s.recordAudit(ctx, "offer_received", remote, off.Name, "pending", "")

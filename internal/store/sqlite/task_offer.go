@@ -109,6 +109,14 @@ func (d *DB) ListTaskOffers(ctx context.Context, f store.TaskOfferFilter) ([]sto
 		conds = append(conds, "(from_peer_id = ? OR to_peer_id = ?)")
 		args = append(args, f.PeerID, f.PeerID)
 	}
+	if f.EnvelopeNonce != "" {
+		conds = append(conds, "envelope_nonce = ?")
+		args = append(args, f.EnvelopeNonce)
+	}
+	if f.RemoteTaskID != "" {
+		conds = append(conds, "remote_task_id = ?")
+		args = append(args, f.RemoteTaskID)
+	}
 	if f.Since != nil {
 		conds = append(conds, "created_at >= ?")
 		args = append(args, f.Since.Unix())
