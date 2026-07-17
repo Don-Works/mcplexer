@@ -273,14 +273,12 @@ func parseLogLines(stdout, stderr []byte) ([]Line, rawLine, rawLine) {
 	// emit service groups out of timestamp order. Sort each captured stream
 	// before the stable stdout/stderr merge so the persisted cursor is the
 	// maximum observed timestamp rather than whichever service printed last.
-	byTimestampThenRaw := func(a, b parsedLine) int {
-		if cmp := a.ts.Compare(b.ts); cmp != 0 {
-			return cmp
-		}
-		return strings.Compare(a.raw, b.raw)
-	}
-	slices.SortStableFunc(stdoutLines, byTimestampThenRaw)
-	slices.SortStableFunc(stderrLines, byTimestampThenRaw)
+	byTimestamp := func(a, b parsedLine) int { return a.ts.Compare(b.ts) }
+	// Stable ordering is required for multiline entries: splitStream assigns a
+	// continuation the timestamp of its parent, and equal-timestamp frames must
+	// retain their wire order rather than being sorted by message text.
+	slices.SortStableFunc(stdoutLines, byTimestamp)
+	slices.SortStableFunc(stderrLines, byTimestamp)
 	merged := mergeByTS(stdoutLines, stderrLines)
 	if len(merged) == 0 {
 		return nil, rawLine{}, rawLine{}

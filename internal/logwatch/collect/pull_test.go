@@ -212,6 +212,33 @@ func TestPull_ComposeAggregationSortsBeforeCursorAdvance(t *testing.T) {
 	}
 }
 
+func TestParseLogLines_StableTimestampSortPreservesContinuations(t *testing.T) {
+	stdout := []byte("" +
+		"2026-07-08T14:00:20.000000000Z later entry\n" +
+		"2026-07-08T14:00:10.000000000Z panic: parent\n" +
+		"    z-frame continuation\n" +
+		"    a-frame continuation\n")
+	lines, first, last := parseLogLines(stdout, nil)
+	want := []string{
+		"panic: parent",
+		"    z-frame continuation",
+		"    a-frame continuation",
+		"later entry",
+	}
+	if len(lines) != len(want) {
+		t.Fatalf("lines: got %+v", lines)
+	}
+	for i := range want {
+		if lines[i].Text != want[i] {
+			t.Fatalf("line %d: got %q, want %q (all=%+v)", i, lines[i].Text, want[i], lines)
+		}
+	}
+	if first.ts.After(last.ts) || first.raw != "2026-07-08T14:00:10.000000000Z panic: parent" ||
+		last.raw != "2026-07-08T14:00:20.000000000Z later entry" {
+		t.Fatalf("cursor bounds: first=%+v last=%+v", first, last)
+	}
+}
+
 // TestPull_Truncation appends the synthetic truncation event so a
 // capped window can't masquerade as quiet logs.
 func TestPull_Truncation(t *testing.T) {
