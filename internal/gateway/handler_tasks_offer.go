@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/don-works/mcplexer/internal/mesh"
 	"github.com/don-works/mcplexer/internal/store"
 	"github.com/don-works/mcplexer/internal/tasks"
 )
@@ -119,9 +120,12 @@ func (h *handler) handleTaskOffer(
 	if rpc := h.requireWorkspaceWrite(ctx, wsID); rpc != nil {
 		return nil, rpc
 	}
-	peerID := h.resolvePeerAddress(ctx, to)
-	if peerID == "" {
-		return marshalErrorResult(fmt.Sprintf("No paired peer matches %q.", to)), nil
+	peerID, resolveErr := h.resolveMeshPeer(ctx, to)
+	if resolveErr != nil {
+		// Ambiguity-aware: a display-name collision must NOT silently first-
+		// match a peer and redirect the offer (and its task payload) to the
+		// wrong device — surface it so the user passes the full peer id.
+		return marshalErrorResult(mesh.FormatPeerNotPairedError(to, resolveErr)), nil
 	}
 	row, err := h.tasksSvc.Offer(ctx, tasks.OfferOptions{
 		WorkspaceID:  wsID,
@@ -246,9 +250,11 @@ func (h *handler) handleTaskListOffers(
 	}
 	peerID := peer
 	if peer != "" {
-		if resolved := h.resolvePeerAddress(ctx, peer); resolved != "" {
-			peerID = resolved
+		resolved, resolveErr := h.resolveMeshPeer(ctx, peer)
+		if resolveErr != nil {
+			return marshalErrorResult(mesh.FormatPeerNotPairedError(peer, resolveErr)), nil
 		}
+		peerID = resolved
 	}
 	f := store.TaskOfferFilter{
 		Direction: direction,
@@ -319,28 +325,6 @@ func (h *handler) filterTaskOffersForWorker(ctx context.Context, rows []store.Ta
 		}
 	}
 	return out
-}
-
-// resolvePeerAddress accepts either a device name or a raw peer id. We
-// pass through obvious peer ids (long base58 starting with "12D3" or
-// similar) and only invoke the mesh resolver for short device-name
-// inputs.
-func (h *handler) resolvePeerAddress(ctx context.Context, toAddr string) string {
-	to := strings.TrimSpace(toAddr)
-	if to == "" {
-		return ""
-	}
-	if h.mesh == nil {
-		// No mesh resolver — best we can do is pass through.
-		return to
-	}
-	if resolved := h.mesh.ResolveDeviceName(ctx, to); resolved != "" {
-		return resolved
-	}
-	// ResolveDeviceName falls back to "return input" semantics on its own
-	// implementations, but defensively pass-through here too so the wire
-	// dial gets an attempt rather than a silent empty-string return.
-	return to
 }
 
 // resolveOfferWorkspace turns a `workspace` arg (name or id) into a

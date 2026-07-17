@@ -563,6 +563,15 @@ type MeshMessageFilter struct {
 	// and never make the window. Default (false) preserves the existing
 	// priority_order(priority), id DESC ordering for every other caller.
 	OrderRecent bool
+
+	// OrderOldest, when true, orders results strictly oldest-first
+	// (ORDER BY id ASC). Used by the filter=new cursor scan so that a LIMIT
+	// truncation drops the NEWEST rows and the scanned window is a contiguous
+	// block starting at the cursor — otherwise a priority-first ordering can
+	// keep high-priority NEW rows while dropping older low-priority ones,
+	// and advancing the cursor past them loses those messages permanently.
+	// Mutually exclusive with OrderRecent; OrderRecent wins if both set.
+	OrderOldest bool
 }
 
 // ToolDescriptionVersion represents a versioned tool description suggestion.

@@ -660,7 +660,13 @@ func (m *Manager) Receive(ctx context.Context, meta SessionMeta, req ReceiveRequ
 			// this agent's own task mutations) are never "new for you" —
 			// without this they perpetually re-trigger the pending nag.
 			// filter=all and thread reads stay inclusive for catch-up.
-			ExcludeSessionID:  meta.SessionID,
+			ExcludeSessionID: meta.SessionID,
+			// Scan oldest-first so a cursorScanLimit truncation drops only the
+			// NEWEST rows (re-fetched next poll). Without this, a priority-first
+			// LIMIT over a readable-workspace union larger than cursorScanLimit
+			// keeps high-priority new rows but silently drops older low-priority
+			// ones — and advancing the cursor past them loses them forever.
+			OrderOldest:       true,
 			Limit:             cursorScanLimit,
 			Repo:              req.Repo,
 			Branch:            req.Branch,
@@ -699,9 +705,15 @@ func (m *Manager) Receive(ctx context.Context, meta SessionMeta, req ReceiveRequ
 		if req.ThreadID == "" {
 			return nil, fmt.Errorf("thread_id is required when filter=thread")
 		}
+		// Audience scoping MUST match the new/all branches: without Audience +
+		// AgentRole the store applies no audience predicate and returns every
+		// message in the thread regardless of audience, leaking replies
+		// addressed to a specific session/role to any agent in the workspace.
 		msgs, err = m.store.QueryMeshMessages(ctx, store.MeshMessageFilter{
 			WorkspaceIDs: readableWorkspaceIDs,
 			ThreadRoot:   req.ThreadID,
+			Audience:     meta.SessionID,
+			AgentRole:    agentRole,
 			StatusLive:   true,
 			Limit:        maxResults,
 		})

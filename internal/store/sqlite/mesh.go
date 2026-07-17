@@ -174,6 +174,12 @@ func (d *DB) QueryMeshMessages(ctx context.Context, f store.MeshMessageFilter) (
 		// low/normal-priority agent-outbound row must not be pushed below
 		// high-priority inbound traffic and lost from the window.
 		query += " ORDER BY id DESC"
+	} else if f.OrderOldest {
+		// Oldest-first contiguous window: a LIMIT then drops only the NEWEST
+		// rows, so the filter=new cursor scan can advance its cursor to the
+		// delivered batch's max id without ever skipping an older row that a
+		// priority-first LIMIT would have cut.
+		query += " ORDER BY id ASC"
 	} else {
 		query += " ORDER BY priority_order(priority), id DESC"
 

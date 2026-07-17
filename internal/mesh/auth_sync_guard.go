@@ -8,6 +8,10 @@ import "time"
 // appended so a row's provenance records *which* peer it came from.
 const meshImportSourcePrefix = "mesh-import:"
 
+// maxAuthSyncSeen caps the in-memory replay-dedup set before it is cleared.
+// Peer-controlled snapshot IDs would otherwise grow it without bound.
+const maxAuthSyncSeen = 16384
+
 // meshImportSource is the Source value stamped on rows imported from peerID.
 func meshImportSource(peerID string) string {
 	return meshImportSourcePrefix + peerID
@@ -51,6 +55,15 @@ func (m *Manager) authSyncAcceptSnapshot(peerID, scopeName, snapshotID string, e
 	}
 	if m.authSyncFreshness == nil {
 		m.authSyncFreshness = map[string]time.Time{}
+	}
+	// Bound the dedup set: snapshotID is peer-controlled, so a chatty/malicious
+	// peer would otherwise grow it one entry per snapshot for the daemon's
+	// life. Clearing is safe because the freshness watermark below
+	// independently rejects any snapshot whose exportedAt is not strictly newer
+	// than the last accepted — a replay of an evicted snapshotID still fails
+	// that check — so the dedup set only guards against same-batch duplicates.
+	if len(m.authSyncSeen) >= maxAuthSyncSeen {
+		m.authSyncSeen = map[string]struct{}{}
 	}
 	seenKey := peerID + "\x00" + snapshotID
 	if _, dup := m.authSyncSeen[seenKey]; dup {

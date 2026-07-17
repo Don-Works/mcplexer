@@ -5,11 +5,35 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/don-works/mcplexer/internal/p2p"
 	"github.com/don-works/mcplexer/internal/store"
 )
+
+// stripReservedTags removes transport-reserved tokens — the "p2p" marker and
+// any "from:*" origin tag — from peer-supplied envelope tags. Tags are not
+// covered by the envelope signature, so without this a paired peer could
+// inject a "from:" tag that sourcePeerID (first-match) would treat as the
+// message origin, spoofing another peer or the local self to bypass the
+// dispatcher's peer-scope authorization. Splitting mirrors match.splitTags
+// (comma-separated, space-trimmed); non-reserved tags are preserved in order.
+func stripReservedTags(raw string) string {
+	if raw == "" {
+		return ""
+	}
+	parts := strings.Split(raw, ",")
+	kept := make([]string, 0, len(parts))
+	for _, p := range parts {
+		t := strings.TrimSpace(p)
+		if t == "" || t == "p2p" || strings.HasPrefix(t, "from:") {
+			continue
+		}
+		kept = append(kept, t)
+	}
+	return strings.Join(kept, ",")
+}
 
 // p2pTransport is the narrow surface of *p2p.MeshTransport that mesh.Manager
 // uses. Defined here (not in p2p) so the mesh package doesn't take a
@@ -174,15 +198,18 @@ func (m *Manager) ingestEnvelope(ctx context.Context, env p2p.MeshEnvelope) erro
 	if env.Recipient.Kind == "role" && env.Recipient.Value != "" {
 		audience = env.Recipient.Value
 	}
-	// Preserve the sender's tags so M4 mesh-trigger tag_match filters can
-	// fire on cross-peer messages, then append the transport-level
-	// "p2p,from:<peer_id>" markers the dispatcher's loop-guard /
-	// peer-scope check rely on. Original-then-marker order keeps existing
-	// "from:" tag lookups (sourcePeerID) working — splitTags returns the
-	// first "from:" tag it sees, which will still be the one we add here.
+	// Stamp the trusted transport markers FIRST, then append the sender's own
+	// tags with any reserved tokens stripped. Envelope tags are NOT covered by
+	// the signature, so a paired peer could otherwise inject its own
+	// "from:<victim>" (or "from:<our-self-id>") that, because sourcePeerID
+	// returns the FIRST "from:" tag, would win over the real marker and bypass
+	// the dispatcher's cross-peer peer-scope gate. Putting the trusted marker
+	// first AND removing peer-supplied from:/p2p tokens closes both the
+	// ordering and the injection. Non-reserved tags (M4 tag_match filter
+	// targets) are preserved.
 	inboundTags := "p2p,from:" + env.SenderPeerID
-	if env.Tags != "" {
-		inboundTags = env.Tags + "," + inboundTags
+	if sanitized := stripReservedTags(env.Tags); sanitized != "" {
+		inboundTags = inboundTags + "," + sanitized
 	}
 	msg := &store.MeshMessage{
 		ID:                env.ID,
