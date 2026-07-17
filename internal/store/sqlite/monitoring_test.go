@@ -24,6 +24,40 @@ func seedRemoteHost(t *testing.T, db interface {
 	return h
 }
 
+// TestSetRemoteHostPinCompareAndSet is the M3 regression: establishing a TOFU
+// pin is a compare-and-set, so a concurrent stale-read / MITM presenting a
+// different key cannot overwrite an established pin.
+func TestSetRemoteHostPinCompareAndSet(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	wsID, scopeID := seedWorkspaceAndScope(t, db, ctx)
+	h := seedRemoteHost(t, db, ctx, wsID, scopeID)
+
+	if err := db.SetRemoteHostPin(ctx, h.ID, "SHA256:aaa"); err != nil {
+		t.Fatalf("establish pin: %v", err)
+	}
+	if err := db.SetRemoteHostPin(ctx, h.ID, "SHA256:aaa"); err != nil {
+		t.Fatalf("re-affirm same pin: %v", err)
+	}
+	if err := db.SetRemoteHostPin(ctx, h.ID, "SHA256:bbb"); !errors.Is(err, store.ErrRemoteHostPinConflict) {
+		t.Fatalf("conflicting pin err = %v, want ErrRemoteHostPinConflict", err)
+	}
+	got, err := db.GetRemoteHost(ctx, h.ID)
+	if err != nil {
+		t.Fatalf("get host: %v", err)
+	}
+	if got.HostKeyPin != "SHA256:aaa" {
+		t.Fatalf("pin overwritten under conflict: got %q, want SHA256:aaa", got.HostKeyPin)
+	}
+	// Operator clear then re-pin with the new key is allowed.
+	if err := db.SetRemoteHostPin(ctx, h.ID, ""); err != nil {
+		t.Fatalf("clear pin: %v", err)
+	}
+	if err := db.SetRemoteHostPin(ctx, h.ID, "SHA256:bbb"); err != nil {
+		t.Fatalf("re-pin after clear: %v", err)
+	}
+}
+
 // TestRemoteHostCRUD walks one host row through every operation the
 // admin surface depends on: defaults, get, list, update, pin, delete.
 func TestRemoteHostCRUD(t *testing.T) {

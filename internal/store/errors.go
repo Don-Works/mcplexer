@@ -114,4 +114,9 @@ var (
 	ErrLogSourceNotFound         = errors.New("log source not found")
 	ErrMonitoringChannelNotFound = errors.New("monitoring channel not found")
 	ErrLogTemplateNotFound       = errors.New("log template not found")
+	// ErrRemoteHostPinConflict is returned by SetRemoteHostPin when an
+	// already-established TOFU host-key pin differs from the one being set —
+	// a concurrent stale-read or a MITM presenting a different key. The pin is
+	// NOT overwritten; the caller must fail the pull and alert.
+	ErrRemoteHostPinConflict = errors.New("remote host key pin conflict")
 )

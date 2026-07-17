@@ -240,12 +240,20 @@ func (d *Distiller) evaluateRateSpike(ctx context.Context, src *store.LogSource,
 
 	switch {
 	case isSpike && !active:
-		if err := d.fireRateSpike(ctx, src, host, now, current, currentRate, baselineRate); err != nil {
-			slog.Warn("distill: notify rate spike", "source", src.Name, "error", err)
-			return
-		}
+		// Arm the latch BEFORE notifying. Notifying first and then persisting
+		// meant a latch-write failure left active=false while the alert had
+		// already gone out, so every subsequent tick re-fired a duplicate. If
+		// the notify then fails, roll the latch back so the next tick retries.
 		if err := d.store.SetLogSourceErrorSpikeActive(ctx, src.ID, true); err != nil {
 			slog.Warn("distill: rate spike arm", "source", src.Name, "error", err)
+			return
+		}
+		if err := d.fireRateSpike(ctx, src, host, now, current, currentRate, baselineRate); err != nil {
+			slog.Warn("distill: notify rate spike", "source", src.Name, "error", err)
+			if rbErr := d.store.SetLogSourceErrorSpikeActive(ctx, src.ID, false); rbErr != nil {
+				slog.Warn("distill: rate spike arm rollback", "source", src.Name, "error", rbErr)
+			}
+			return
 		}
 	case !isSpike && active:
 		if err := d.store.SetLogSourceErrorSpikeActive(ctx, src.ID, false); err != nil {

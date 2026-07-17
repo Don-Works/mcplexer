@@ -70,6 +70,14 @@ func quoteCursor(tok string) (string, error) {
 	return "'" + tok + "'", nil
 }
 
+// ValidJournalCursor reports whether tok is a well-formed journald opaque
+// cursor (charset + length). Exported so the collector can validate a cursor
+// extracted from remote output BEFORE persisting it, rather than discovering
+// the corruption only when the next command build fails.
+func ValidJournalCursor(tok string) bool {
+	return len(tok) <= maxCursorLen && cursorTokenRe.MatchString(tok)
+}
+
 // CommandForSource builds the fixed read-only pull command for a
 // source's kind. This is the ONLY place a remote command string is
 // constructed; every kind has a literal template with quoted variable
@@ -208,7 +216,10 @@ func JournaldCommand(unit string, since time.Time, cursor string) (string, error
 		return "", err
 	}
 	cmd := "journalctl -u " + u + " -q -o short-iso-precise --no-pager --utc --show-cursor"
-	// An exact cursor always wins over a lossy timestamp window.
+	// An exact cursor always wins over a lossy timestamp window. A malformed
+	// cursor is REJECTED here (the ADR's no-injection guarantee over the one
+	// remote-derived token); the collector validates and clears a corrupt
+	// stored cursor before this point so it never wedges the source.
 	if cursor != "" {
 		c, err := quoteCursor(cursor)
 		if err != nil {

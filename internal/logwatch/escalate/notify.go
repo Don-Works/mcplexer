@@ -25,7 +25,13 @@ func (d *Dispatcher) Notify(ctx context.Context, n distill.Notification) error {
 	if suppressed != "" && !isHumanCandidate(n) {
 		slog.Info("escalate: suppressed", "workspace", n.WorkspaceID,
 			"template", n.TemplateID, "reason", suppressed)
-		return nil
+		// Route through deliveryResult rather than returning nil: a suppressed
+		// NEW error incident (delivered=0) must propagate an error so the
+		// distiller leaves the hysteresis latch UNARMED and retries once the
+		// throttle budget frees — returning nil here silently armed the latch
+		// and lost the episode. Info / non-new traffic still returns nil via
+		// deliveryResult's severity/NewIncident gate.
+		return d.deliveryResult(n, 0, []string{"channels: " + suppressed})
 	}
 	workspace, err := d.store.GetWorkspace(ctx, n.WorkspaceID)
 	if err != nil {

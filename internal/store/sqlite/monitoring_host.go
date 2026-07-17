@@ -120,14 +120,52 @@ func (d *DB) DeleteRemoteHost(ctx context.Context, id string) error {
 
 // SetRemoteHostPin records the TOFU host-key fingerprint. Pass "" to
 // clear before a deliberate operator re-pin (ADR 0007 §3).
+//
+// Establishing a pin is a compare-and-set: it succeeds only when no pin is
+// stored yet or the stored pin already equals `pin`. A concurrent stale-read
+// pull (or a MITM presenting a different key) that races to establish a
+// DIFFERENT pin gets ErrRemoteHostPinConflict and does NOT overwrite the
+// established pin — closing the last-writer-wins TOCTOU on pin establishment.
 func (d *DB) SetRemoteHostPin(ctx context.Context, id, pin string) error {
+	now := formatTime(time.Now().UTC())
+	if pin == "" {
+		// Explicit operator clear before a deliberate re-pin: unconditional.
+		res, err := d.q.ExecContext(ctx, `
+			UPDATE remote_hosts SET host_key_pin = '', updated_at = ?
+			WHERE id = ?`, now, id)
+		if err != nil {
+			return fmt.Errorf("clear remote host pin: %w", err)
+		}
+		return requireRowAffected(res, store.ErrRemoteHostNotFound)
+	}
 	res, err := d.q.ExecContext(ctx, `
 		UPDATE remote_hosts SET host_key_pin = ?, updated_at = ?
-		WHERE id = ?`, pin, formatTime(time.Now().UTC()), id)
+		WHERE id = ? AND (host_key_pin IS NULL OR host_key_pin = '' OR host_key_pin = ?)`,
+		pin, now, id, pin)
 	if err != nil {
 		return fmt.Errorf("set remote host pin: %w", err)
 	}
-	return requireRowAffected(res, store.ErrRemoteHostNotFound)
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("set remote host pin: rows affected: %w", err)
+	}
+	if affected > 0 {
+		return nil
+	}
+	// No row updated: either the host is gone or an established pin differs.
+	var existing string
+	row := d.q.QueryRowContext(ctx,
+		`SELECT COALESCE(host_key_pin, '') FROM remote_hosts WHERE id = ?`, id)
+	switch err := row.Scan(&existing); {
+	case errors.Is(err, sql.ErrNoRows):
+		return store.ErrRemoteHostNotFound
+	case err != nil:
+		return fmt.Errorf("set remote host pin: verify: %w", err)
+	case existing != "" && existing != pin:
+		return store.ErrRemoteHostPinConflict
+	default:
+		return nil // raced to the same pin; treat as success
+	}
 }
 
 func scanRemoteHost(row interface{ Scan(...any) error }) (*store.RemoteHost, error) {

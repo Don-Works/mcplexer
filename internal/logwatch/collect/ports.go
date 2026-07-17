@@ -7,7 +7,9 @@ import (
 	"net"
 	"sort"
 	"strings"
+	"unicode"
 
+	"github.com/don-works/mcplexer/internal/audit"
 	"github.com/don-works/mcplexer/internal/store"
 )
 
@@ -121,10 +123,33 @@ func (m *Manager) portExposureLines(
 	fingerprint := portFingerprint(obs.PortExposures)
 	lines := make([]Line, 0, len(obs.PortExposures))
 	for _, p := range obs.PortExposures {
+		// These fields come from `docker ps` on the remote host, so strip
+		// control chars/newlines (a hostile container name must not inject
+		// lines into the notification) and run the composed text through the
+		// same redaction pass as pulled log lines.
+		text := fmt.Sprintf("logwatch: published port exposure observed — container=%s bind_address=%s host_port=%s container_port=%s/%s; external reachability not asserted",
+			sanitizeRemoteField(p.ContainerName), sanitizeRemoteField(p.HostIP),
+			sanitizeRemoteField(p.HostPort), sanitizeRemoteField(p.ContainerPort),
+			sanitizeRemoteField(p.Protocol))
 		lines = append(lines, Line{TS: now, Notify: true,
 			IncidentID: "port-exposure:" + host.ID + ":" + fingerprint,
-			Text: fmt.Sprintf("logwatch: published port exposure observed — container=%s bind_address=%s host_port=%s container_port=%s/%s; external reachability not asserted",
-				p.ContainerName, p.HostIP, p.HostPort, p.ContainerPort, p.Protocol)})
+			Text:       audit.RedactString(text, nil)})
 	}
 	return lines, state
+}
+
+// sanitizeRemoteField strips control characters (incl. newlines) from a
+// remote-derived docker field and bounds its length, so it can be embedded in
+// a single-line notification without injecting lines or terminal escapes.
+func sanitizeRemoteField(s string) string {
+	cleaned := strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return -1
+		}
+		return r
+	}, s)
+	if len(cleaned) > 200 {
+		cleaned = cleaned[:200]
+	}
+	return cleaned
 }

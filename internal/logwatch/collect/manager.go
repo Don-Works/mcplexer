@@ -156,6 +156,7 @@ func (m *Manager) tick(ctx context.Context) {
 		slog.Warn("logwatch: list sources", "error", err)
 		return
 	}
+	m.pruneState(sources)
 	var g errgroup.Group
 	g.SetLimit(tickConcurrency)
 	for _, src := range sources {
@@ -172,6 +173,41 @@ func (m *Manager) tick(ctx context.Context) {
 		})
 	}
 	_ = g.Wait()
+}
+
+// pruneState drops per-source and per-host in-memory state for sources that
+// are no longer enabled (deleted or disabled). Without this the Manager's maps
+// (lastRun, dark, truncated, hostPorts) accumulate one entry per source/host
+// ever seen, growing for the daemon's lifetime.
+func (m *Manager) pruneState(sources []*store.LogSource) {
+	liveSources := make(map[string]struct{}, len(sources))
+	liveHosts := make(map[string]struct{}, len(sources))
+	for _, s := range sources {
+		liveSources[s.ID] = struct{}{}
+		liveHosts[s.RemoteHostID] = struct{}{}
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for id := range m.lastRun {
+		if _, ok := liveSources[id]; !ok {
+			delete(m.lastRun, id)
+		}
+	}
+	for id := range m.dark {
+		if _, ok := liveSources[id]; !ok {
+			delete(m.dark, id)
+		}
+	}
+	for id := range m.truncated {
+		if _, ok := liveSources[id]; !ok {
+			delete(m.truncated, id)
+		}
+	}
+	for id := range m.hostPorts {
+		if _, ok := liveHosts[id]; !ok {
+			delete(m.hostPorts, id)
+		}
+	}
 }
 
 // pullOne runs one source's pull and records failure accounting. It

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/don-works/mcplexer/internal/logwatch/sshx"
 	"github.com/don-works/mcplexer/internal/store"
 )
 
@@ -99,6 +100,14 @@ func splitJournalCursor(stdout []byte) ([]byte, string) {
 	cursor := strings.TrimSpace(trimmed[idx+len(journalCursorPrefix):])
 	if strings.Contains(cursor, "\n") {
 		return stdout, ""
+	}
+	// This cursor is derived from remote output and will be persisted then fed
+	// back into the next command line. Validate it here so a corrupted/oversize
+	// token is never stored — strip the marker (it must not be ingested as a
+	// log line) but return an empty cursor so the caller keeps its prior cursor
+	// instead of persisting garbage that would wedge the source.
+	if !sshx.ValidJournalCursor(cursor) {
+		return []byte(trimmed[:idx]), ""
 	}
 	return []byte(trimmed[:idx]), cursor
 }

@@ -3,7 +3,9 @@ package collect
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"log/slog"
 	"slices"
 	"strings"
 	"time"
@@ -79,6 +81,13 @@ func (m *Manager) executePull(
 	// reading it here keeps the command builder's window choice driven by the
 	// same persisted row the ingest path reconciles against.
 	cursor := decodeCursorState(src.CursorHash).JournalCursor
+	if cursor != "" && !sshx.ValidJournalCursor(cursor) {
+		// A corrupt/legacy persisted cursor would fail the strict command
+		// builder and wedge the source on every pull. Drop it so this pull
+		// falls back to a --since window and re-establishes a valid cursor.
+		slog.Warn("logwatch: dropping invalid stored journal cursor", "source", src.ID)
+		cursor = ""
+	}
 	pullCtx, cancel := context.WithTimeout(ctx, pullTimeout)
 	defer cancel()
 	return m.runner.Pull(pullCtx, host, cred, src, logSince, eventsSince, cursor)
@@ -88,10 +97,18 @@ func (m *Manager) persistObservedPin(ctx context.Context, hostID, pin string) er
 	if pin == "" {
 		return nil
 	}
-	if err := m.store.SetRemoteHostPin(ctx, hostID, pin); err != nil {
-		return fmt.Errorf("logwatch: persist TOFU pin: %w", err)
+	err := m.store.SetRemoteHostPin(ctx, hostID, pin)
+	if err == nil {
+		return nil
 	}
-	return nil
+	if errors.Is(err, store.ErrRemoteHostPinConflict) {
+		// Two different keys were established/observed concurrently — a strong
+		// MITM/re-provision signal. Surface it as a host-key mismatch so it
+		// fails the pull loudly and fires the host_key_mismatch alert (the pin
+		// itself was preserved by the compare-and-set).
+		return &sshx.HostKeyMismatchError{Host: hostID, Presented: pin}
+	}
+	return fmt.Errorf("logwatch: persist TOFU pin: %w", err)
 }
 
 func (m *Manager) ingestPull(
@@ -105,7 +122,18 @@ func (m *Manager) ingestPull(
 	if src.Kind == store.LogSourceKindJournald {
 		stdout, newJournalCursor = splitJournalCursor(stdout)
 	}
-	lines, firstRaw, lastRaw := parseLogLines(stdout, result.Stderr, result.Truncated)
+	// Only `docker logs` writes real, timestamped container stderr; for
+	// compose/swarm/journald, stderr is CLI diagnostics (no leading timestamp),
+	// which parseLogLines would ingest as zero-timestamp "evidence" and let
+	// pollute the cursor. Route those to a synthetic, pull-time-stamped
+	// diagnostic line instead of the timestamp-parsed evidence stream.
+	evidenceStderr := result.Stderr
+	var diagnosticStderr string
+	if src.Kind != store.LogSourceKindDocker {
+		diagnosticStderr = strings.TrimSpace(string(result.Stderr))
+		evidenceStderr = nil
+	}
+	lines, firstRaw, lastRaw := parseLogLines(stdout, evidenceStderr, result.Truncated)
 	// Every collected steady-state kind now uses an exclusive window:
 	// journald has --after-cursor; Docker/Compose/Swarm receive cursorTS+1ns.
 	// An exclusive window cannot re-return the stored tail, while Compose's
@@ -117,6 +145,12 @@ func (m *Manager) ingestPull(
 		lines, discontinuity = reconcileCursor(lines, firstRaw, src, state)
 	}
 	var signals []Line
+	if diagnosticStderr != "" {
+		signals = append(signals, Line{
+			TS:   m.now().UTC(),
+			Text: audit.RedactString("logwatch: collector diagnostic (stderr): "+diagnosticStderr, nil),
+		})
+	}
 	if result.Docker != nil {
 		var lifecycle []Line
 		lifecycle, state = m.lifecycleLines(src, state, result.Docker)
