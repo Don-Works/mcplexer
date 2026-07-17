@@ -29,6 +29,7 @@ import {
   resolveFocusTarget,
   type ConnectionFilter,
   type WorkspaceConnectionRow,
+  type WorkspaceConnectionSummary,
 } from '@/components/connections/connection-model'
 import { Button } from '@/components/ui/button'
 
@@ -38,6 +39,30 @@ const EMPTY_SERVERS: DownstreamServer[] = []
 const EMPTY_WORKSPACES: Workspace[] = []
 const EMPTY_ROUTES: RouteRule[] = []
 const EMPTY_SCOPES: AuthScope[] = []
+
+// The workspace console is entered from many places that can't carry a
+// ?workspace= param (command palette entries, plain /workspaces links). Rather
+// than silently snapping those to workspaces[0] — which lands the user on some
+// other project's settings/delete buttons — we remember the last workspace the
+// user actually worked in and prefer it as the fallback.
+const LAST_WORKSPACE_KEY = 'mcplexer.connections.lastWorkspaceId'
+
+function readLastWorkspaceId(): string | null {
+  try {
+    return window.localStorage.getItem(LAST_WORKSPACE_KEY)
+  } catch {
+    return null
+  }
+}
+
+function writeLastWorkspaceId(id: string) {
+  try {
+    window.localStorage.setItem(LAST_WORKSPACE_KEY, id)
+  } catch {
+    // Storage disabled (private mode / policy) — sticky context is a nicety,
+    // not a correctness requirement, so degrade silently to the URL param.
+  }
+}
 
 interface DrawerTarget {
   server: DownstreamServer
@@ -75,15 +100,29 @@ export function ConnectionsPage() {
   )
 
   const requestedWorkspaceId = searchParams.get('workspace')
-  const selectedWorkspace = useMemo(
-    () => workspaces.find((workspace) => workspace.id === requestedWorkspaceId) ?? workspaces[0] ?? null,
-    [requestedWorkspaceId, workspaces],
-  )
+  const selectedWorkspace = useMemo(() => {
+    if (workspaces.length === 0) return null
+    // An explicit URL param always wins. Otherwise fall back to the last
+    // workspace the user actually worked in, then to the first workspace.
+    const byRequest = requestedWorkspaceId
+      ? workspaces.find((workspace) => workspace.id === requestedWorkspaceId)
+      : undefined
+    if (byRequest) return byRequest
+    const persistedId = readLastWorkspaceId()
+    const byPersisted = persistedId
+      ? workspaces.find((workspace) => workspace.id === persistedId)
+      : undefined
+    return byPersisted ?? workspaces[0] ?? null
+  }, [requestedWorkspaceId, workspaces])
   const selectedWorkspaceId = selectedWorkspace?.id ?? ''
+
+  // Remember the active workspace so param-less entrypoints resume it.
+  useEffect(() => {
+    if (selectedWorkspaceId) writeLastWorkspaceId(selectedWorkspaceId)
+  }, [selectedWorkspaceId])
   const view = normalizeView(searchParams.get('view'))
   const section: WorkspaceSection = view === 'activity' || view === 'settings' ? view : 'access'
   const advancedOpen = searchParams.get('advanced') === '1'
-  const operations = useWorkspaceOperations(selectedWorkspaceId, routes)
 
   const rows = useMemo<WorkspaceConnectionRow[]>(
     () => selectedWorkspace
@@ -181,6 +220,7 @@ export function ConnectionsPage() {
             summaries={summaries}
             selectedWorkspaceId={selectedWorkspaceId}
             libraryActive={view === 'servers'}
+            selectionSuppressed={view === 'new-workspace' || view === 'add-server'}
             onSelect={selectWorkspace}
             onOpenLibrary={() => updateView('servers', { server_tab: searchParams.get('server_tab') ?? 'installed' })}
           />
@@ -189,7 +229,15 @@ export function ConnectionsPage() {
             {view === 'new-workspace' && (
               <WorkspaceSettingsPanel
                 workspace={null}
-                onSaved={(workspace) => { void workspacesApi.refetch(); updateView('settings', { workspace: workspace.id }) }}
+                onSaved={(workspace) => {
+                  // Seed the new workspace into local state immediately so the
+                  // next render resolves it by id instead of flashing back to
+                  // workspaces[0] during the refetch, then land on Access —
+                  // the natural next step is to connect servers, not re-edit.
+                  workspacesApi.setData([...workspaces, workspace])
+                  updateView('access', { workspace: workspace.id })
+                  void workspacesApi.refetch()
+                }}
                 onDeleted={() => {}}
                 onCancel={() => updateView('access')}
               />
@@ -261,11 +309,12 @@ export function ConnectionsPage() {
                 )}
 
                 {section === 'activity' && (
-                  <WorkspaceCommandCenter
+                  <WorkspaceActivityPanel
+                    key={selectedWorkspace.id}
                     workspace={selectedWorkspace}
                     summary={selectedSummary}
                     rows={rows}
-                    operations={operations}
+                    routes={routes}
                     onOpenConnection={(row) => setDrawer(row)}
                   />
                 )}
@@ -298,5 +347,35 @@ export function ConnectionsPage() {
         onChanged={refetchConfiguration}
       />
     </div>
+  )
+}
+
+// WorkspaceActivityPanel owns the workspace-scoped operations fetches so that
+// keying it by workspace id remounts the hook state on every switch. Without
+// this boundary the operations useApi calls live at page level and keep
+// returning the previous workspace's tasks/audit/delegations under the new
+// workspace's header until the fetches resolve.
+function WorkspaceActivityPanel({
+  workspace,
+  summary,
+  rows,
+  routes,
+  onOpenConnection,
+}: {
+  workspace: Workspace
+  summary?: WorkspaceConnectionSummary
+  rows: WorkspaceConnectionRow[]
+  routes: RouteRule[]
+  onOpenConnection: (row: WorkspaceConnectionRow) => void
+}) {
+  const operations = useWorkspaceOperations(workspace.id, routes)
+  return (
+    <WorkspaceCommandCenter
+      workspace={workspace}
+      summary={summary}
+      rows={rows}
+      operations={operations}
+      onOpenConnection={onOpenConnection}
+    />
   )
 }

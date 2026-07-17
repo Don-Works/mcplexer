@@ -6,12 +6,17 @@ export function WorkspaceRail({
   summaries,
   selectedWorkspaceId,
   libraryActive,
+  selectionSuppressed = false,
   onSelect,
   onOpenLibrary,
 }: {
   summaries: WorkspaceConnectionSummary[]
   selectedWorkspaceId: string
   libraryActive: boolean
+  // When another top-level surface owns the main pane (server library, or the
+  // "New workspace" form) no workspace is the active context — suppress the
+  // rail highlight so it never conflicts with what the pane is showing.
+  selectionSuppressed?: boolean
   onSelect: (workspaceId: string) => void
   onOpenLibrary: () => void
 }) {
@@ -26,7 +31,7 @@ export function WorkspaceRail({
 
       <div className="scrollbar-none flex gap-1.5 overflow-x-auto p-1.5 lg:block lg:max-h-[calc(100dvh-18rem)] lg:overflow-y-auto">
         {summaries.map((summary) => {
-          const selected = !libraryActive && summary.workspace.id === selectedWorkspaceId
+          const selected = !libraryActive && !selectionSuppressed && summary.workspace.id === selectedWorkspaceId
           return (
             <button
               key={summary.workspace.id}

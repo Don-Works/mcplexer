@@ -19,6 +19,7 @@ import {
 } from '@/components/ui/sheet'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { Label } from '@/components/ui/label'
 import {
   Select,
@@ -82,6 +83,7 @@ export function ConnectionDrawer({
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
   const [deleting, setDeleting] = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState(false)
   const [providers, setProviders] = useState<OAuthProvider[]>([])
   const [activeRoute, setActiveRoute] = useState<RouteRule | null>(route)
 
@@ -125,7 +127,7 @@ export function ConnectionDrawer({
     try {
       if (activeRoute) {
         await updateRoute(activeRoute.id, form)
-        toast.success('Route updated')
+        toast.success('Access rule updated')
       } else {
         await createRoute(form)
         toast.success(
@@ -135,7 +137,7 @@ export function ConnectionDrawer({
       onChanged()
       onClose()
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to save route'
+      const message = err instanceof Error ? err.message : 'Failed to save access rule'
       setSaveError(message)
       toast.error(message)
     } finally {
@@ -148,11 +150,11 @@ export function ConnectionDrawer({
     setDeleting(true)
     try {
       await deleteRoute(activeRoute.id)
-      toast.success('Route removed')
+      toast.success('Access rule removed')
       onChanged()
       onClose()
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to remove route')
+      toast.error(err instanceof Error ? err.message : 'Failed to remove access rule')
     } finally {
       setDeleting(false)
     }
@@ -259,12 +261,12 @@ export function ConnectionDrawer({
                   variant="ghost"
                   size="sm"
                   className="text-destructive hover:bg-destructive/10"
-                  onClick={handleDelete}
+                  onClick={() => setConfirmDelete(true)}
                   disabled={deleting}
                   data-testid="connection-drawer-delete"
                 >
                   <Trash2 className="mr-1.5 h-3 w-3" />
-                  {deleting ? 'Removing...' : 'Remove route'}
+                  {deleting ? 'Removing...' : 'Remove access rule'}
                 </Button>
               )}
             </div>
@@ -290,6 +292,19 @@ export function ConnectionDrawer({
           </div>
         </div>
       </SheetContent>
+
+      <ConfirmDialog
+        open={confirmDelete}
+        onOpenChange={setConfirmDelete}
+        title="Remove access rule?"
+        description={`This immediately revokes ${selectedDownstream?.name ?? server?.name ?? 'the server'}'s access to ${selectedWorkspace?.name ?? workspace?.name ?? 'this workspace'}. Agents using it will start failing tool calls.`}
+        confirmLabel="Remove access rule"
+        variant="destructive"
+        onConfirm={() => {
+          setConfirmDelete(false)
+          void handleDelete()
+        }}
+      />
     </Sheet>
   )
 }

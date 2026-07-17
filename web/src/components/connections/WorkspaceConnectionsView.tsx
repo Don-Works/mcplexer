@@ -17,7 +17,7 @@ export function WorkspaceConnectionsView({
 }: {
   rows: WorkspaceConnectionRow[]
   visibleRows: WorkspaceConnectionRow[]
-  counts: { all: number; connected: number; needsAuth: number; available: number }
+  counts: { all: number; connected: number; needsAuth: number; available: number; denied: number }
   filter: ConnectionFilter
   query: string
   onFilterChange: (filter: ConnectionFilter) => void
@@ -25,7 +25,10 @@ export function WorkspaceConnectionsView({
   onOpenConnection: (row: WorkspaceConnectionRow) => void
 }) {
   const attentionRows = visibleRows.filter((row) => row.state.kind === 'needs-auth')
-  const configuredRows = visibleRows.filter((row) => row.routes.length > 0 && row.state.kind !== 'needs-auth')
+  const deniedRows = visibleRows.filter((row) => row.state.kind === 'disabled')
+  const configuredRows = visibleRows.filter(
+    (row) => row.routes.length > 0 && row.state.kind !== 'needs-auth' && row.state.kind !== 'disabled',
+  )
   const availableRows = visibleRows.filter((row) => row.routes.length === 0)
 
   return (
@@ -54,6 +57,9 @@ export function WorkspaceConnectionsView({
           )}
           {configuredRows.length > 0 && (
             <ConnectionSection title="Has access" rows={configuredRows} onOpen={onOpenConnection} />
+          )}
+          {deniedRows.length > 0 && (
+            <ConnectionSection title="Denied" rows={deniedRows} onOpen={onOpenConnection} />
           )}
           {availableRows.length > 0 && (
             <ConnectionSection

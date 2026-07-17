@@ -180,8 +180,12 @@ function NavLink({ item, onNavigate }: { item: NavItem; onNavigate?: () => void 
     (hasSearch && location.pathname === itemPath && navSearchMatches(itemPath, itemSearch, location.search)) ||
     (!hasSearch &&
       (location.pathname === itemPath ||
-        // All workspace configuration lives in the canonical console.
-        (itemPath === '/workspaces' && location.pathname.startsWith('/workspaces')) ||
+        // All workspace configuration lives in the canonical console, EXCEPT
+        // /workspaces/access, which is the separate Access (sharing/devices)
+        // nav item and must not light up the Workspaces entry too.
+        (itemPath === '/workspaces' &&
+          location.pathname.startsWith('/workspaces') &&
+          !location.pathname.startsWith('/workspaces/access')) ||
         // Advanced: /advanced and all sub-paths (/advanced/credentials, etc.).
         (itemPath === '/advanced' && location.pathname.startsWith('/advanced')) ||
         // Legacy /config/* deep links still highlight Advanced.

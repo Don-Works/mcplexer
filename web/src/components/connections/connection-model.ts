@@ -1,7 +1,7 @@
 import type { AuthScope, DownstreamServer, RouteRule, Workspace } from '@/api/types'
 import type { CellState } from './ConnectionCell'
 
-export type ConnectionFilter = 'all' | 'connected' | 'needs-auth' | 'available'
+export type ConnectionFilter = 'all' | 'connected' | 'needs-auth' | 'available' | 'denied'
 
 export interface WorkspaceConnectionSummary {
   workspace: Workspace
@@ -151,6 +151,7 @@ export function filterWorkspaceRows(
   return rows.filter((row) => {
     if (filter === 'connected' && row.state.kind !== 'connected') return false
     if (filter === 'needs-auth' && row.state.kind !== 'needs-auth') return false
+    if (filter === 'denied' && row.state.kind !== 'disabled') return false
     if (filter === 'available' && row.route) return false
     if (!q) return true
     return row.searchText.includes(q)
@@ -164,9 +165,10 @@ export function connectionCounts(rows: WorkspaceConnectionRow[]) {
       if (!row.route) acc.available += 1
       else if (row.state.kind === 'connected') acc.connected += 1
       else if (row.state.kind === 'needs-auth') acc.needsAuth += 1
+      else if (row.state.kind === 'disabled') acc.denied += 1
       return acc
     },
-    { all: 0, connected: 0, needsAuth: 0, available: 0 },
+    { all: 0, connected: 0, needsAuth: 0, available: 0, denied: 0 },
   )
 }
 
@@ -185,7 +187,11 @@ export function resolveFocusTarget(
 
   const workspace =
     workspaces.find((item) => item.id === focusWorkspace || item.name === focusWorkspace) ??
-    findWorkspaceForServer(server.id, workspaces, routeIndex)
+    findWorkspaceForServer(server.id, workspaces, routeIndex) ??
+    // A server with no route in any workspace (e.g. freshly installed, jumped
+    // to from the palette) still opens the drawer in the first workspace's
+    // 'add' state — connecting it is exactly the intent of the jump.
+    workspaces[0]
   if (!workspace) return null
 
   const key = connectionKey(server.id, workspace.id)

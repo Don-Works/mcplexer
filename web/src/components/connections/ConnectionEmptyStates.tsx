@@ -71,5 +71,7 @@ function filterLabel(filter: ConnectionFilter): string {
       return 'needs auth'
     case 'available':
       return 'available'
+    case 'denied':
+      return 'denied'
   }
 }

@@ -5,6 +5,7 @@ interface ConnectionCounts {
   connected: number
   needsAuth: number
   available: number
+  denied: number
 }
 
 export function ConnectionFilterChips({
@@ -21,6 +22,12 @@ export function ConnectionFilterChips({
     { key: 'connected', label: 'Connected', count: counts.connected },
     { key: 'needs-auth', label: 'Needs auth', count: counts.needsAuth },
     { key: 'available', label: 'Not connected', count: counts.available },
+    // Denied is only shown when at least one server is explicitly denied, so
+    // the chip row stays quiet in the common case but the buckets always sum
+    // to All (a denied server used to be invisible to every specific filter).
+    ...(counts.denied > 0
+      ? [{ key: 'denied' as ConnectionFilter, label: 'Denied', count: counts.denied }]
+      : []),
   ]
 
   return (
@@ -32,6 +39,7 @@ export function ConnectionFilterChips({
             key={option.key}
             type="button"
             onClick={() => onChange(option.key)}
+            aria-pressed={active}
             className={
               'inline-flex shrink-0 items-center gap-1.5 border px-2.5 py-1 text-xs transition-colors ' +
               (active
