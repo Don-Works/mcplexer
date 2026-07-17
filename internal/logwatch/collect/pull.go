@@ -4,6 +4,7 @@ package collect
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -60,6 +61,15 @@ func (m *Manager) executePull(
 	since := time.Time{}
 	if src.CursorTS != nil {
 		since = *src.CursorTS
+		// Docker's --since boundary is inclusive, including when Compose
+		// aggregates several containers. Advance one nanosecond so a steady
+		// pull is exclusive without losing any representable Docker timestamp.
+		// This also removes any dependence on the stored tail appearing first:
+		// Compose can return the exact boundary later in an otherwise valid,
+		// cross-container aggregation.
+		if usesExclusiveTimestampWindow(src) {
+			since = since.Add(time.Nanosecond)
+		}
 	}
 	// decodeCursorState is cheap and the state is re-decoded in ingestPull;
 	// reading it here keeps the command builder's window choice driven by the
@@ -92,15 +102,14 @@ func (m *Manager) ingestPull(
 		stdout, newJournalCursor = splitJournalCursor(stdout)
 	}
 	lines, firstRaw, lastRaw := parseLogLines(stdout, result.Stderr)
-	// --after-cursor is EXCLUSIVE, so journald cannot re-return the tail the
-	// hash check looks for. Its one bootstrap/migration --since pull is also
-	// deliberately excluded: that timestamp is whole-second precision and is
-	// incapable of proving which same-second line was the prior tail. Treating
-	// its first returned line as continuity evidence is the production bug
-	// this cursor migration fixes. Non-journald kinds retain their inclusive
-	// tail reconciliation.
+	// Every collected steady-state kind now uses an exclusive window:
+	// journald has --after-cursor; Docker/Compose/Swarm receive cursorTS+1ns.
+	// An exclusive window cannot re-return the stored tail, while Compose's
+	// cross-container output is not guaranteed to put an inclusive tail first
+	// anyway. The bootstrap path has no prior cursor, so reconciliation is a
+	// no-op there. Keep the old check only for a future non-exclusive kind.
 	discontinuity := false
-	if src.Kind != store.LogSourceKindJournald {
+	if !skipsTailReconciliation(src) {
 		lines, discontinuity = reconcileCursor(lines, firstRaw, src, state)
 	}
 	var signals []Line
@@ -258,7 +267,21 @@ func mergeByTS(a, b []parsedLine) []parsedLine {
 // redacted line sequence. Returns the parsed lines plus the first and
 // last raw lines (pre-redaction) for cursor hashing.
 func parseLogLines(stdout, stderr []byte) ([]Line, rawLine, rawLine) {
-	merged := mergeByTS(splitStream(stdout), splitStream(stderr))
+	stdoutLines := splitStream(stdout)
+	stderrLines := splitStream(stderr)
+	// Docker Compose aggregates several container streams onto stdout and can
+	// emit service groups out of timestamp order. Sort each captured stream
+	// before the stable stdout/stderr merge so the persisted cursor is the
+	// maximum observed timestamp rather than whichever service printed last.
+	byTimestampThenRaw := func(a, b parsedLine) int {
+		if cmp := a.ts.Compare(b.ts); cmp != 0 {
+			return cmp
+		}
+		return strings.Compare(a.raw, b.raw)
+	}
+	slices.SortStableFunc(stdoutLines, byTimestampThenRaw)
+	slices.SortStableFunc(stderrLines, byTimestampThenRaw)
+	merged := mergeByTS(stdoutLines, stderrLines)
 	if len(merged) == 0 {
 		return nil, rawLine{}, rawLine{}
 	}
@@ -269,6 +292,25 @@ func parseLogLines(stdout, stderr []byte) ([]Line, rawLine, rawLine) {
 	first := rawLine{ts: merged[0].ts, raw: merged[0].raw}
 	last := rawLine{ts: merged[len(merged)-1].ts, raw: merged[len(merged)-1].raw}
 	return lines, first, last
+}
+
+// usesExclusiveTimestampWindow reports whether the remote CLI accepts a
+// nanosecond RFC3339 --since boundary. Journald has its own opaque cursor and
+// is deliberately excluded.
+func usesExclusiveTimestampWindow(src *store.LogSource) bool {
+	if src.CursorTS == nil {
+		return false
+	}
+	switch src.Kind {
+	case store.LogSourceKindDocker, store.LogSourceKindCompose, store.LogSourceKindSwarm:
+		return true
+	default:
+		return false
+	}
+}
+
+func skipsTailReconciliation(src *store.LogSource) bool {
+	return src.Kind == store.LogSourceKindJournald || usesExclusiveTimestampWindow(src)
 }
 
 // tsLayouts are the leading-timestamp formats the collector accepts,

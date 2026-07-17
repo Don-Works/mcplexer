@@ -142,11 +142,11 @@ func TestPull_StderrIngested(t *testing.T) {
 	}
 }
 
-// TestPull_ContinuousCursor drops the duplicated tail line and does
-// NOT emit a discontinuity event.
+// TestPull_ContinuousCursor uses an exclusive nanosecond boundary, so the
+// remote CLI returns only new evidence and no tail-first assertion is needed.
 func TestPull_ContinuousCursor(t *testing.T) {
 	tail := "2026-07-08T14:00:01.000000001Z ERROR pgx: connection refused host=db-3"
-	runner := &fakeRunner{out: tail + "\n2026-07-08T14:00:02.000000001Z next line\n"}
+	runner := &fakeRunner{out: "2026-07-08T14:00:02.000000001Z next line\n"}
 	m, fs, sink := newFixture(runner)
 
 	src := srcDocker()
@@ -160,11 +160,55 @@ func TestPull_ContinuousCursor(t *testing.T) {
 	if len(sink.lines) != 1 || sink.lines[0].Text != "next line" {
 		t.Fatalf("expected exactly the new line, got %+v", sink.lines)
 	}
-	if !runner.gotSince.Equal(ts) {
-		t.Fatalf("pull must pass cursor as --since, got %v", runner.gotSince)
+	if !runner.gotSince.Equal(ts.Add(time.Nanosecond)) {
+		t.Fatalf("pull must pass cursor+1ns as exclusive --since, got %v", runner.gotSince)
 	}
 	if !fs.cursorTS.Equal(ts.Add(time.Second)) {
 		t.Fatalf("cursor: %v", fs.cursorTS)
+	}
+}
+
+// TestPull_ComposeAggregationSortsBeforeCursorAdvance is the live production
+// shape: Compose can group several container streams out of timestamp order.
+// The collector must ingest them chronologically and persist the maximum
+// timestamp, never whichever service happened to print last.
+func TestPull_ComposeAggregationSortsBeforeCursorAdvance(t *testing.T) {
+	orders := map[string]string{
+		"service order A": "" +
+			"2026-07-08T14:00:10.000000000Z first\n" +
+			"2026-07-08T14:00:30.000000000Z third\n" +
+			"2026-07-08T14:00:20.000000000Z second\n",
+		"service order B": "" +
+			"2026-07-08T14:00:20.000000000Z second\n" +
+			"2026-07-08T14:00:10.000000000Z first\n" +
+			"2026-07-08T14:00:30.000000000Z third\n",
+	}
+	for name, out := range orders {
+		t.Run(name, func(t *testing.T) {
+			runner := &fakeRunner{out: out}
+			m, fs, sink := newFixture(runner)
+			src := srcDocker()
+			src.Kind = store.LogSourceKindCompose
+			src.Selector = "acme"
+			ts := time.Date(2026, 7, 8, 14, 0, 0, 0, time.UTC)
+			src.CursorTS = &ts
+			src.CursorHash = "legacy-tail-hash"
+
+			if err := m.pullSource(context.Background(), src); err != nil {
+				t.Fatalf("pull: %v", err)
+			}
+			if !runner.gotSince.Equal(ts.Add(time.Nanosecond)) {
+				t.Fatalf("compose --since boundary: got %v", runner.gotSince)
+			}
+			if len(sink.lines) != 3 || sink.lines[0].Text != "first" ||
+				sink.lines[1].Text != "second" || sink.lines[2].Text != "third" {
+				t.Fatalf("compose evidence not sorted chronologically: %+v", sink.lines)
+			}
+			wantCursor := time.Date(2026, 7, 8, 14, 0, 30, 0, time.UTC)
+			if !fs.cursorTS.Equal(wantCursor) {
+				t.Fatalf("cursor advanced to %v, want maximum %v", fs.cursorTS, wantCursor)
+			}
+		})
 	}
 }
 

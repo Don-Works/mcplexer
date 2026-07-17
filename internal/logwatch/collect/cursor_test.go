@@ -7,8 +7,9 @@ import (
 	"time"
 )
 
-// A tail mismatch cannot manufacture a restart claim without Docker evidence.
-func TestPull_CursorMismatchReportsObservationNotCause(t *testing.T) {
+// A steady Docker pull is exclusive, so absence of the stored tail is expected
+// and must not manufacture a discontinuity or restart claim.
+func TestPull_ExclusiveCursorDoesNotAssertTailMismatch(t *testing.T) {
 	runner := &fakeRunner{out: "2026-07-08T15:00:00Z fresh container banner\n"}
 	m, _, sink := newFixture(runner)
 	src := srcDocker()
@@ -19,11 +20,11 @@ func TestPull_CursorMismatchReportsObservationNotCause(t *testing.T) {
 	if err := m.pullSource(context.Background(), src); err != nil {
 		t.Fatalf("pull: %v", err)
 	}
-	if len(sink.lines) != 2 || !strings.HasPrefix(sink.lines[0].Text, "logwatch: log cursor discontinuity observed") {
-		t.Fatalf("expected factual cursor event first, got %+v", sink.lines)
+	if len(sink.lines) != 1 || sink.lines[0].Text != "fresh container banner" {
+		t.Fatalf("exclusive pull filed synthetic continuity evidence: %+v", sink.lines)
 	}
-	if strings.Contains(strings.ToLower(sink.lines[0].Text), "restarted") {
-		t.Fatalf("cursor mismatch asserted an unverified restart: %q", sink.lines[0].Text)
+	if !runner.gotSince.Equal(ts.Add(time.Nanosecond)) {
+		t.Fatalf("exclusive boundary: got %v", runner.gotSince)
 	}
 }
 
@@ -52,11 +53,13 @@ func TestPull_DockerRestartRequiresExplicitEvidence(t *testing.T) {
 	if err := m.pullSource(context.Background(), src); err != nil {
 		t.Fatal(err)
 	}
-	if len(sink.lines) != 3 || !strings.Contains(sink.lines[0].Text, "docker restart verified") {
+	if len(sink.lines) != 2 || !strings.Contains(sink.lines[0].Text, "docker restart verified") {
 		t.Fatalf("verified restart evidence missing: %+v", sink.lines)
 	}
-	if !strings.Contains(sink.lines[1].Text, "log cursor discontinuity") {
-		t.Fatalf("independent cursor observation was suppressed: %+v", sink.lines)
+	for _, line := range sink.lines {
+		if strings.Contains(line.Text, "discontinuity") || strings.Contains(line.Text, "non-monotonic") {
+			t.Fatalf("exclusive pull filed invalid tail-first evidence: %+v", sink.lines)
+		}
 	}
 	state := decodeCursorState(fs.cursorH)
 	if !state.RuntimeSeen || state.RestartCount != 1 || state.EventsSince == "" || state.PortState == "" {
