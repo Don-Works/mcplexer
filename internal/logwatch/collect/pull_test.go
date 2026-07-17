@@ -58,12 +58,14 @@ type fakeRunner struct {
 	err       error
 	gotSince  time.Time
 	gotKind   string
+	gotCursor string
 	docker    *DockerObservation
 }
 
-func (r *fakeRunner) Pull(_ context.Context, _ *store.RemoteHost, _ sshx.Credential, src *store.LogSource, since time.Time) (PullResult, error) {
+func (r *fakeRunner) Pull(_ context.Context, _ *store.RemoteHost, _ sshx.Credential, src *store.LogSource, since time.Time, cursor string) (PullResult, error) {
 	r.gotSince = since
 	r.gotKind = src.Kind
+	r.gotCursor = cursor
 	return PullResult{Result: sshx.Result{Stdout: []byte(r.out), Stderr: []byte(r.errOut), Truncated: r.truncated, NewPin: r.newPin}, Docker: r.docker}, r.err
 }
 

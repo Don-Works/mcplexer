@@ -149,11 +149,11 @@ func TestCommandForSource_Kinds(t *testing.T) {
 		{"docker", "api", "docker logs --timestamps --since '2026-07-08T14:00:00Z' 'api'"},
 		{"compose", "acme", "docker compose -p 'acme' logs --no-color --timestamps --no-log-prefix --since '2026-07-08T14:00:00Z'"},
 		{"swarm", "acme-production_backend", "docker service logs --raw --timestamps --since '2026-07-08T14:00:00Z' 'acme-production_backend'"},
-		{"journald", "nginx.service", "journalctl -u 'nginx.service' -q -o short-iso-precise --no-pager --utc --since '2026-07-08 14:00:00'"},
+		{"journald", "nginx.service", "journalctl -u 'nginx.service' -q -o short-iso-precise --no-pager --utc --show-cursor --since '2026-07-08 14:00:00'"},
 	}
 	for _, c := range cases {
 		src := &store.LogSource{Kind: c.kind, Selector: c.selector}
-		got, err := CommandForSource(src, since)
+		got, err := CommandForSource(src, since, "")
 		if err != nil {
 			t.Fatalf("%s: %v", c.kind, err)
 		}
@@ -163,16 +163,78 @@ func TestCommandForSource_Kinds(t *testing.T) {
 	}
 
 	// file kind has no read-only template yet.
-	if _, err := CommandForSource(&store.LogSource{Kind: "file", Selector: "/var/log/app.log"}, since); err == nil {
+	if _, err := CommandForSource(&store.LogSource{Kind: "file", Selector: "/var/log/app.log"}, since, ""); err == nil {
 		t.Fatal("file kind must have no command template")
 	}
 	// injection stays rejected across all kinds — shell metachars AND a
 	// leading dash (argument injection: "--follow" reaching the flag parser).
 	for _, k := range []string{"docker", "compose", "swarm", "journald"} {
 		for _, bad := range []string{"x; rm -rf /", "--follow", "-n"} {
-			if _, err := CommandForSource(&store.LogSource{Kind: k, Selector: bad}, since); err == nil {
+			if _, err := CommandForSource(&store.LogSource{Kind: k, Selector: bad}, since, ""); err == nil {
 				t.Errorf("%s: selector %q must be rejected", k, bad)
 			}
 		}
+	}
+}
+
+// TestJournaldCommand_AfterCursor pins the steady-state window. A journald
+// source with a stored cursor must pull with the EXCLUSIVE --after-cursor and
+// must not carry a --since: the inclusive second-truncated window is what
+// re-returns the tail and manufactures a discontinuity on every pull.
+func TestJournaldCommand_AfterCursor(t *testing.T) {
+	since := time.Date(2026, 7, 8, 14, 0, 0, 0, time.UTC)
+	cursor := "s=3dbe7ea510f141f0934706313c9f1527;i=6458;b=c3319f37ee6a4725bd901b36e3a4d490;m=60dee2961;t=656c270b5d9a3;x=6460b3d367f90bdb"
+
+	got, err := JournaldCommand("ssh.service", since, cursor)
+	if err != nil {
+		t.Fatalf("cursor command: %v", err)
+	}
+	want := "journalctl -u 'ssh.service' -q -o short-iso-precise --no-pager --utc --show-cursor --after-cursor '" + cursor + "'"
+	if got != want {
+		t.Errorf("with cursor:\n got %q\nwant %q", got, want)
+	}
+	if strings.Contains(got, "--since") {
+		t.Error("--after-cursor window must not also pass --since; the inclusive window is the bug being fixed")
+	}
+
+	// Every run asks for the cursor, including the bootstrap — otherwise the
+	// source can never leave the lossy --since window.
+	boot, err := JournaldCommand("ssh.service", since, "")
+	if err != nil {
+		t.Fatalf("bootstrap command: %v", err)
+	}
+	if !strings.Contains(boot, "--show-cursor") {
+		t.Error("bootstrap pull must request --show-cursor to acquire the first cursor")
+	}
+	if !strings.Contains(boot, "--since") {
+		t.Error("bootstrap pull has no cursor yet and must fall back to --since")
+	}
+}
+
+// TestJournaldCommand_CursorInjection keeps the ADR's no-injection guarantee
+// over the one token that comes back from the REMOTE host rather than local
+// config. ';' and '=' must be admitted (they are in every real cursor and are
+// inert inside single quotes); a quote, whitespace, or a metacharacter that
+// could escape them must not be.
+func TestJournaldCommand_CursorInjection(t *testing.T) {
+	for _, bad := range []string{
+		"s=1;i=2' ; rm -rf / ; echo '",
+		"s=1;i=2'",
+		"s=1 i=2",
+		"s=1;i=2$(id)",
+		"s=1;i=2`id`",
+		"s=1;i=2\nrm -rf /",
+		"s=1;i=2|tee /tmp/x",
+		"--follow",
+		strings.Repeat("a", maxCursorLen+1),
+	} {
+		if _, err := JournaldCommand("ssh.service", time.Time{}, bad); err == nil {
+			t.Errorf("cursor %q must be rejected", bad)
+		}
+	}
+	// A real cursor must still pass.
+	ok := "s=3dbe7ea510f141f0934706313c9f1527;i=6458;b=c3319f37ee6a4725bd901b36e3a4d490;m=60dee2961;t=656c270b5d9a3;x=6460b3d367f90bdb"
+	if _, err := JournaldCommand("ssh.service", time.Time{}, ok); err != nil {
+		t.Errorf("real journald cursor must be accepted: %v", err)
 	}
 }

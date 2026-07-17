@@ -68,7 +68,7 @@ type concurrencyRunner struct {
 	calls    int32
 }
 
-func (r *concurrencyRunner) Pull(ctx context.Context, _ *store.RemoteHost, _ sshx.Credential, src *store.LogSource, _ time.Time) (PullResult, error) {
+func (r *concurrencyRunner) Pull(ctx context.Context, _ *store.RemoteHost, _ sshx.Credential, src *store.LogSource, _ time.Time, _ string) (PullResult, error) {
 	atomic.AddInt32(&r.calls, 1)
 	n := atomic.AddInt32(&r.inFlight, 1)
 	defer atomic.AddInt32(&r.inFlight, -1)

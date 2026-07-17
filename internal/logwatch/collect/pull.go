@@ -61,9 +61,13 @@ func (m *Manager) executePull(
 	if src.CursorTS != nil {
 		since = *src.CursorTS
 	}
+	// decodeCursorState is cheap and the state is re-decoded in ingestPull;
+	// reading it here keeps the command builder's window choice driven by the
+	// same persisted row the ingest path reconciles against.
+	cursor := decodeCursorState(src.CursorHash).JournalCursor
 	pullCtx, cancel := context.WithTimeout(ctx, pullTimeout)
 	defer cancel()
-	return m.runner.Pull(pullCtx, host, cred, src, since)
+	return m.runner.Pull(pullCtx, host, cred, src, since, cursor)
 }
 
 func (m *Manager) persistObservedPin(ctx context.Context, hostID, pin string) error {
@@ -79,9 +83,26 @@ func (m *Manager) persistObservedPin(ctx context.Context, hostID, pin string) er
 func (m *Manager) ingestPull(
 	ctx context.Context, src *store.LogSource, host *store.RemoteHost, result PullResult,
 ) error {
-	lines, firstRaw, lastRaw := parseLogLines(result.Stdout, result.Stderr)
 	state := decodeCursorState(src.CursorHash)
-	lines, discontinuity := reconcileCursor(lines, firstRaw, src, state)
+	stdout := result.Stdout
+	// journald's --show-cursor marker is bookkeeping, not evidence; it must
+	// come off before parsing (see splitJournalCursor).
+	var newJournalCursor string
+	if src.Kind == store.LogSourceKindJournald {
+		stdout, newJournalCursor = splitJournalCursor(stdout)
+	}
+	lines, firstRaw, lastRaw := parseLogLines(stdout, result.Stderr)
+	// --after-cursor is EXCLUSIVE, so journald cannot re-return the tail the
+	// hash check looks for. Its one bootstrap/migration --since pull is also
+	// deliberately excluded: that timestamp is whole-second precision and is
+	// incapable of proving which same-second line was the prior tail. Treating
+	// its first returned line as continuity evidence is the production bug
+	// this cursor migration fixes. Non-journald kinds retain their inclusive
+	// tail reconciliation.
+	discontinuity := false
+	if src.Kind != store.LogSourceKindJournald {
+		lines, discontinuity = reconcileCursor(lines, firstRaw, src, state)
+	}
 	var signals []Line
 	if result.Docker != nil {
 		var lifecycle []Line
@@ -108,6 +129,12 @@ func (m *Manager) ingestPull(
 		// every retry and manufacture counts from an untrustworthy window.
 		lines = nil
 	}
+	// A truncated window is untrustworthy, so the cursor is held and the
+	// window re-covered. Advancing the journal cursor here would step past
+	// the bytes the truncation discarded and lose them permanently.
+	if !result.Truncated && newJournalCursor != "" {
+		state.JournalCursor = newJournalCursor
+	}
 	lines = append(signals, lines...)
 	if len(lines) == 0 {
 		return m.persistCursorState(ctx, src, state, lastRaw, result.Truncated)
@@ -130,6 +157,11 @@ func (m *Manager) persistCursorState(
 		cursorTS = lastRaw.ts
 		state.TailHash = lineHash(lastRaw.raw)
 	}
+	// A zero cursorTS means this source has never yielded a timestamped line,
+	// so there is no window to advance past. The journald cursor is left
+	// unpersisted in that case rather than paired with a zero timestamp: the
+	// next pull simply re-issues its --since bootstrap, which is what happens
+	// today, and the cursor is captured on the first pull that returns a line.
 	if cursorTS.IsZero() {
 		return nil
 	}
@@ -266,8 +298,8 @@ func splitLeadingTimestamp(raw string) (time.Time, string) {
 // bounded sshx run.
 type sshRunner struct{}
 
-func (sshRunner) Pull(ctx context.Context, host *store.RemoteHost, cred sshx.Credential, src *store.LogSource, since time.Time) (PullResult, error) {
-	cmd, err := sshx.CommandForSource(src, since)
+func (sshRunner) Pull(ctx context.Context, host *store.RemoteHost, cred sshx.Credential, src *store.LogSource, since time.Time, cursor string) (PullResult, error) {
+	cmd, err := sshx.CommandForSource(src, since, cursor)
 	if err != nil {
 		return PullResult{}, err
 	}

@@ -67,8 +67,13 @@ type SecretReader interface {
 // Runner executes one bounded pull for a source. The production runner
 // wraps sshx and builds the fixed per-kind command; tests substitute a
 // fake so no network is involved.
+//
+// cursor is journald's opaque cursor from the previous pull, empty for every
+// other kind and on a journald source's first pull. It is passed alongside
+// since rather than replacing it because only journald has an exclusive
+// cursor to offer; docker/compose/swarm still need the timestamp window.
 type Runner interface {
-	Pull(ctx context.Context, host *store.RemoteHost, cred sshx.Credential, src *store.LogSource, since time.Time) (PullResult, error)
+	Pull(ctx context.Context, host *store.RemoteHost, cred sshx.Credential, src *store.LogSource, since time.Time, cursor string) (PullResult, error)
 }
 
 // Line is one redacted, timestamped log line handed to the sink.

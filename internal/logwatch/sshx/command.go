@@ -29,6 +29,23 @@ var tokenRe = regexp.MustCompile(`^[A-Za-z0-9._:+/-]+$`)
 // but still excludes every shell metacharacter and quote.
 var tsTokenRe = regexp.MustCompile(`^[A-Za-z0-9:.+ -]+$`)
 
+// cursorTokenRe is the charset for a journald opaque cursor token, whose
+// wire form is "s=<hex>;i=<hex>;b=<hex>;m=<hex>;t=<hex>;x=<hex>". It must
+// admit ';' and '=' — both are inert inside the single quotes this package
+// always applies — while still excluding quotes, whitespace, backslash and
+// every other shell metacharacter, so the ADR's two-layer no-injection
+// guarantee is unchanged.
+//
+// This token is the only command input DERIVED FROM REMOTE OUTPUT rather
+// than from local config, so it is validated on the way back in and capped:
+// a compromised or malfunctioning host must not be able to widen the next
+// command line it is handed.
+var cursorTokenRe = regexp.MustCompile(`^[A-Za-z0-9;=]+$`)
+
+// maxCursorLen bounds the remote-derived cursor. Real journald cursors are
+// ~160 chars; this leaves headroom without admitting an unbounded token.
+const maxCursorLen = 512
+
 func quoteToken(kind, tok string) (string, error) {
 	if !tokenRe.MatchString(tok) {
 		return "", fmt.Errorf("sshx: %s token %q fails charset validation", kind, tok)
@@ -43,11 +60,25 @@ func quoteTimestamp(tok string) (string, error) {
 	return "'" + tok + "'", nil
 }
 
+func quoteCursor(tok string) (string, error) {
+	if len(tok) > maxCursorLen {
+		return "", fmt.Errorf("sshx: journal cursor token is %d bytes, over the %d cap", len(tok), maxCursorLen)
+	}
+	if !cursorTokenRe.MatchString(tok) {
+		return "", fmt.Errorf("sshx: journal cursor token %q fails charset validation", tok)
+	}
+	return "'" + tok + "'", nil
+}
+
 // CommandForSource builds the fixed read-only pull command for a
 // source's kind. This is the ONLY place a remote command string is
 // constructed; every kind has a literal template with quoted variable
 // tokens, so no source config can inject a mutating command.
-func CommandForSource(src *store.LogSource, since time.Time) (string, error) {
+//
+// cursor is the opaque journald cursor from the previous pull and is used
+// only by the journald kind; the docker/compose/swarm CLIs expose no
+// equivalent and stay on their --since windows.
+func CommandForSource(src *store.LogSource, since time.Time, cursor string) (string, error) {
 	if err := store.ValidateSelector(src.Selector); err != nil {
 		return "", err
 	}
@@ -59,7 +90,7 @@ func CommandForSource(src *store.LogSource, since time.Time) (string, error) {
 	case store.LogSourceKindSwarm:
 		return SwarmLogsCommand(src.Selector, since)
 	case store.LogSourceKindJournald:
-		return JournaldCommand(src.Selector, since)
+		return JournaldCommand(src.Selector, since, cursor)
 	default:
 		return "", fmt.Errorf("sshx: source kind %q has no read-only command template", src.Kind)
 	}
@@ -146,22 +177,45 @@ func ComposeLogsCommand(project string, since time.Time) (string, error) {
 
 // JournaldCommand pulls one systemd unit's journal:
 //
-//	journalctl -u '<unit>' -o short-iso-precise --no-pager --since '<cursor>'
+//	journalctl -u '<unit>' -q -o short-iso-precise --no-pager --utc \
+//	  --show-cursor [--after-cursor '<cursor>' | --since '<ts>']
 //
 // short-iso-precise gives a leading RFC3339-ish timestamp the collector
-// parses. since uses journald's "2006-01-02 15:04:05" local-ish layout,
-// which journalctl parses as UTC when TZ is unset on the pull.
+// parses.
 //
 // -q (--quiet) is required: without it journalctl prints "-- Journal begins
 // at … --" and "-- Reboot --" banner lines that carry no leading timestamp,
 // so the collector would parse them as zero-timestamp lines and fire a false
 // "source discontinuity" on every pull.
-func JournaldCommand(unit string, since time.Time) (string, error) {
+//
+// --after-cursor is the steady-state window and is EXCLUSIVE: journald never
+// re-returns the cursor entry. --since cannot be, and that is why it is only
+// the first-pull bootstrap. --since takes whole seconds while the journal
+// (and our cursor) carries microseconds, so a --since window truncated to
+// its second re-returns every earlier line sharing that second. Any unit
+// logging more than once per second — which includes ssh.service, because
+// each monitoring pull's own login writes ~4 lines into one second — would
+// then hand the collector a first line that is not the stored tail and fire
+// a false discontinuity on EVERY pull, forever. The opaque cursor removes
+// the timestamp-precision coupling entirely rather than narrowing it.
+//
+// --show-cursor appends a trailing "-- cursor: <c>" line, emitted even for a
+// window with no entries; collect.splitJournalCursor strips it before the
+// lines are parsed.
+func JournaldCommand(unit string, since time.Time, cursor string) (string, error) {
 	u, err := quoteSelector(unit)
 	if err != nil {
 		return "", err
 	}
-	cmd := "journalctl -u " + u + " -q -o short-iso-precise --no-pager --utc"
+	cmd := "journalctl -u " + u + " -q -o short-iso-precise --no-pager --utc --show-cursor"
+	// An exact cursor always wins over a lossy timestamp window.
+	if cursor != "" {
+		c, err := quoteCursor(cursor)
+		if err != nil {
+			return "", err
+		}
+		return cmd + " --after-cursor " + c, nil
+	}
 	if !since.IsZero() {
 		ts, err := quoteTimestamp(since.UTC().Format("2006-01-02 15:04:05"))
 		if err != nil {
