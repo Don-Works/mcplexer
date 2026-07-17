@@ -58,17 +58,21 @@ func validateCollectedKind(kind string) error {
 func (m *Manager) executePull(
 	ctx context.Context, host *store.RemoteHost, cred sshx.Credential, src *store.LogSource,
 ) (PullResult, error) {
-	since := time.Time{}
+	logSince := time.Time{}
+	eventsSince := time.Time{}
 	if src.CursorTS != nil {
-		since = *src.CursorTS
+		logSince = *src.CursorTS
+		eventsSince = *src.CursorTS
 		// Docker's --since boundary is inclusive, including when Compose
 		// aggregates several containers. Advance one nanosecond so a steady
-		// pull is exclusive without losing any representable Docker timestamp.
+		// pull does not replay the already-seen boundary. This is the narrowest
+		// representable step; late/backdated aggregate lines at or before the
+		// persisted maximum remain a Docker API limitation.
 		// This also removes any dependence on the stored tail appearing first:
 		// Compose can return the exact boundary later in an otherwise valid,
 		// cross-container aggregation.
 		if usesExclusiveTimestampWindow(src) {
-			since = since.Add(time.Nanosecond)
+			logSince = logSince.Add(time.Nanosecond)
 		}
 	}
 	// decodeCursorState is cheap and the state is re-decoded in ingestPull;
@@ -77,7 +81,7 @@ func (m *Manager) executePull(
 	cursor := decodeCursorState(src.CursorHash).JournalCursor
 	pullCtx, cancel := context.WithTimeout(ctx, pullTimeout)
 	defer cancel()
-	return m.runner.Pull(pullCtx, host, cred, src, since, cursor)
+	return m.runner.Pull(pullCtx, host, cred, src, logSince, eventsSince, cursor)
 }
 
 func (m *Manager) persistObservedPin(ctx context.Context, hostID, pin string) error {
@@ -338,8 +342,8 @@ func splitLeadingTimestamp(raw string) (time.Time, string) {
 // bounded sshx run.
 type sshRunner struct{}
 
-func (sshRunner) Pull(ctx context.Context, host *store.RemoteHost, cred sshx.Credential, src *store.LogSource, since time.Time, cursor string) (PullResult, error) {
-	cmd, err := sshx.CommandForSource(src, since, cursor)
+func (sshRunner) Pull(ctx context.Context, host *store.RemoteHost, cred sshx.Credential, src *store.LogSource, logSince, eventsSince time.Time, cursor string) (PullResult, error) {
+	cmd, err := sshx.CommandForSource(src, logSince, cursor)
 	if err != nil {
 		return PullResult{}, err
 	}
@@ -348,7 +352,7 @@ func (sshRunner) Pull(ctx context.Context, host *store.RemoteHost, cred sshx.Cre
 		return PullResult{}, err
 	}
 	defer client.Close()
-	observation := collectDockerObservation(ctx, client, src, since)
+	observation := collectDockerObservation(ctx, client, src, eventsSince)
 	res, err := client.Run(ctx, cmd, src.MaxPullBytes)
 	res.NewPin = client.NewPin()
 	return PullResult{Result: res, Docker: observation}, err

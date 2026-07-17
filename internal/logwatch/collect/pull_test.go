@@ -57,13 +57,15 @@ type fakeRunner struct {
 	newPin    string
 	err       error
 	gotSince  time.Time
+	gotEvents time.Time
 	gotKind   string
 	gotCursor string
 	docker    *DockerObservation
 }
 
-func (r *fakeRunner) Pull(_ context.Context, _ *store.RemoteHost, _ sshx.Credential, src *store.LogSource, since time.Time, cursor string) (PullResult, error) {
+func (r *fakeRunner) Pull(_ context.Context, _ *store.RemoteHost, _ sshx.Credential, src *store.LogSource, since, eventsSince time.Time, cursor string) (PullResult, error) {
 	r.gotSince = since
+	r.gotEvents = eventsSince
 	r.gotKind = src.Kind
 	r.gotCursor = cursor
 	return PullResult{Result: sshx.Result{Stdout: []byte(r.out), Stderr: []byte(r.errOut), Truncated: r.truncated, NewPin: r.newPin}, Docker: r.docker}, r.err
@@ -162,6 +164,9 @@ func TestPull_ContinuousCursor(t *testing.T) {
 	}
 	if !runner.gotSince.Equal(ts.Add(time.Nanosecond)) {
 		t.Fatalf("pull must pass cursor+1ns as exclusive --since, got %v", runner.gotSince)
+	}
+	if !runner.gotEvents.Equal(ts) {
+		t.Fatalf("Docker events fallback must remain at the original cursor, got %v", runner.gotEvents)
 	}
 	if !fs.cursorTS.Equal(ts.Add(time.Second)) {
 		t.Fatalf("cursor: %v", fs.cursorTS)

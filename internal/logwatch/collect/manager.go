@@ -69,11 +69,13 @@ type SecretReader interface {
 // fake so no network is involved.
 //
 // cursor is journald's opaque cursor from the previous pull, empty for every
-// other kind and on a journald source's first pull. It is passed alongside
-// since rather than replacing it because only journald has an exclusive
-// cursor to offer; docker/compose/swarm still need the timestamp window.
+// other kind and on a journald source's first pull. logSince is the read-only
+// log command's boundary; eventsSince is the unadjusted fallback for Docker
+// lifecycle events. They differ by 1ns on a steady Docker-family log pull so
+// the log tail is exclusive without skipping a restart event exactly at the
+// persisted cursor.
 type Runner interface {
-	Pull(ctx context.Context, host *store.RemoteHost, cred sshx.Credential, src *store.LogSource, since time.Time, cursor string) (PullResult, error)
+	Pull(ctx context.Context, host *store.RemoteHost, cred sshx.Credential, src *store.LogSource, logSince, eventsSince time.Time, cursor string) (PullResult, error)
 }
 
 // Line is one redacted, timestamped log line handed to the sink.
