@@ -14,6 +14,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -69,7 +70,7 @@ type attachmentShareProvider struct {
 // have been redacted at upload time but the audit hop benefits from
 // reapplying the pass).
 func (p *attachmentShareProvider) GetAttachmentPayload(
-	ctx context.Context, id string,
+	ctx context.Context, id, peerID string,
 ) (*p2p.AttachmentPayload, error) {
 	row, err := p.store.GetTaskAttachment(ctx, id)
 	if err != nil {
@@ -79,6 +80,15 @@ func (p *attachmentShareProvider) GetAttachmentPayload(
 		return nil, err
 	}
 	if row.DeletedAt != nil {
+		return nil, p2p.ErrAttachmentNotFound
+	}
+	// Per-workspace authorization: the coarse mesh.attachment_request scope
+	// gates the protocol, but an attachment id is not itself an authorization.
+	// The peer may only fetch attachments in a workspace it is bound to (the
+	// same workspace_peer_bindings the mesh bridge and task-sync authorize
+	// against). Denied access collapses to ErrAttachmentNotFound so the wire
+	// reply can't distinguish "no access" from "no such id".
+	if !p.peerBoundToWorkspace(ctx, peerID, row.WorkspaceID) {
 		return nil, p2p.ErrAttachmentNotFound
 	}
 	if row.SizeBytes > p2p.MaxAttachmentBytes {
@@ -106,6 +116,21 @@ func (p *attachmentShareProvider) GetAttachmentPayload(
 	}, nil
 }
 
+// peerBoundToWorkspace reports whether peerID holds a workspace_peer_binding
+// whose local workspace is workspaceID. An empty workspace never matches (an
+// attachment must belong to a real workspace to be shareable). Fail-closed:
+// on any lookup error the peer is treated as unauthorized.
+func (p *attachmentShareProvider) peerBoundToWorkspace(ctx context.Context, peerID, workspaceID string) bool {
+	if peerID == "" || workspaceID == "" {
+		return false
+	}
+	ids, err := p.store.ListLocalWorkspaceIDsForPeer(ctx, peerID)
+	if err != nil {
+		return false
+	}
+	return slices.Contains(ids, workspaceID)
+}
+
 // attachmentShareSafePath resolves a storage_path under the daemon's
 // data dir + enforces containment under <data_dir>/attachments. Mirror
 // of safeAttachmentPath in api/task_attachments_handler.go — duplicated
@@ -126,7 +151,10 @@ func attachmentShareSafePath(storageRel string) (string, error) {
 	full := filepath.Join(dataDir, cleanRel)
 	absRoot, _ := filepath.Abs(filepath.Join(dataDir, "attachments"))
 	absFull, _ := filepath.Abs(full)
-	if !strings.HasPrefix(absFull, absRoot) {
+	// Containment check with a path-separator boundary: a bare HasPrefix would
+	// accept a sibling like "<data_dir>/attachments-evil" that shares the
+	// prefix but is not under the attachments dir.
+	if absFull != absRoot && !strings.HasPrefix(absFull, absRoot+string(os.PathSeparator)) {
 		return "", fmt.Errorf("storage_path resolves outside attachments dir: %q", storageRel)
 	}
 	return full, nil

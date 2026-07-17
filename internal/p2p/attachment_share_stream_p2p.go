@@ -3,7 +3,6 @@
 package p2p
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -35,8 +34,7 @@ func (s *AttachmentShareService) handleAttachmentStream(stream network.Stream) {
 	}
 
 	_ = stream.SetReadDeadline(time.Now().Add(attachmentShareReadDeadline))
-	br := bufio.NewReader(stream)
-	line, err := br.ReadBytes('\n')
+	line, err := readLimitedLine(stream, maxShareControlLineBytes)
 	if err != nil {
 		s.logger.Debug("attachment stream read header", "peer", remote, "error", err)
 		return
@@ -91,15 +89,21 @@ func (s *AttachmentShareService) handleAttachmentInboundRequest(
 		})
 		return
 	}
-	payload, err := s.provider.GetAttachmentPayload(ctx, req.ID)
+	payload, err := s.provider.GetAttachmentPayload(ctx, req.ID, remote)
 	if err != nil {
 		code := "not_found"
+		message := ErrAttachmentNotFound.Error()
 		if !errors.Is(err, ErrAttachmentNotFound) {
 			code = "internal"
+			// NEVER echo the provider's error verbatim: it can carry data-dir
+			// path fragments / usernames (read attachment blob: open
+			// /Users/<user>/.mcplexer/...). Keep the detail in the local audit
+			// row only and send a fixed generic message on the wire.
+			message = "internal error"
 		}
 		s.recordAudit(ctx, "request_received", remote, req.ID, "error", err.Error())
 		_ = writeJSONLine(stream, attachmentShareError{
-			Type: "error", Code: code, Message: err.Error(),
+			Type: "error", Code: code, Message: message,
 		})
 		return
 	}
@@ -145,9 +149,8 @@ func (s *AttachmentShareService) checkAttachmentRemoteAllowed(ctx context.Contex
 // or an error JSON. We peek the type field to disambiguate (both shapes
 // start with '{').
 func readAttachmentPayload(stream network.Stream) (*AttachmentPayload, error) {
-	br := bufio.NewReader(stream)
 	_ = stream.SetReadDeadline(time.Now().Add(attachmentShareReadDeadline))
-	line, err := br.ReadBytes('\n')
+	line, err := readLimitedLine(stream, shareLineCap(MaxAttachmentBytes))
 	if err != nil && !errors.Is(err, io.EOF) {
 		return nil, fmt.Errorf("read reply: %w", err)
 	}

@@ -29,6 +29,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"time"
 
@@ -177,7 +178,9 @@ func (s *RegistryShareService) recordAudit(
 // skill_share path so the framing utilities can be reused.
 func readRegistryResponse(stream network.Stream) (string, []byte, error) {
 	_ = stream.SetReadDeadline(time.Now().Add(skillShareReadDeadline))
-	br := bufio.NewReader(stream)
+	// Bound all reads: the length-prefixed chunks are capped by readChunk, but
+	// the '{'-prefixed error path reads an otherwise-unbounded line.
+	br := bufio.NewReader(io.LimitReader(stream, shareLineCap(MaxSkillBundleBytes)))
 	first, err := br.Peek(1)
 	if err != nil {
 		return "", nil, fmt.Errorf("peek: %w", err)

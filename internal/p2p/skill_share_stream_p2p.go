@@ -34,8 +34,7 @@ func (s *SkillShareService) handleStream(stream network.Stream) {
 	}
 
 	_ = stream.SetReadDeadline(time.Now().Add(skillShareReadDeadline))
-	br := bufio.NewReader(stream)
-	line, err := br.ReadBytes('\n')
+	line, err := readLimitedLine(stream, maxShareControlLineBytes)
 	if err != nil {
 		s.logger.Debug("skill stream read header", "peer", remote, "error", err)
 		return
@@ -193,7 +192,10 @@ func writeChunk(w io.Writer, b []byte) error {
 // (on failure) or sig+bundle frames (on success). We peek at the first byte
 // — '{' means JSON error, anything else means binary frame.
 func readBundleResponse(stream network.Stream) (*SkillOffer, []byte, []byte, error) {
-	br := bufio.NewReader(stream)
+	// Bound every read through this reader (the two length-prefixed chunks are
+	// separately capped by readChunk, but the '{'-prefixed error path reads a
+	// newline-terminated line that would otherwise be unbounded).
+	br := bufio.NewReader(io.LimitReader(stream, shareLineCap(MaxSkillBundleBytes)))
 	first, err := br.Peek(1)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("peek: %w", err)

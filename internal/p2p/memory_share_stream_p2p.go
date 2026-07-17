@@ -3,7 +3,6 @@
 package p2p
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -41,8 +40,7 @@ func (s *MemoryShareService) handleMemoryStream(stream network.Stream) {
 	}
 
 	_ = stream.SetReadDeadline(time.Now().Add(memoryShareReadDeadline))
-	br := bufio.NewReader(stream)
-	line, err := br.ReadBytes('\n')
+	line, err := readLimitedLine(stream, maxShareControlLineBytes)
 	if err != nil {
 		s.logger.Debug("memory stream read header", "peer", remote, "error", err)
 		return
@@ -279,9 +277,8 @@ func (s *MemoryShareService) checkMemoryRemoteAllowed(
 // We peek at the first character to disambiguate — `{` is JSON either
 // way, so we must parse + check the type field.
 func readMemoryPayload(stream network.Stream) (*MemoryPayload, error) {
-	br := bufio.NewReader(stream)
 	_ = stream.SetReadDeadline(time.Now().Add(memoryShareReadDeadline))
-	line, err := br.ReadBytes('\n')
+	line, err := readLimitedLine(stream, shareLineCap(MaxMemoryBytes))
 	if err != nil && !errors.Is(err, io.EOF) {
 		return nil, fmt.Errorf("read reply: %w", err)
 	}
@@ -301,6 +298,14 @@ func readMemoryPayload(stream network.Stream) (*MemoryPayload, error) {
 		var payload MemoryPayload
 		if err := json.Unmarshal(line, &payload); err != nil {
 			return nil, fmt.Errorf("decode payload: %w", err)
+		}
+		// MaxMemoryBytes is enforced by the honest sender; enforce it on the
+		// RECEIVE side too so a compromised peer can't push an oversized
+		// content body (auto-pull persists these — DB bloat) up to the line
+		// cap. Denials collapse to a generic error, no side channel.
+		if int64(len(payload.Content)) > MaxMemoryBytes {
+			return nil, fmt.Errorf("memory payload content %d exceeds cap %d",
+				len(payload.Content), MaxMemoryBytes)
 		}
 		return &payload, nil
 	case "error":

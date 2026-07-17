@@ -24,7 +24,7 @@ type fakeAttachmentProvider struct {
 }
 
 func (f *fakeAttachmentProvider) GetAttachmentPayload(
-	_ context.Context, id string,
+	_ context.Context, id, _ string,
 ) (*AttachmentPayload, error) {
 	if id != f.id {
 		return nil, ErrAttachmentNotFound

@@ -3,7 +3,6 @@
 package p2p
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -31,8 +30,7 @@ func (s *RegistryShareService) handleStream(stream network.Stream) {
 	}
 
 	_ = stream.SetReadDeadline(time.Now().Add(skillShareReadDeadline))
-	br := bufio.NewReader(stream)
-	line, err := br.ReadBytes('\n')
+	line, err := readLimitedLine(stream, maxShareControlLineBytes)
 	if err != nil {
 		s.logger.Debug("registry stream read header", "peer", remote, "error", err)
 		return

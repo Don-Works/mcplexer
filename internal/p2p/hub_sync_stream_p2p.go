@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"time"
 
 	"github.com/libp2p/go-libp2p/core/network"
@@ -185,7 +186,7 @@ func (s *RegistryShareService) RequestHubIndex(
 		return nil, fmt.Errorf("write index request: %w", err)
 	}
 	_ = stream.SetReadDeadline(time.Now().Add(skillShareReadDeadline))
-	br := bufio.NewReader(stream)
+	br := bufio.NewReader(io.LimitReader(stream, maxShareControlLineBytes+1))
 	entries, err := readIndexResponse(br)
 	if err != nil {
 		s.recordAudit(ctx, "hub_index_read", peerID, "", "error", err.Error())
@@ -223,7 +224,7 @@ func (s *RegistryShareService) RequestHubSearch(
 		return nil, fmt.Errorf("write search request: %w", err)
 	}
 	_ = stream.SetReadDeadline(time.Now().Add(skillShareReadDeadline))
-	br := bufio.NewReader(stream)
+	br := bufio.NewReader(io.LimitReader(stream, maxShareControlLineBytes+1))
 	hits, err := readSearchResponse(br)
 	if err != nil {
 		s.recordAudit(ctx, "hub_search_read", peerID, "", "error", err.Error())

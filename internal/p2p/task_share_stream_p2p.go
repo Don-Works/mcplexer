@@ -3,7 +3,6 @@
 package p2p
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -34,8 +33,7 @@ func (s *TaskShareService) handleTaskStream(stream network.Stream) {
 	}
 
 	_ = stream.SetReadDeadline(time.Now().Add(taskShareReadDeadline))
-	br := bufio.NewReader(stream)
-	line, err := br.ReadBytes('\n')
+	line, err := readLimitedLine(stream, maxShareControlLineBytes)
 	if err != nil {
 		s.logger.Debug("task stream read header", "peer", remote, "error", err)
 		return
@@ -273,10 +271,12 @@ func readTaskPayload(stream network.Stream) (*TaskPayloadEnvelope, error) {
 // readOneLine reads exactly one '\n'-terminated line from the stream
 // (re-arming the deadline first).
 func readOneLine(stream network.Stream) ([]byte, error) {
-	br := bufio.NewReader(stream)
 	_ = stream.SetReadDeadline(time.Now().Add(taskShareReadDeadline))
-	line, err := br.ReadBytes('\n')
-	if err != nil && !errors.Is(err, io.EOF) {
+	line, err := readLimitedLine(stream, shareLineCap(MaxTaskBytes))
+	if err != nil {
+		if errors.Is(err, io.EOF) {
+			return nil, errors.New("read reply: empty response")
+		}
 		return nil, fmt.Errorf("read reply: %w", err)
 	}
 	if len(line) == 0 {

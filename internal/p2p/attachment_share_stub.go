@@ -45,7 +45,7 @@ type AttachmentPayload struct {
 
 // AttachmentProvider declared in stub mode for compile-time binary parity.
 type AttachmentProvider interface {
-	GetAttachmentPayload(ctx context.Context, id string) (*AttachmentPayload, error)
+	GetAttachmentPayload(ctx context.Context, id, peerID string) (*AttachmentPayload, error)
 }
 
 // AttachmentShareAuditor declared in stub mode for compile-time binary parity.

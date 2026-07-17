@@ -90,11 +90,14 @@ type attachmentShareError struct {
 	Message string `json:"message"`
 }
 
-// AttachmentProvider is the offering-side hook: given an attachment id,
-// returns the full AttachmentPayload (metadata + body bytes). Returns
-// ErrAttachmentNotFound when the id is unknown or soft-deleted.
+// AttachmentProvider is the offering-side hook: given an attachment id AND
+// the requesting peer, returns the full AttachmentPayload (metadata + body
+// bytes) ONLY when the peer is authorized for the attachment's workspace.
+// Returns ErrAttachmentNotFound when the id is unknown, soft-deleted, OR the
+// peer lacks access — the three cases collapse to one sentinel so the wire
+// reply is byte-identical and can't be used to probe cross-workspace ids.
 type AttachmentProvider interface {
-	GetAttachmentPayload(ctx context.Context, id string) (*AttachmentPayload, error)
+	GetAttachmentPayload(ctx context.Context, id, peerID string) (*AttachmentPayload, error)
 }
 
 // AttachmentShareAuditor is the audit hook for every request/served
