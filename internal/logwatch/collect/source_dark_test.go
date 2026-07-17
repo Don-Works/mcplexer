@@ -67,6 +67,52 @@ func TestPullOne_HostKeyMismatchAlertsImmediately(t *testing.T) {
 	}
 }
 
+// TestPullOne_HostKeyMismatchNotSuppressedByPriorOutage is the H8 regression:
+// once an ordinary "collection unavailable" episode has been delivered, a
+// subsequent host-key mismatch (the MITM/re-provision security signal) must
+// still fire its own distinct alert — a reason change starts a fresh episode
+// rather than being swallowed by the already-sent outage episode.
+func TestPullOne_HostKeyMismatchNotSuppressedByPriorOutage(t *testing.T) {
+	host, scope := testHostAndScope()
+	storeFake := newConcurrencyStore(host, scope)
+	runner := &concurrencyRunner{failIDs: map[string]bool{"s1": true}}
+	sink := &syncSink{}
+	manager := NewManager(storeFake, fakeSecrets{}, sink, runner)
+	manager.now = func() time.Time { return time.Date(2026, 7, 15, 18, 0, 0, 0, time.UTC) }
+	source := manySources(1)[0]
+	source.ID = "s1"
+
+	// Drive an ordinary outage episode to "sent".
+	for previous := 0; previous < 3; previous++ {
+		copy := *source
+		copy.ConsecutiveFailures = previous
+		manager.pullOne(context.Background(), &copy)
+	}
+	alerts := sink.darkAlerts()
+	if len(alerts) != 1 || alerts[0].reason != FailureReasonUnavailable {
+		t.Fatalf("expected one unavailable alert, got %+v", alerts)
+	}
+
+	// Host key changes: every pull now fails with a mismatch (threshold 1).
+	manager.runner = &fakeRunner{err: &sshx.HostKeyMismatchError{
+		Host: "prod:22", Pinned: "SHA256:old", Presented: "SHA256:new",
+	}}
+	mismatch := *source
+	mismatch.ConsecutiveFailures = 3
+	manager.pullOne(context.Background(), &mismatch)
+
+	alerts = sink.darkAlerts()
+	if len(alerts) != 2 {
+		t.Fatalf("host-key mismatch alert was suppressed by the prior outage episode: %+v", alerts)
+	}
+	if alerts[1].reason != FailureReasonHostKeyMismatch {
+		t.Fatalf("second alert reason = %q, want host_key_mismatch", alerts[1].reason)
+	}
+	if alerts[0].episodeID == alerts[1].episodeID {
+		t.Fatalf("host-key mismatch must be a fresh episode, not the outage one")
+	}
+}
+
 func TestPullOne_SourceDarkDeliveryFailureRetriesSameEpisode(t *testing.T) {
 	host, scope := testHostAndScope()
 	storeFake := newConcurrencyStore(host, scope)

@@ -151,26 +151,57 @@ func TestPull_JournaldLegacyCursorMigrationDoesNotSignal(t *testing.T) {
 	}
 }
 
-// TestPull_JournaldTruncatedHoldsCursor: a truncated window is untrustworthy
-// and its cursor marker is very likely to have been cut off mid-line. Advancing
-// past a window we could not read would drop those bytes forever, so the cursor
-// must be held and the window re-covered.
-func TestPull_JournaldTruncatedHoldsCursor(t *testing.T) {
+// TestPull_JournaldTruncatedAdvancesViaSince: a truncated journald window has
+// its --show-cursor marker cut off, so there is no opaque cursor to advance.
+// Rather than hold the cursor and re-pull the same over-cap window forever, the
+// collector ingests the complete prefix (dropping the possibly-partial last
+// line), advances CursorTS past it, and CLEARS the opaque cursor so the next
+// pull falls back to a --since window and the source makes progress.
+func TestPull_JournaldTruncatedAdvancesViaSince(t *testing.T) {
 	runner := &fakeRunner{
-		out:       "2026-07-16T22:44:04.482510+00:00 host sshd[1]: Accepted publickey\n-- cursor: " + realCursor + "\n",
+		// Three complete lines then a partial 4th (cut mid-line, no newline, no
+		// --show-cursor marker) — the realistic shape of a truncated window.
+		out: "2026-07-16T22:44:04.482510+00:00 host sshd[1]: line one\n" +
+			"2026-07-16T22:44:05.100000+00:00 host sshd[1]: line two\n" +
+			"2026-07-16T22:44:06.200000+00:00 host sshd[1]: line three\n" +
+			"2026-07-16T22:44:07.300000+00:00 host sshd[1]: partial fo",
 		truncated: true,
 	}
-	m, fs, _ := newFixture(runner)
+	m, fs, sink := newFixture(runner)
 	src := srcJournald()
-	ts := time.Date(2026, 7, 16, 22, 44, 4, 485367000, time.UTC)
+	ts := time.Date(2026, 7, 16, 22, 44, 0, 0, time.UTC)
 	src.CursorTS = &ts
 	src.CursorHash = sourceCursorState{Version: 2, JournalCursor: "s=old;i=1"}.encode()
 
 	if err := m.pullSource(context.Background(), src); err != nil {
 		t.Fatalf("pull: %v", err)
 	}
-	if got := decodeCursorState(fs.cursorH).JournalCursor; got != "s=old;i=1" {
-		t.Fatalf("truncated pull advanced the cursor to %q; the unread bytes are now unreachable", got)
+	// Opaque cursor cleared so the next pull uses --since (marker was cut off).
+	if got := decodeCursorState(fs.cursorH).JournalCursor; got != "" {
+		t.Fatalf("truncated journald cursor = %q, want cleared for --since fallback", got)
+	}
+	// CursorTS advanced to the last COMPLETE line (line three), not the partial.
+	wantTS := time.Date(2026, 7, 16, 22, 44, 6, 200000000, time.UTC)
+	if !fs.cursorTS.Equal(wantTS) {
+		t.Fatalf("cursorTS = %v, want %v (last complete line)", fs.cursorTS, wantTS)
+	}
+	// The complete prefix was ingested (progress), plus the truncation signal.
+	var sawLineThree, sawTruncation, sawPartial bool
+	for _, line := range sink.lines {
+		switch {
+		case strings.Contains(line.Text, "line three"):
+			sawLineThree = true
+		case strings.Contains(line.Text, "pull truncated"):
+			sawTruncation = true
+		case strings.Contains(line.Text, "partial fo"):
+			sawPartial = true
+		}
+	}
+	if !sawLineThree || !sawTruncation {
+		t.Fatalf("expected complete prefix + truncation signal, got %d lines", len(sink.lines))
+	}
+	if sawPartial {
+		t.Fatalf("the possibly-partial last line must not be ingested")
 	}
 }
 

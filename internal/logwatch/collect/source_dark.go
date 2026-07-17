@@ -70,11 +70,21 @@ func (m *Manager) claimDarkEpisode(
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	episode, exists := m.dark[sourceID]
+	// A change of failure reason starts a FRESH episode. The critical case is
+	// an ordinary "collection unavailable" outage (already sent) escalating to
+	// a host-key mismatch — the MITM/re-provision security signal. Without this
+	// the prior sent episode suppresses the distinct new alert forever, because
+	// the episode only clears on a successful pull, which the mismatch blocks.
+	if exists && episode.reason != reason {
+		exists = false
+	}
 	if !exists {
 		m.darkSeq++
-		episode.id = strconv.FormatInt(m.now().UTC().UnixNano(), 36) + "-" +
-			strconv.FormatUint(m.darkSeq, 36)
-		episode.reason = reason
+		episode = darkEpisode{
+			id: strconv.FormatInt(m.now().UTC().UnixNano(), 36) + "-" +
+				strconv.FormatUint(m.darkSeq, 36),
+			reason: reason,
+		}
 	}
 	if episode.sent || episode.inFlight {
 		return episode.id, episode.reason, false

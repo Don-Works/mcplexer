@@ -223,7 +223,7 @@ func TestParseLogLines_StableTimestampSortPreservesContinuations(t *testing.T) {
 		"2026-07-08T14:00:10.000000000Z panic: parent\n" +
 		"    z-frame continuation\n" +
 		"    a-frame continuation\n")
-	lines, first, last := parseLogLines(stdout, nil)
+	lines, first, last := parseLogLines(stdout, nil, false)
 	want := []string{
 		"panic: parent",
 		"    z-frame continuation",

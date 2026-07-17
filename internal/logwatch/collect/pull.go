@@ -105,7 +105,7 @@ func (m *Manager) ingestPull(
 	if src.Kind == store.LogSourceKindJournald {
 		stdout, newJournalCursor = splitJournalCursor(stdout)
 	}
-	lines, firstRaw, lastRaw := parseLogLines(stdout, result.Stderr)
+	lines, firstRaw, lastRaw := parseLogLines(stdout, result.Stderr, result.Truncated)
 	// Every collected steady-state kind now uses an exclusive window:
 	// journald has --after-cursor; Docker/Compose/Swarm receive cursorTS+1ns.
 	// An exclusive window cannot re-return the stored tail, while Compose's
@@ -136,37 +136,46 @@ func (m *Manager) ingestPull(
 		now := m.now().UTC()
 		signals = append(signals, Line{TS: now, Notify: true,
 			IncidentID: truncationIncidentID,
-			Text:       fmt.Sprintf("logwatch: pull truncated at %d bytes — window incomplete and untrustworthy; silence is not evidence of health", src.MaxPullBytes)})
-		// Do not mine an arbitrary prefix as application evidence. The cursor is
-		// deliberately held, so retaining these rows would duplicate them on
-		// every retry and manufacture counts from an untrustworthy window.
-		lines = nil
+			Text:       fmt.Sprintf("logwatch: pull truncated at %d bytes — window incomplete; ingesting the complete prefix and advancing past it (newest bytes deferred to the next pull)", src.MaxPullBytes)})
+		// The complete lines (parseLogLines already dropped the possibly-partial
+		// last line) ARE real evidence up to the cutoff. Ingest them and advance
+		// the cursor past them so the source makes progress instead of
+		// re-pulling and re-discarding the same over-cap window forever.
+		if src.Kind == store.LogSourceKindJournald {
+			// The --show-cursor marker was cut off by the truncation, so there is
+			// no opaque cursor to advance. Clear any stale one and fall back to a
+			// --since window (cursorTS below) on the next pull; keeping the old
+			// cursor would re-issue the same --after-cursor window and re-truncate.
+			state.JournalCursor = ""
+		}
 	}
-	// A truncated window is untrustworthy, so the cursor is held and the
-	// window re-covered. Advancing the journal cursor here would step past
-	// the bytes the truncation discarded and lose them permanently.
 	if !result.Truncated && newJournalCursor != "" {
 		state.JournalCursor = newJournalCursor
 	}
 	lines = append(signals, lines...)
 	if len(lines) == 0 {
-		return m.persistCursorState(ctx, src, state, lastRaw, result.Truncated)
+		return m.persistCursorState(ctx, src, state, lastRaw)
 	}
 	if err := m.sink.Ingest(ctx, src, host, lines); err != nil {
 		return fmt.Errorf("logwatch: ingest: %w", err)
 	}
-	return m.persistCursorState(ctx, src, state, lastRaw, result.Truncated)
+	return m.persistCursorState(ctx, src, state, lastRaw)
 }
 
 func (m *Manager) persistCursorState(
 	ctx context.Context, src *store.LogSource, state sourceCursorState,
-	lastRaw rawLine, truncated bool,
+	lastRaw rawLine,
 ) error {
 	cursorTS := time.Time{}
 	if src.CursorTS != nil {
 		cursorTS = *src.CursorTS
 	}
-	if !truncated && !lastRaw.ts.IsZero() {
+	// Advance the cursor to the last COMPLETE line's timestamp even on a
+	// truncated pull: parseLogLines already dropped the possibly-partial final
+	// line, so every line up to lastRaw was whole and ingested. Not advancing
+	// on truncation is what wedged a source into re-pulling the same over-cap
+	// window forever.
+	if !lastRaw.ts.IsZero() {
 		cursorTS = lastRaw.ts
 		state.TailHash = lineHash(lastRaw.raw)
 	}
@@ -270,7 +279,11 @@ func mergeByTS(a, b []parsedLine) []parsedLine {
 // parseLogLines merges stdout and stderr into one chronological,
 // redacted line sequence. Returns the parsed lines plus the first and
 // last raw lines (pre-redaction) for cursor hashing.
-func parseLogLines(stdout, stderr []byte) ([]Line, rawLine, rawLine) {
+// dropLast drops the final merged line before computing the result. On a
+// truncated pull the last physical line may have been cut mid-line, so it must
+// not be ingested or used as the cursor advance point — dropping it keeps the
+// window to whole, complete lines.
+func parseLogLines(stdout, stderr []byte, dropLast bool) ([]Line, rawLine, rawLine) {
 	stdoutLines := splitStream(stdout)
 	stderrLines := splitStream(stderr)
 	// Docker Compose aggregates several container streams onto stdout and can
@@ -284,6 +297,9 @@ func parseLogLines(stdout, stderr []byte) ([]Line, rawLine, rawLine) {
 	slices.SortStableFunc(stdoutLines, byTimestamp)
 	slices.SortStableFunc(stderrLines, byTimestamp)
 	merged := mergeByTS(stdoutLines, stderrLines)
+	if dropLast && len(merged) > 0 {
+		merged = merged[:len(merged)-1]
+	}
 	if len(merged) == 0 {
 		return nil, rawLine{}, rawLine{}
 	}
