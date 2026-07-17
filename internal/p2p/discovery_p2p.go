@@ -67,8 +67,15 @@ type DiscoveryService struct {
 	mu       sync.Mutex
 	modes    map[peer.ID]ConnectionMode
 	reported map[peer.ID]ConnectionMode // last mode emitted at INFO; survives mode clears for dedup
+	notif    network.Notifiee           // retained so Close can StopNotify it
 	closed   bool
 }
+
+// maxReportedPeers bounds the INFO-dedup map. It intentionally outlives a
+// mode clear (so a brief flap doesn't re-log), which without eviction grows
+// one permanent entry per stranger peer that ever connects (DHT churn). When
+// it crosses this, disconnected peers' dedup state is swept.
+const maxReportedPeers = 2048
 
 // NewDiscoveryService wires a discovery service onto an existing Host. The
 // service starts immediately: callers must invoke Close to release resources.
@@ -92,7 +99,8 @@ func NewDiscoveryService(h *Host, lookup PeerLookup, logger *slog.Logger) *Disco
 		reported: make(map[peer.ID]ConnectionMode),
 	}
 	if h != nil {
-		h.h.Network().Notify(d.notifiee())
+		d.notif = d.notifiee()
+		h.h.Network().Notify(d.notif)
 		d.hydratePeerstore()
 		// Publish only after the service is completely initialised. mDNS
 		// callbacks that arrive during setup are safely ignored by the host;
@@ -207,6 +215,15 @@ func (d *DiscoveryService) handleDisconnected(p peer.ID) {
 	}
 	d.mu.Lock()
 	delete(d.modes, p)
+	// Bound the dedup map: without eviction it accumulates one entry per
+	// stranger peer forever. Sweep disconnected peers once it grows large.
+	if len(d.reported) > maxReportedPeers {
+		for pid := range d.reported {
+			if len(d.host.h.Network().ConnsToPeer(pid)) == 0 {
+				delete(d.reported, pid)
+			}
+		}
+	}
 	d.mu.Unlock()
 }
 
@@ -273,6 +290,11 @@ func (d *DiscoveryService) Close() error {
 		return nil
 	}
 	d.closed = true
+	// Unregister the notifiee so connection callbacks stop firing (and stop
+	// writing to storage) after Close.
+	if d.host != nil && d.notif != nil {
+		d.host.h.Network().StopNotify(d.notif)
+	}
 	return nil
 }
 

@@ -248,6 +248,13 @@ type agentStream struct {
 	writeMu   sync.Mutex
 	closeOnce sync.Once
 	rate      *byteWindow // sliding-window byte counter for inbound rate-limit
+	// reader is created ONCE per stream. libp2p muxed streams are byte
+	// streams that do not preserve write boundaries, so a single fill can
+	// pull the hello plus the following snapshot into the buffer. A fresh
+	// bufio.Reader per frame would discard everything past the first '\n',
+	// silently dropping snapshots and desyncing on mid-frame splits — so the
+	// buffered remainder MUST persist across readFrame calls.
+	reader *bufio.Reader
 }
 
 // byteWindow is a fixed-period byte-count sliding window. Cheap to
@@ -380,6 +387,7 @@ func (s *AgentDirectoryService) ConnectToPeer(ctx context.Context, peerID string
 		stream: stream,
 		peerID: peerID,
 		rate:   newByteWindow(AgentBytesPerWindow, AgentRateWindow),
+		reader: bufio.NewReaderSize(stream, MaxAgentFrameBytes),
 	}
 
 	if err := s.greetPeer(ctx, st); err != nil {
@@ -529,6 +537,7 @@ func (s *AgentDirectoryService) handleStream(stream network.Stream) {
 		stream: stream,
 		peerID: remote,
 		rate:   newByteWindow(AgentBytesPerWindow, AgentRateWindow),
+		reader: bufio.NewReaderSize(stream, MaxAgentFrameBytes),
 	}
 
 	// Read the remote's hello first so an unauthenticated stream cannot
@@ -770,8 +779,13 @@ func (s *AgentDirectoryService) writeFrame(st *agentStream, v any) error {
 // per-peer rate limit, and returns the frame bytes (no trailing newline).
 func (s *AgentDirectoryService) readFrame(st *agentStream) ([]byte, error) {
 	_ = st.stream.SetReadDeadline(time.Now().Add(agentStreamReadDeadline))
-	br := bufio.NewReaderSize(st.stream, MaxAgentFrameBytes)
-	line, err := br.ReadBytes('\n')
+	// ReadSlice on the persistent, cap-sized reader: an oversize line surfaces
+	// as ErrBufferFull immediately instead of ReadBytes accumulating the whole
+	// (potentially multi-GB) line before the length check could fire.
+	line, err := st.reader.ReadSlice('\n')
+	if errors.Is(err, bufio.ErrBufferFull) {
+		return nil, fmt.Errorf("%w: > %d", ErrAgentDirFrameTooLarge, MaxAgentFrameBytes)
+	}
 	if len(line) > MaxAgentFrameBytes {
 		return nil, fmt.Errorf("%w: %d > %d",
 			ErrAgentDirFrameTooLarge, len(line), MaxAgentFrameBytes)
@@ -789,7 +803,11 @@ func (s *AgentDirectoryService) readFrame(st *agentStream) ([]byte, error) {
 	if err != nil && !errors.Is(err, io.EOF) {
 		return nil, err
 	}
-	return line, nil
+	// ReadSlice returns a view into the shared buffer that the next read
+	// overwrites; copy so callers can hold the frame safely.
+	out := make([]byte, len(line))
+	copy(out, line)
+	return out, nil
 }
 
 // shouldDial returns true if our peer ID lexicographically precedes

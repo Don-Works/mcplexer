@@ -75,6 +75,13 @@ const (
 	collaborationInviteRateWindow  = 5 * time.Minute
 	collaborationInviteRemoteBurst = 30
 	collaborationInviteTokenBurst  = 8
+	// collaborationInviteMaxKeys bounds the limiter's tracked keys. The invite
+	// stream handler is reachable BEFORE pairing (no ConnectionGater), so an
+	// attacker rotating peer IDs and 256-char invitation IDs would otherwise
+	// grow these maps without bound — a remote, pre-auth memory DoS. When the
+	// combined key count crosses this ceiling, a full sweep drops every window
+	// that has already fully drained.
+	collaborationInviteMaxKeys = 8192
 )
 
 type collaborationInviteLimiter struct {
@@ -96,19 +103,56 @@ func (l *collaborationInviteLimiter) allow(remotePeerID, invitationID string, no
 		for first < len(values) && values[first].Before(cutoff) {
 			first++
 		}
+		if first == 0 {
+			return values
+		}
 		return append([]time.Time(nil), values[first:]...)
 	}
+
+	// Before touching a (possibly first-seen) key, cap total memory: if the
+	// maps have ballooned, evict every fully-drained window.
+	if len(l.remote)+len(l.invites) >= collaborationInviteMaxKeys {
+		l.sweep(cutoff)
+	}
+
 	remote := prune(l.remote[remotePeerID])
 	inviteKey := remotePeerID + "\x00" + invitationID
 	invite := prune(l.invites[inviteKey])
 	if len(remote) >= collaborationInviteRemoteBurst || len(invite) >= collaborationInviteTokenBurst {
-		l.remote[remotePeerID] = remote
-		l.invites[inviteKey] = invite
+		// Rejected: persist only non-empty windows. Never materialize a fresh
+		// key for a first-seen invitation ID that was rejected on the peer
+		// burst — that was the original unbounded-growth vector — and drop any
+		// key whose window just drained to empty.
+		storeOrDeleteWindow(l.remote, remotePeerID, remote)
+		storeOrDeleteWindow(l.invites, inviteKey, invite)
 		return false
 	}
 	l.remote[remotePeerID] = append(remote, now)
 	l.invites[inviteKey] = append(invite, now)
 	return true
+}
+
+// sweep deletes every window whose newest entry is older than cutoff, i.e. a
+// fully-drained key that only survives because nothing has touched it since.
+func (l *collaborationInviteLimiter) sweep(cutoff time.Time) {
+	for k, v := range l.remote {
+		if len(v) == 0 || v[len(v)-1].Before(cutoff) {
+			delete(l.remote, k)
+		}
+	}
+	for k, v := range l.invites {
+		if len(v) == 0 || v[len(v)-1].Before(cutoff) {
+			delete(l.invites, k)
+		}
+	}
+}
+
+func storeOrDeleteWindow(m map[string][]time.Time, key string, values []time.Time) {
+	if len(values) == 0 {
+		delete(m, key)
+		return
+	}
+	m[key] = values
 }
 
 func (s *CollaborationInviteService) LocalPeerID() string {

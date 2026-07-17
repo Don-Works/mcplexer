@@ -263,6 +263,45 @@ func TestGetPeerStatusReadsLastSeen(t *testing.T) {
 	}
 }
 
+// TestSQLPeerLookupRevokedIsNotPaired is the security regression for the
+// deep-review finding: IsPaired is the sole authorization gate on the mesh,
+// agent-directory, and mDNS auto-dial surfaces, so a revoked peer (row present
+// but revoked_at set) MUST read as not-paired — otherwise revocation silently
+// fails to isolate a peer on the always-on transports.
+func TestSQLPeerLookupRevokedIsNotPaired(t *testing.T) {
+	t.Parallel()
+	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "x.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer db.Close() //nolint:errcheck
+
+	if _, err := db.Exec(testP2PPeersSchema); err != nil {
+		t.Fatalf("create schema: %v", err)
+	}
+	const peerID = "12D3KooWRevokedPeer"
+	if _, err := db.Exec(
+		`INSERT INTO p2p_peers (peer_id, paired_at) VALUES (?, ?)`,
+		peerID, time.Now().UTC().Format(time.RFC3339)); err != nil {
+		t.Fatalf("insert peer: %v", err)
+	}
+
+	lookup := NewSQLPeerLookup(db, nil)
+	if ok, err := lookup.IsPaired(context.Background(), peerID); err != nil || !ok {
+		t.Fatalf("IsPaired before revoke = (%v, %v), want (true, nil)", ok, err)
+	}
+
+	if _, err := db.Exec(
+		`UPDATE p2p_peers SET revoked_at = ? WHERE peer_id = ?`,
+		time.Now().UTC().Format(time.RFC3339), peerID); err != nil {
+		t.Fatalf("revoke peer: %v", err)
+	}
+
+	if ok, err := lookup.IsPaired(context.Background(), peerID); err != nil || ok {
+		t.Fatalf("IsPaired after revoke = (%v, %v), want (false, nil)", ok, err)
+	}
+}
+
 // testP2PPeersSchema mirrors migration 024's CREATE TABLE plus the columns
 // added by the post-migration hooks (connection_mode from 024,
 // last_known_addrs from 033). Keep this in lock-step with the production

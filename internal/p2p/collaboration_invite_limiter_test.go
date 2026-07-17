@@ -28,3 +28,29 @@ func TestCollaborationInviteLimiterBoundsPeerAndTokenAttempts(t *testing.T) {
 		t.Fatal("limiter did not recover after the window")
 	}
 }
+
+// TestCollaborationInviteLimiterRejectedInvitesDoNotGrowMaps is the memory-DoS
+// regression: once a peer's burst is exhausted, further requests with fresh
+// invitation IDs must be rejected WITHOUT materializing a permanent map entry
+// per attacker-chosen ID (the original unbounded-growth vector).
+func TestCollaborationInviteLimiterRejectedInvitesDoNotGrowMaps(t *testing.T) {
+	now := time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC)
+	var limiter collaborationInviteLimiter
+	// Exhaust the per-peer burst.
+	for i := 0; i < collaborationInviteRemoteBurst; i++ {
+		limiter.allow("peer-flood", "invite-"+time.Duration(i).String(), now.Add(time.Duration(i)*time.Second))
+	}
+	invitesAfterBurst := len(limiter.invites)
+	// Now hammer with unique, always-rejected invitation IDs.
+	for i := 0; i < 5000; i++ {
+		if limiter.allow("peer-flood", "flood-"+time.Duration(i).String(), now.Add(time.Minute)) {
+			t.Fatalf("request %d unexpectedly allowed after burst", i)
+		}
+	}
+	if grew := len(limiter.invites) - invitesAfterBurst; grew != 0 {
+		t.Fatalf("rejected fresh invitation IDs grew l.invites by %d entries, want 0", grew)
+	}
+	if len(limiter.remote) != 1 {
+		t.Fatalf("l.remote = %d keys, want 1 (single flooding peer)", len(limiter.remote))
+	}
+}

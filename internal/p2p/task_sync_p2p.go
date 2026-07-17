@@ -711,8 +711,16 @@ func (s *TaskSyncService) writeFrame(stream network.Stream, v any) error {
 
 // readSyncLine reads exactly one '\n'-terminated frame, enforcing the
 // byte cap. Returns the line without the trailing newline.
+//
+// It uses ReadSlice on the cap-sized reader so an oversize frame surfaces as
+// bufio.ErrBufferFull immediately, rather than ReadBytes buffering the whole
+// (potentially multi-GB) newline-free line into memory before the length
+// check can fire.
 func readSyncLine(br *bufio.Reader) ([]byte, error) {
-	line, err := br.ReadBytes('\n')
+	line, err := br.ReadSlice('\n')
+	if errors.Is(err, bufio.ErrBufferFull) {
+		return nil, fmt.Errorf("%w: > %d", ErrTaskSyncFrameTooLarge, MaxTaskSyncFrameBytes)
+	}
 	if len(line) > MaxTaskSyncFrameBytes {
 		return nil, fmt.Errorf("%w: %d > %d",
 			ErrTaskSyncFrameTooLarge, len(line), MaxTaskSyncFrameBytes)
@@ -729,7 +737,11 @@ func readSyncLine(br *bufio.Reader) ([]byte, error) {
 	if len(line) == 0 {
 		return nil, io.EOF
 	}
-	return line, nil
+	// ReadSlice returns a view into the shared buffer that the next read
+	// overwrites; copy so callers can retain the frame safely.
+	out := make([]byte, len(line))
+	copy(out, line)
+	return out, nil
 }
 
 // recordAudit forwards to the optional auditor.

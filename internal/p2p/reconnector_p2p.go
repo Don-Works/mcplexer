@@ -323,7 +323,17 @@ func (r *Reconnector) loop(ctx context.Context) {
 	// Run once immediately so a fresh restart doesn't have to wait for an
 	// event before trying paired peers.
 	r.runSweep(ctx)
+	nextSweep := r.clk.Now().Add(r.interval)
 	for {
+		// Arm the timer for the time REMAINING until the next scheduled sweep,
+		// not a fresh full interval. Otherwise every kick (fired for EVERY
+		// libp2p connection event, incl. background DHT churn) resets the
+		// countdown and the safety-net sweep — the sole backstop for a paired
+		// peer whose disconnect event libp2p dropped — can starve indefinitely.
+		wait := nextSweep.Sub(r.clk.Now())
+		if wait < 0 {
+			wait = 0
+		}
 		select {
 		case <-ctx.Done():
 			return
@@ -331,8 +341,9 @@ func (r *Reconnector) loop(ctx context.Context) {
 			return
 		case pid := <-r.kickCh:
 			r.handleKick(ctx, pid)
-		case <-r.clk.After(r.interval):
+		case <-r.clk.After(wait):
 			r.runSweep(ctx)
+			nextSweep = r.clk.Now().Add(r.interval)
 		}
 	}
 }

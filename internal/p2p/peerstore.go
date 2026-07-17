@@ -29,13 +29,17 @@ func NewSQLPeerLookup(db *sql.DB, logger *slog.Logger) *SQLPeerLookup {
 	return &SQLPeerLookup{db: db, logger: logger}
 }
 
-// IsPaired implements PeerLookup.
+// IsPaired implements PeerLookup. A revoked peer is NOT paired: revocation
+// sets revoked_at, and this predicate is the sole authorization gate on the
+// always-on transport surfaces (inbound mesh, agent-directory gossip, mDNS
+// auto-dial), so it MUST exclude revoked rows exactly like the sibling
+// address/enumeration queries below do.
 func (s *SQLPeerLookup) IsPaired(ctx context.Context, peerID string) (bool, error) {
 	if s == nil || s.db == nil || peerID == "" {
 		return false, nil
 	}
 	row := s.db.QueryRowContext(ctx,
-		`SELECT 1 FROM p2p_peers WHERE peer_id = ? LIMIT 1`, peerID)
+		`SELECT 1 FROM p2p_peers WHERE peer_id = ? AND revoked_at IS NULL LIMIT 1`, peerID)
 	var n int
 	switch err := row.Scan(&n); {
 	case err == nil:
