@@ -201,6 +201,71 @@ func TestBuildCodeModeInstructions_MeshEnabled(t *testing.T) {
 	}
 }
 
+// TestBuildCompactCodeModeInstructions_KeepsLoadBearingRules asserts the
+// compact variant is a narrowing, not a rewrite: every rule a worker cannot
+// write a correct snippet without has to survive the cut.
+func TestBuildCompactCodeModeInstructions_KeepsLoadBearingRules(t *testing.T) {
+	got := buildCompactCodeModeInstructions(false)
+	for _, must := range []string{
+		"mcpx__execute_code",           // how to run anything
+		"mcpx__search_tools",           // how to find anything
+		"mcpx__retrieve",               // how to expand a CCR marker
+		"`<namespace>.<tool>(args)`",   // the call form
+		"synchronous",                  // no await
+		"auto-unwrapped",               // do not JSON.parse the envelope
+		"JSON.parse(result.content[0]", // the exact anti-pattern
+		"ONE snippet",                  // batching
+		"NEVER print raw responses",    // output discipline
+		"returns null entries",         // parallel() contract
+	} {
+		if !strings.Contains(got, must) {
+			t.Errorf("compact instructions dropped load-bearing rule %q\n--- got ---\n%s", must, got)
+		}
+	}
+	// The point of the variant is cost. Anything close to the full text means
+	// the trim silently stopped paying for itself.
+	full := buildCodeModeInstructions(HarnessDirect, false)
+	if len(got)*2 > len(full) {
+		t.Errorf("compact instructions = %d B, want well under half of full (%d B)", len(got), len(full))
+	}
+}
+
+// TestBuildCodeModeInstructionsForClient_PiOnly proves the compact variant is
+// scoped to Pi. Every other harness — including lookalike names that must not
+// match isPiHarness — keeps the full instructions byte-for-byte.
+func TestBuildCodeModeInstructionsForClient_PiOnly(t *testing.T) {
+	compact := buildCompactCodeModeInstructions(true)
+	for _, name := range []string{"pi", "pi-coding-agent", "@mariozechner/pi-coding-agent", "pi.dev", "earendil"} {
+		if got := buildCodeModeInstructionsForClient(name, true); got != compact {
+			t.Errorf("client %q should get the compact instructions", name)
+		}
+	}
+	direct := buildCodeModeInstructions(HarnessDirect, true)
+	for _, name := range []string{"claude-code", "codex", "opencode", "raspberry-pi", "copilot", ""} {
+		if got := buildCodeModeInstructionsForClient(name, true); got != direct {
+			t.Errorf("client %q must keep the full direct instructions", name)
+		}
+	}
+	prefixed := buildCodeModeInstructions(HarnessServerPrefixed, true)
+	for _, name := range []string{"grok-cli", "cursor", "windsurf", "gemini-cli", "picoclaw"} {
+		if got := buildCodeModeInstructionsForClient(name, true); got != prefixed {
+			t.Errorf("client %q must keep the full server-prefixed instructions", name)
+		}
+	}
+}
+
+// TestBuildCompactCodeModeInstructions_Mesh keeps the mesh hint conditional,
+// matching the full variant — a worker on a mesh-less gateway shouldn't pay
+// for instructions about a surface it cannot reach.
+func TestBuildCompactCodeModeInstructions_Mesh(t *testing.T) {
+	if strings.Contains(buildCompactCodeModeInstructions(false), "mesh.receive") {
+		t.Error("mesh hint leaked into the mesh-disabled compact instructions")
+	}
+	if !strings.Contains(buildCompactCodeModeInstructions(true), "mesh.receive") {
+		t.Error("mesh-enabled compact instructions missing mesh.receive")
+	}
+}
+
 func TestHandleToolsList_ClaudeCanonical(t *testing.T) {
 	h, _ := newTestHandler(&mockToolLister{tools: map[string]json.RawMessage{}}, nil)
 	h.sessions.session = &store.Session{ClientType: "claude-code"}

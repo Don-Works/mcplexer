@@ -27,6 +27,31 @@ func formatTime(t time.Time) string {
 	return t.UTC().Format(timeFormat)
 }
 
+// formatTimeNano preserves sub-second precision. Use it for any timestamp that
+// is fed back in as an EXCLUSIVE lower bound, where truncation is not a
+// rounding error but a correctness bug.
+//
+// The log-source pull cursor is the motivating case. collect/pull.go advances
+// the cursor by exactly one nanosecond so the next `docker logs --since` window
+// excludes the line it already has, and sshx formats --since as RFC3339Nano.
+// Persisting that through formatTime dropped the nanoseconds, so the next pull
+// asked for <second>.000000001 — at or before every line in that second. The
+// tail came back, was re-ingested, and the recomputed cursor truncated to the
+// same second again: a fixed point the cursor could never advance past.
+//
+// Observed on a static fixture with nothing appending: line count climbed
+// 10 -> 12 -> 13 -> 14 across successive pulls while cursor_ts stayed frozen.
+// The duplicate rows are the visible half; the corrosive half is that
+// re-ingested arrivals carry IDENTICAL timestamps, so baseline mining reads
+// zero-second inter-arrival gaps that were never emitted and computes median,
+// MAD and P95 over a polluted sample.
+//
+// Reads need no migration: parseTimeFormats already tries RFC3339Nano first,
+// and an existing second-precision value parses unchanged.
+func formatTimeNano(t time.Time) string {
+	return t.UTC().Format(time.RFC3339Nano)
+}
+
 func parseTime(s string) time.Time {
 	if s == "" {
 		return time.Time{}

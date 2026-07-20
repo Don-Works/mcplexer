@@ -225,7 +225,7 @@ func TestDelegationIsOperationalOnlyForModel(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			got := admin.DelegationIsOperationalOnlyForModelForTest(c.workers)
 			if got != c.want {
-				t.Fatalf("delegationIsOperationalOnlyForModel = %v, want %v", got, c.want)
+				t.Fatalf("delegationIsOperationalOnly = %v, want %v", got, c.want)
 			}
 		})
 	}

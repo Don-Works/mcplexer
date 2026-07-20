@@ -1,14 +1,11 @@
 package models
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 )
 
@@ -63,39 +60,6 @@ func codexStandardPaths() []string {
 		"/opt/homebrew/bin/codex",
 		"/usr/local/bin/codex",
 	)
-}
-
-// codexCLIEvent is the JSON envelope emitted by `codex --format json`.
-// Only fields we consume are declared; codex may add more without
-// breaking decode.
-type codexCLIEvent struct {
-	Type string `json:"type"`
-	// Flat envelope fields (codex >= 0.2 style)
-	Text         string  `json:"text"`
-	Result       string  `json:"result"`
-	StopReason   string  `json:"stop_reason"`
-	IsError      bool    `json:"is_error"`
-	Error        string  `json:"error"`
-	CostUSD      float64 `json:"cost_usd"`
-	OutputTokens int     `json:"output_tokens"`
-	// Nested usage object (codex >= 0.3 / structured output)
-	Usage struct {
-		InputTokens              int `json:"input_tokens"`
-		OutputTokens             int `json:"output_tokens"`
-		CacheReadInputTokens     int `json:"cache_read_input_tokens"`
-		CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
-		TotalTokens              int `json:"total_tokens"`
-	} `json:"usage"`
-	// Nested message object (alternative envelope shape)
-	Message struct {
-		Content    string `json:"content"`
-		StopReason string `json:"stop_reason"`
-	} `json:"message"`
-	// Nested tokens object (another common shape)
-	Tokens struct {
-		Input  int `json:"input"`
-		Output int `json:"output"`
-	} `json:"tokens"`
 }
 
 func (a *codexCLIAdapter) Send(ctx context.Context, req SendRequest) (*SendResponse, error) {
@@ -156,11 +120,32 @@ func (a *codexCLIAdapter) Send(ctx context.Context, req SendRequest) (*SendRespo
 	return resp, nil
 }
 
+// buildCodexCLIArgs assembles the argv for a headless codex run. Verified
+// against codex-cli 0.144.5; codex parses argv with clap in STRICT mode, so
+// any flag that does not exist aborts the run before the prompt is read.
+//
+// `exec` is mandatory: headless mode is a SUBCOMMAND, and a bare
+// `codex <flags> <prompt>` starts the interactive TUI instead. The retired
+// flags this replaces were all rejected outright by 0.144.5
+// ("error: unexpected argument '-q' found", likewise --format, --full-auto):
+//   - -q / --format json  ->  --json (JSONL event stream on stdout)
+//   - --full-auto         ->  --sandbox workspace-write. `exec` never prompts
+//     for approval, so the auto-approve half of --full-auto is implicit and
+//     only the workspace-writable half needs stating. This deliberately keeps
+//     codex's own sandbox on rather than escalating to
+//     --dangerously-bypass-approvals-and-sandbox.
+//
+// --skip-git-repo-check is required because `codex exec` refuses to start
+// outside a trusted directory ("Not inside a trusted directory and
+// --skip-git-repo-check was not specified") and a worker workspace is not
+// guaranteed to be a git repo. The mcplexer OS sandbox (codexCLISandboxConfig)
+// remains the real filesystem boundary.
 func buildCodexCLIArgs(modelID, workspacePath string) []string {
 	args := []string{
-		"-q",
-		"--format", "json",
-		"--full-auto",
+		"exec",
+		"--json",
+		"--sandbox", "workspace-write",
+		"--skip-git-repo-check",
 	}
 	if workspacePath != "" {
 		args = append(args, "--cd", workspacePath)
@@ -169,106 +154,6 @@ func buildCodexCLIArgs(modelID, workspacePath string) []string {
 		args = append(args, "--model", modelID)
 	}
 	return args
-}
-
-// parseCodexJSON decodes the JSON envelope emitted by `codex --format
-// json` into a SendResponse. It tolerates multiple envelope shapes:
-//   - flat: {"text":"…","stop_reason":"stop","usage":{…}}
-//   - nested message: {"message":{"content":"…"},…}
-//   - nested tokens: {"tokens":{"input":N,"output":N}}
-//   - error: {"is_error":true,"error":"…"}
-//
-// Usage fields may be absent (headless mode, older CLI versions); when
-// missing, token counts and cost are reported as zero rather than
-// inventing values.
-func parseCodexJSON(raw []byte) (*SendResponse, error) {
-	raw = bytes.TrimSpace(raw)
-	if len(raw) == 0 {
-		return nil, fmt.Errorf("codex_cli: empty output")
-	}
-	// Codex may emit NDJSON (multiple lines). Walk lines looking for
-	// the result envelope — skip banners and non-JSON prefix lines.
-	var env codexCLIEvent
-	found := false
-	for _, line := range strings.Split(string(raw), "\n") {
-		line = strings.TrimRight(line, "\r\n")
-		line = strings.TrimSpace(line)
-		if line == "" || !strings.HasPrefix(line, "{") {
-			continue
-		}
-		if err := json.Unmarshal([]byte(line), &env); err != nil {
-			continue
-		}
-		// Accept the first parseable JSON object that looks like a
-		// result (has text/result/message or is an error).
-		if env.Text != "" || env.Result != "" || env.Message.Content != "" || env.IsError || env.Error != "" || env.Usage.OutputTokens > 0 || env.OutputTokens > 0 {
-			found = true
-			break
-		}
-	}
-	if !found {
-		// No recognisable envelope found — try the whole blob as one
-		// JSON object (single-envelope mode).
-		if err := json.Unmarshal(raw, &env); err != nil {
-			return nil, fmt.Errorf("codex_cli: no JSON envelope in output")
-		}
-	}
-
-	if env.IsError || env.Error != "" {
-		errMsg := env.Error
-		if errMsg == "" {
-			errMsg = "unknown error"
-		}
-		return nil, fmt.Errorf("codex_cli: error: %s", errMsg)
-	}
-
-	text := env.Text
-	if text == "" {
-		text = env.Result
-	}
-	if text == "" {
-		text = env.Message.Content
-	}
-
-	inputTokens := env.Usage.InputTokens + env.Usage.CacheReadInputTokens + env.Usage.CacheCreationInputTokens
-	outputTokens := env.Usage.OutputTokens
-	if outputTokens == 0 {
-		outputTokens = env.OutputTokens
-	}
-	if outputTokens == 0 {
-		outputTokens = env.Tokens.Output
-	}
-	if inputTokens == 0 {
-		inputTokens = env.Tokens.Input
-	}
-
-	stopReason := env.StopReason
-	if stopReason == "" {
-		stopReason = env.Message.StopReason
-	}
-
-	return &SendResponse{
-		Text:         strings.TrimSpace(text),
-		InputTokens:  inputTokens,
-		OutputTokens: outputTokens,
-		CostUSD:      env.CostUSD,
-		StopReason:   normalizeCodexStop(stopReason),
-	}, nil
-}
-
-func normalizeCodexStop(s string) string {
-	switch s {
-	case "stop", "end_turn":
-		return StopEndTurn
-	case "tool_use", "tool_use_end", "tool_calls":
-		return StopToolUse
-	case "max_tokens", "length":
-		return StopMaxTokens
-	case "stop_sequence":
-		return StopStopSequence
-	default:
-		return StopOther
-	}
 }
 
 func codexExecRunner(ctx context.Context, binary string, args []string, stdin string, workspacePath string) ([]byte, []byte, error) {

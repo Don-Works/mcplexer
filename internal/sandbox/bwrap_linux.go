@@ -180,9 +180,21 @@ func bwrapArgv(cfg Config, home, program string, args []string) []string {
 		}
 		argv = append(argv, "--tmpfs", p)
 	}
+	// bwrap chdirs INSIDE the new namespace, whose root is a fresh tmpfs
+	// containing only what we bound above. A chdir target that no bind
+	// covers does not exist there and bwrap fails the spawn outright
+	// ("Can't chdir to ...: No such file or directory"). The zero-value
+	// Config hits this every time: WorkingDir is empty, so cwd falls back
+	// to DefaultWorkingDir ("/workspace"), which nothing ever binds or
+	// creates. Materialize an empty directory for any uncovered target so
+	// the documented "zero-value Config is safe" contract actually holds.
+	// This runs after the deny masks so no later mount can shadow it.
 	cwd := cfg.WorkingDir
 	if cwd == "" {
 		cwd = DefaultWorkingDir
+	}
+	if !pathWithinAny(cwd, boundRoots) {
+		argv = append(argv, "--dir", cwd)
 	}
 	argv = append(argv, "--chdir", cwd, "--", program)
 	argv = append(argv, args...)

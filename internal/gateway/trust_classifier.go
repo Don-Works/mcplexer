@@ -57,22 +57,27 @@ var trustedBuiltinPrefixes = []string{
 	legacyBuiltinPrefix, // mcplexer__ — legacy admin surface
 }
 
-// meshTrustedTools enumerates the mesh__ tools that operate on local
-// session state (peer + agent registries, scope grants, queue counters)
-// and do NOT carry cross-peer free-text payloads. mesh__receive,
-// mesh__hydrate, and mesh__thread are deliberately excluded — their payload
-// is exactly the cross-peer content the envelope was designed to protect.
+// meshTrustedTools enumerates the mesh__ tools whose payload the gateway
+// builds entirely from local state the local user authored — scope grants,
+// queue counters, echoes of the caller's own input. They carry no
+// peer-authored free text, so wrapping them is pure token tax.
+//
+// The bar is "could a REMOTE machine have written any string in this
+// output?", and it is easy to get wrong: list_peers, list_agents, and
+// list_pending_secrets used to sit in this map on the theory that peer
+// registries are "local session state". They are not — the rows are local
+// but the display names, agent names, and offer metadata inside them are
+// peer-authored, and the remote rename path applied none of the validation
+// the local one did. They now live in peerOriginTools with the other
+// cross-peer reads.
 var meshTrustedTools = map[string]bool{
-	MeshPrefix + "list_agents":          true,
-	MeshPrefix + "list_peers":           true,
-	MeshPrefix + "list_pending_secrets": true,
-	MeshPrefix + "list_queue":           true,
-	MeshPrefix + "set_agent_status":     true,
-	MeshPrefix + "set_device_name":      true,
-	MeshPrefix + "grant_peer_scope":     true,
-	MeshPrefix + "revoke_peer_scope":    true,
-	MeshPrefix + "accept_secret":        true,
-	MeshPrefix + "reject_secret":        true,
+	MeshPrefix + "list_queue":        true,
+	MeshPrefix + "set_agent_status":  true,
+	MeshPrefix + "set_device_name":   true,
+	MeshPrefix + "grant_peer_scope":  true,
+	MeshPrefix + "revoke_peer_scope": true,
+	MeshPrefix + "accept_secret":     true,
+	MeshPrefix + "reject_secret":     true,
 	// mesh__send echoes the agent's own outbound payload back as a
 	// receipt — same provenance as task__create echoing a task title,
 	// so trusted.
@@ -86,11 +91,21 @@ var meshTrustedTools = map[string]bool{
 // cross-peer / cross-machine ingest. We force-envelope these even when
 // the denylist is silent, because the threat model is "another machine
 // fed us free text" — and that ALWAYS warrants the trust marker.
+//
+// Builtin results never reach sanitizeToolResult (they return early in
+// handler_tools.go), so this classification only takes effect where a
+// handler applies it itself via meshFieldSanitizer. Every tool listed
+// here must do so.
 var peerOriginTools = map[string]bool{
 	MeshPrefix + "receive":        true,
 	MeshPrefix + "wait_for_event": true,
 	MeshPrefix + "hydrate":        true,
 	MeshPrefix + "thread":         true,
+	// Directory / offer listings: the ROWS are local, but display names,
+	// agent names, and offer metadata inside them are peer-authored.
+	MeshPrefix + "list_peers":           true,
+	MeshPrefix + "list_agents":          true,
+	MeshPrefix + "list_pending_secrets": true,
 }
 
 // trustedDownstreamMetadataTools enumerates downstream tools whose outputs

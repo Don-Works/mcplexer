@@ -202,6 +202,31 @@ type AuditRecord struct {
 	DownstreamServerName string `json:"downstream_server_name,omitempty"`
 }
 
+// ChildCLISessionCount is one CLI-child MCP session's contribution to the
+// audit-derived tool-call total for a worker run window.
+//
+// A CLI adapter spawns an external CLI (claude, grok, pi, …) which opens its
+// OWN stdio MCP connection back to the gateway. That connection creates a
+// fresh sessions row, and every tool the child dispatches lands in
+// audit_records stamped with that session_id. Nothing joins those rows back
+// to the WorkerRun, so a plain (workspace, time-window) count sums every CLI
+// client active in the window — concurrent worker runs AND the human
+// operator's own orchestrator session.
+//
+// Splitting the count per session, and carrying each session's connect /
+// disconnect times alongside it, gives callers enough to decide whether the
+// rows can be attributed to one run at all. See runner.AttributeCLIToolCalls
+// for the policy that consumes this.
+type ChildCLISessionCount struct {
+	SessionID string `json:"session_id"`
+	// ClientType is the sessions row's client_type (the harness the child
+	// announced at initialize), not the per-audit-row copy.
+	ClientType     string     `json:"client_type"`
+	ConnectedAt    time.Time  `json:"connected_at"`
+	DisconnectedAt *time.Time `json:"disconnected_at,omitempty"`
+	Count          int        `json:"count"`
+}
+
 // SkillInvocation records a single tool call attempted by a skill, including
 // allow/deny outcome. Persisted independently of audit_records so the UI can
 // show a per-skill activity feed without joining on JSON columns.

@@ -198,7 +198,11 @@ func TestMonitoringCommitTriageReusesTaskOccurrenceAndNotification(t *testing.T)
 	if len(notifier.notes) != 1 || notifier.notes[0].TaskID != taskID || !notifier.notes[0].NewIncident {
 		t.Fatalf("first notification: %+v", notifier.notes)
 	}
-	if task, err := db.GetTask(context.Background(), taskID); err != nil || !strings.Contains(task.Meta, `"logwatch_class":"correlation:api-A|app.go:42"`) {
+	// The class key is the NORMALISED correlation key ("api-A|app.go:42" ->
+	// "api a app go"): rewordings and changed line numbers of the same class
+	// must land on one incident rather than minting a sibling task per run.
+	// The raw value the model sent is preserved in logwatch_correlation.
+	if task, err := db.GetTask(context.Background(), taskID); err != nil || !strings.Contains(task.Meta, `"logwatch_class":"correlation:api a app go"`) {
 		t.Fatalf("canonical task/meta: task=%+v err=%v", task, err)
 	}
 	if pending, err := db.ListPendingLogTemplates(context.Background(), []string{mustSourceID(t, db, "ws-A")}, 0); err != nil || len(pending) != 0 {
@@ -224,7 +228,7 @@ func TestMonitoringCommitTriageReusesTaskOccurrenceAndNotification(t *testing.T)
 		t.Fatalf("effect receipt: err=%v body=%s", effectErr, effectText)
 	}
 	tasksFound, err := h.tasksSvc.List(context.Background(), store.TaskFilter{
-		WorkspaceID: "ws-A", MetaMatch: map[string]string{"logwatch_class": "correlation:api-A|app.go:42"},
+		WorkspaceID: "ws-A", MetaMatch: map[string]string{"logwatch_class": "correlation:api a app go"},
 	})
 	if err != nil || len(tasksFound) != 1 {
 		t.Fatalf("canonical task count=%d err=%v", len(tasksFound), err)

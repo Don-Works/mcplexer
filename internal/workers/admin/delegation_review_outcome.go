@@ -17,10 +17,12 @@
 //     "adapter send: " marker (the only place the runner stamps that
 //     prefix is the FIRST adapter.Send call failing inside runLoop).
 //
-//   - delegationIsOperationalOnlyForModel(workers) — delegation-level
-//     predicate: every worker matching the model key was operational
-//     (either by run signature, or by DispatchFailed flag). When
-//     true, modelStatsForDelegation suppresses review attribution.
+//   - delegationIsOperationalOnly(workers) — worker-set predicate:
+//     every worker in the set was operational (either by run
+//     signature, or by DispatchFailed flag). Two callers:
+//     modelStatsForDelegation passes the workers for one model key and
+//     suppresses review attribution; aggregateDelegation passes the
+//     whole delegation and declines to gate it into needs_review.
 package admin
 
 import (
@@ -84,10 +86,15 @@ func delegationRunAccountingMissing(run *store.WorkerRun, provider string) bool 
 	return true
 }
 
-// delegationIsOperationalOnlyForModel reports whether every worker context
-// that contributed to a model's stat failed before the model ran (adapter or
-// detached-dispatch failure, or a non-post-execute block). When true, the
-// parent's review score must not be attributed to model quality.
+// delegationIsOperationalOnly reports whether every worker context in the set
+// failed before the model ran (adapter or detached-dispatch failure, or a
+// non-post-execute block). The set is caller-chosen:
+//
+//   - one model key's workers (modelStatsForDelegation) — when true, the
+//     parent's review score must not be attributed to model quality.
+//   - the whole delegation (aggregateDelegation) — when true, there is no
+//     model output to review, so the delegation terminates as "failure"
+//     rather than parking in "needs_review".
 //
 // DispatchFailed short-circuits to "operational" even if a run row
 // somehow exists alongside the flag (e.g. a stale run row from a
@@ -96,7 +103,7 @@ func delegationRunAccountingMissing(run *store.WorkerRun, provider string) bool 
 // must respect that. An empty worker list is treated as "not
 // operational-only" so an unattributable stat doesn't silently get
 // suppressed by a missing worker record.
-func delegationIsOperationalOnlyForModel(workers []DelegationWorkerContext) bool {
+func delegationIsOperationalOnly(workers []DelegationWorkerContext) bool {
 	if len(workers) == 0 {
 		return false
 	}

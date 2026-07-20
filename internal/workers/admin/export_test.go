@@ -56,7 +56,7 @@ func IsOperationalFailureForTest(run *store.WorkerRun) bool {
 // predicate used to decide whether a parent review score should be
 // attributed to a model in a given delegation.
 func DelegationIsOperationalOnlyForModelForTest(workers []DelegationWorkerContext) bool {
-	return delegationIsOperationalOnlyForModel(workers)
+	return delegationIsOperationalOnly(workers)
 }
 
 // DelegationRankRatesForTest exposes success-rate helpers for table-driven

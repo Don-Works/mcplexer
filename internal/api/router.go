@@ -86,6 +86,7 @@ type RouterDeps struct {
 	OAuthWizard           *oauth.Wizard           // optional; enables /api/v1/addons/oauth-setup
 	MeshManager           *mesh.Manager           // optional; enables /api/v1/mesh/send
 	MonitoringNotifier    distill.Notifier        // optional; enables /api/v1/monitoring/notify
+	MonitoringTicker      MonitoringTicker        // optional; enables the gated /api/v1/monitoring/test-tick
 	TelegramManager       *telegram.Manager       // optional; enables chat bridge API
 	GoogleChatManager     *googlechat.Manager     // optional; enables Google Chat bridge API
 	GoogleChatJWTVerifier *googlechat.JWTVerifier // optional; required by default (fail-closed); skip with GOOGLECHAT_DISABLE_JWT_VALIDATION=true
@@ -730,6 +731,40 @@ func NewRouter(deps RouterDeps) http.Handler {
 	mux.HandleFunc("GET /api/v1/monitoring/digest", monQ.digest)
 	mux.HandleFunc("POST /api/v1/monitoring/templates/{id}/ack", monQ.ack)
 	mux.HandleFunc("POST /api/v1/monitoring/notify", monQ.notify)
+
+	// Learned-baseline inspection. The type assertion is deliberate: a store
+	// without baseline support serves 501 rather than failing to build a
+	// router, so this surface is additive to every existing deployment.
+	monB := &monitoringBaselineHandler{}
+	if bs, ok := deps.Store.(store.MonitoringBaselineStore); ok {
+		monB.store = bs
+	}
+	mux.HandleFunc("GET /api/v1/monitoring/baselines", monB.list)
+	mux.HandleFunc("GET /api/v1/monitoring/baselines/{id}", monB.get)
+
+	// Incident + expected-signal reads. Same additive type assertion as the
+	// baselines above: a store without the read methods serves 501 rather
+	// than preventing a router from being built.
+	monI := &monitoringIncidentHandler{}
+	if is, ok := deps.Store.(store.MonitoringIncidentReadStore); ok {
+		monI.store = is
+	}
+	mux.HandleFunc("GET /api/v1/monitoring/incidents", monI.list)
+	mux.HandleFunc("GET /api/v1/monitoring/incidents/{id}", monI.get)
+	monS := &monitoringSignalHandler{}
+	if ss, ok := deps.Store.(store.MonitoringExpectedSignalStore); ok {
+		monS.store = ss
+	}
+	mux.HandleFunc("GET /api/v1/monitoring/expected-signals", monS.list)
+
+	// Test-ingest scaffolding. Registered unconditionally and gated inside
+	// the handler on MCPLEXER_ALLOW_TEST_INGEST: an unregistered /api/ path
+	// falls through to the SPA handler and answers index.html with a 200,
+	// which is a worse answer than an explicit 404.
+	monT := &monitoringTestIngestHandler{store: deps.Store, notifier: deps.MonitoringNotifier}
+	mux.HandleFunc("POST /api/v1/monitoring/test-ingest", monT.ingest)
+	monTick := &monitoringTickHandler{ticker: deps.MonitoringTicker}
+	mux.HandleFunc("POST /api/v1/monitoring/test-tick", monTick.tick)
 
 	mh := &meshHandler{store: deps.Store}
 	mux.HandleFunc("GET /api/v1/mesh/status", mh.status)

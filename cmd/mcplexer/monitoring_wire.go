@@ -20,10 +20,12 @@ import (
 	"github.com/don-works/mcplexer/internal/logwatch/collect"
 	"github.com/don-works/mcplexer/internal/logwatch/distill"
 	"github.com/don-works/mcplexer/internal/logwatch/escalate"
+	"github.com/don-works/mcplexer/internal/logwatch/renotify"
 	"github.com/don-works/mcplexer/internal/mesh"
 	"github.com/don-works/mcplexer/internal/notify"
 	"github.com/don-works/mcplexer/internal/secrets"
 	"github.com/don-works/mcplexer/internal/store"
+	"github.com/don-works/mcplexer/internal/tasks"
 )
 
 var (
@@ -32,6 +34,9 @@ var (
 	monitoringDispatch  *escalate.Dispatcher
 	monitoringCollector *collect.Manager
 	monitoringColOnce   sync.Once
+	// monitoringRenotifyOnce guards the persistence sweep: exactly one loop
+	// per daemon, or a persistent incident is reminded about twice per tick.
+	monitoringRenotifyOnce sync.Once
 )
 
 // monitoringRunnerEnabled defers to collect.RunnerEnabled so the
@@ -50,6 +55,17 @@ func buildMonitoring(db store.Store, secretsMgr *secrets.Manager, meshMgr *mesh.
 			senders[store.ChannelKindMesh] = newMeshSender(meshMgr)
 		}
 		monitoringDispatch = escalate.NewDispatcher(db, senders)
+		// Durable channel health. Without this the dispatcher still detects a
+		// broken route and still logs it, but the state dies with the process
+		// and no API can answer "is my alerting working?" — which is how a
+		// gchat webhook stayed dead for six days behind the hourly notify cap.
+		// Type-asserted at the seam (as the renotify sweep is) so the health
+		// methods stay off store.Store and out of every mock in the tree.
+		if healthStore, ok := db.(store.MonitoringChannelHealthStore); ok {
+			monitoringDispatch.RegisterChannelHealthRecorder(healthStore)
+		} else {
+			slog.Warn("monitoring: channel health not persisted (store lacks health support)")
+		}
 		monitoringQry = distill.NewQuery(db)
 		if secretsMgr != nil {
 			distiller := distill.NewDistiller(db, monitoringDispatch)
@@ -134,8 +150,26 @@ func wireMonitoringGateway(gw *gateway.Server, db store.Store, secretsMgr *secre
 // startMonitoringCollector launches the pull loop exactly once per
 // daemon, honouring the single-runner env gate. No-op without a
 // secrets manager (SSH credentials are unreachable then).
-func startMonitoringCollector(ctx context.Context, db store.Store, secretsMgr *secrets.Manager, meshMgr *mesh.Manager) {
+//
+// It is also the single boot entry point for every monitoring loop that
+// is NOT the pull itself. Hanging them here rather than in serve.go is
+// deliberate: each one is independently testable through this function,
+// so "the daemon starts it" is asserted by a test rather than by a line
+// of boot code nobody checks.
+func startMonitoringCollector(
+	ctx context.Context, db store.Store, secretsMgr *secrets.Manager,
+	meshMgr *mesh.Manager, tasksSvc *tasks.Service,
+) {
 	buildMonitoring(db, secretsMgr, meshMgr)
+	// The re-notification sweep is started before the collector's own gate:
+	// it is independent of SSH credentials and must run wherever the
+	// dispatcher does, or an unresolved incident goes quiet again.
+	startMonitoringRenotify(ctx, db)
+	// Same reasoning for baseline learning and absence evaluation: both read
+	// rows the daemon already holds and neither needs SSH, so a daemon
+	// without collector credentials must still learn what normal looks like
+	// and still notice when a learned signal stops.
+	startMonitoringBaseline(ctx, db, tasksSvc)
 	if monitoringCollector == nil {
 		slog.Info("monitoring: collector not started (no secrets manager)")
 		return
@@ -147,5 +181,34 @@ func startMonitoringCollector(ctx context.Context, db store.Store, secretsMgr *s
 	monitoringColOnce.Do(func() {
 		go monitoringCollector.Run(ctx)
 		slog.Info("monitoring: collector started")
+	})
+}
+
+// startMonitoringRenotify launches the persistence sweep exactly once per
+// daemon. Without this goroutine the policy is only ever consulted when a
+// worker triages, which is precisely the path a steady-severity recurring
+// incident stops taking — the 2026-07-20 twelve-hour silence.
+//
+// It honours the same single-runner gate as the collector: on a viewer node
+// the incidents are replicated but the notifications are not this daemon's to
+// send, and two runners would double every reminder.
+func startMonitoringRenotify(ctx context.Context, db store.Store) {
+	if !monitoringRunnerEnabled() {
+		slog.Info("monitoring: viewer mode — renotify sweep not started")
+		return
+	}
+	renotifyStore, ok := db.(store.MonitoringRenotifyStore)
+	if !ok {
+		slog.Warn("monitoring: renotify sweep not started (store lacks renotify support)")
+		return
+	}
+	sweeper := renotify.New(renotifyStore, monitoringDispatch)
+	if sweeper == nil {
+		slog.Warn("monitoring: renotify sweep not started (no dispatcher)")
+		return
+	}
+	monitoringRenotifyOnce.Do(func() {
+		go sweeper.Run(ctx)
+		slog.Info("monitoring: renotify sweep started")
 	})
 }

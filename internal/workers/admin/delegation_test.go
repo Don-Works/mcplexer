@@ -232,6 +232,19 @@ func TestServiceDelegationGrokCLIAutoFillsPlaceholderScope(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("bump run finished for derive window: %v", err)
 	}
+	// The child's MCP session row has to exist too: the derive attributes
+	// audit rows to a run via the session that produced them, and a session
+	// that opened during the run window is what marks it as this run's
+	// child rather than a bystander's.
+	childDisconnected := auditTS.Add(2 * time.Second)
+	if err := db.CreateSession(ctx, &store.Session{
+		ID:             "sess-grok-child",
+		ClientType:     "grok_cli",
+		ConnectedAt:    run.StartedAt,
+		DisconnectedAt: &childDisconnected,
+	}); err != nil {
+		t.Fatalf("seed child cli session: %v", err)
+	}
 	ar := &store.AuditRecord{
 		Timestamp:   auditTS,
 		CreatedAt:   auditTS,

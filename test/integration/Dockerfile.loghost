@@ -1,0 +1,55 @@
+# syntax=docker/dockerfile:1.6
+#
+# log-host — the rig's stand-in for a monitored production box.
+#
+# It runs a REAL OpenSSH server. The daemon under test collects from it with
+# the shipping sshx client over the shared docker network, so the pull path is
+# the production path end to end; only the container runtime behind the
+# `docker` CLI is replaced with a fixture reader (see loghost/docker).
+#
+# This exists because the collector has no other ingest surface: `file` kind
+# sources are rejected by validateCollectedKind, and there is no REST or MCP
+# route that appends log lines. Rather than add a test-only backdoor — which
+# would prove the backdoor works — the rig supplies a host worth collecting
+# from.
+FROM debian:bookworm-slim
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends openssh-server mawk ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
+# An unprivileged, shell-only account. Monitoring's security model is that the
+# collector needs nothing more than the ability to run fixed read-only
+# commands, and the rig should not quietly hand it root.
+RUN useradd -m -s /bin/sh logwatch
+
+# The shim replaces the Docker CLI on PATH. sshd's exec channel hands the
+# command to the login shell, so a plain PATH entry is all that is needed —
+# and it means the command string the daemon actually built is what runs.
+COPY test/integration/loghost/docker /usr/local/bin/docker
+COPY test/integration/loghost/since.awk /usr/local/lib/loghost/since.awk
+COPY test/integration/loghost/events.awk /usr/local/lib/loghost/events.awk
+COPY test/integration/_fixtures/logwatch/timelib.awk /usr/local/lib/loghost/timelib.awk
+COPY test/integration/loghost/entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/docker /usr/local/bin/entrypoint.sh
+
+# Publickey only, read from ONE explicit path rather than a dot-directory in
+# the account's home. The scenario writes the collecting node's public key
+# there at run time, so no key material is baked into the image or committed.
+# The collector authenticates out of an ssh-agent holding the node's own
+# Ed25519 identity; nothing in this rig has a password.
+RUN mkdir -p /run/sshd /etc/loghost \
+ && printf '%s\n' \
+    'PasswordAuthentication no' \
+    'PermitRootLogin no' \
+    'PubkeyAuthentication yes' \
+    'AuthorizedKeysFile /etc/loghost/authorized_keys' \
+    'AcceptEnv LANG LC_*' \
+    'PermitUserEnvironment no' \
+    > /etc/ssh/sshd_config.d/loghost.conf
+
+ENV FIXTURE_DIR=/fixtures
+EXPOSE 22
+VOLUME ["/fixtures"]
+
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

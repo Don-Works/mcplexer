@@ -44,6 +44,12 @@ func (h *handler) dispatchMonitoringTool(
 		return h.handleMonitoringTriageEffect(ctx, raw), nil, true
 	case "monitoring__notify":
 		return h.handleMonitoringNotify(ctx, raw), nil, true
+	case "monitoring__baselines":
+		return h.handleMonitoringBaselines(ctx, raw), nil, true
+	case "monitoring__suppressions":
+		return h.handleMonitoringSuppressions(ctx, raw), nil, true
+	case "monitoring__unsuppress":
+		return h.handleMonitoringUnsuppress(ctx, raw), nil, true
 	}
 	return nil, nil, false
 }

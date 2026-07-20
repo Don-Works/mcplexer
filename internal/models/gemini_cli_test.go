@@ -53,10 +53,12 @@ func TestGeminiCLISendBuildsExpectedArgs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Send: %v", err)
 	}
+	// The workspace never becomes a flag — it reaches gemini as the
+	// subprocess CWD (runSandboxedModelCLI sets cmd.Dir), so the argv is
+	// identical whether or not WorkspacePath is set.
 	wantArgs := []string{
 		"--output-format", "json",
 		"--sandbox", "false",
-		"--directory", "/tmp/project",
 		"--model", "gemini-2.5-pro",
 	}
 	if !reflect.DeepEqual(gotArgs, wantArgs) {
@@ -64,6 +66,114 @@ func TestGeminiCLISendBuildsExpectedArgs(t *testing.T) {
 	}
 	if gotPrompt == "" || !strings.Contains(gotPrompt, "the prompt") || !strings.Contains(gotPrompt, "system text") {
 		t.Fatalf("prompt did not include rendered content: %q", gotPrompt)
+	}
+}
+
+// geminiCLISupportedFlags is the exact option set `gemini --help` advertises
+// (verified against gemini 0.33.0). gemini parses argv in yargs STRICT mode:
+// an unrecognized flag makes it print "Unknown argument: <name>" and exit
+// non-zero before it ever reads the prompt, so every flag we emit must appear
+// here. Add an entry only after confirming it against the installed CLI.
+var geminiCLISupportedFlags = map[string]bool{
+	"--debug": true, "--model": true, "--prompt": true,
+	"--prompt-interactive": true, "--sandbox": true, "--yolo": true,
+	"--approval-mode": true, "--policy": true, "--acp": true,
+	"--experimental-acp": true, "--allowed-mcp-server-names": true,
+	"--allowed-tools": true, "--extensions": true, "--list-extensions": true,
+	"--resume": true, "--list-sessions": true, "--delete-session": true,
+	"--include-directories": true, "--screen-reader": true,
+	"--output-format": true, "--raw-output": true,
+	"--accept-raw-output-risk": true, "--version": true, "--help": true,
+}
+
+// TestGeminiCLIEmitsOnlySupportedFlags is the regression test for the
+// `--directory` bug: that flag does not exist in the gemini CLI (the real
+// option is `--include-directories`, which ADDS workspace dirs rather than
+// setting the working dir), so every run aborted at argv parsing.
+func TestGeminiCLIEmitsOnlySupportedFlags(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name          string
+		modelID       string
+		workspacePath string
+	}{
+		{"with workspace and model", "gemini-2.5-pro", "/tmp/project"},
+		{"without workspace", "gemini-2.5-pro", ""},
+		{"without model", "", "/tmp/project"},
+		{"bare", "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var gotArgs []string
+			a := newGeminiCLIAdapter("/usr/bin/gemini", tc.modelID)
+			a.runner = func(_ context.Context, _ string, args []string, _ string, _ string) ([]byte, []byte, error) {
+				gotArgs = append([]string(nil), args...)
+				return []byte(`{"response":"ok"}`), nil, nil
+			}
+			if _, err := a.Send(context.Background(), SendRequest{
+				Messages:      []Message{{Role: RoleUser, Content: "hi"}},
+				WorkspacePath: tc.workspacePath,
+			}); err != nil {
+				t.Fatalf("Send: %v", err)
+			}
+			for _, arg := range gotArgs {
+				if !strings.HasPrefix(arg, "--") {
+					continue // flag value, not a flag
+				}
+				if !geminiCLISupportedFlags[arg] {
+					t.Errorf("unsupported flag %q in argv %v — gemini parses in strict mode and will exit non-zero", arg, gotArgs)
+				}
+			}
+			for _, arg := range gotArgs {
+				if arg == "--directory" {
+					t.Errorf("--directory is not a gemini option; the workspace must reach the CLI as cmd.Dir. argv: %v", gotArgs)
+				}
+			}
+		})
+	}
+}
+
+// TestGeminiCLIArgsIgnoreWorkspacePath pins the contract that the workspace
+// influences only the subprocess CWD, never the argv.
+func TestGeminiCLIArgsIgnoreWorkspacePath(t *testing.T) {
+	t.Parallel()
+	var withWorkspace, withoutWorkspace []string
+	capture := func(into *[]string) geminiCLIRunner {
+		return func(_ context.Context, _ string, args []string, _ string, _ string) ([]byte, []byte, error) {
+			*into = append([]string(nil), args...)
+			return []byte(`{"response":"ok"}`), nil, nil
+		}
+	}
+	a := newGeminiCLIAdapter("/usr/bin/gemini", "gemini-2.5-pro")
+	a.runner = capture(&withWorkspace)
+	if _, err := a.Send(context.Background(), SendRequest{WorkspacePath: "/tmp/project"}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	a.runner = capture(&withoutWorkspace)
+	if _, err := a.Send(context.Background(), SendRequest{}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if !reflect.DeepEqual(withWorkspace, withoutWorkspace) {
+		t.Fatalf("workspace leaked into argv:\nwith    %v\nwithout %v", withWorkspace, withoutWorkspace)
+	}
+}
+
+// TestGeminiCLIRunnerReceivesWorkspacePath guards the other half of the fix:
+// dropping the flag is only safe because the workspace still reaches the
+// runner, which sets it as the subprocess CWD.
+func TestGeminiCLIRunnerReceivesWorkspacePath(t *testing.T) {
+	t.Parallel()
+	var gotWorkspace string
+	a := newGeminiCLIAdapter("/usr/bin/gemini", "gemini-2.5-pro")
+	a.runner = func(_ context.Context, _ string, _ []string, _ string, workspacePath string) ([]byte, []byte, error) {
+		gotWorkspace = workspacePath
+		return []byte(`{"response":"ok"}`), nil, nil
+	}
+	if _, err := a.Send(context.Background(), SendRequest{WorkspacePath: "/tmp/project"}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if gotWorkspace != "/tmp/project" {
+		t.Fatalf("runner workspacePath = %q, want /tmp/project", gotWorkspace)
 	}
 }
 

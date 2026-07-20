@@ -226,7 +226,7 @@ func (h *handler) handleBuiltinCall(
 	case "monitoring__hosts", "monitoring__sources", "monitoring__channels",
 		"monitoring__stats", "monitoring__digest", "monitoring__search",
 		"monitoring__raw", "monitoring__ack", "monitoring__commit_triage",
-		"monitoring__triage_effect", "monitoring__notify":
+		"monitoring__triage_effect", "monitoring__notify", "monitoring__baselines":
 		resp, rpcErr, _ := h.dispatchMonitoringTool(ctx, req.Name, req.Arguments)
 		return resp, rpcErr
 

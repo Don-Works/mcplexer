@@ -1,6 +1,9 @@
 package gateway
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"strings"
+)
 
 // coerceStringifiedArgs walks the top-level keys of a JSON object and
 // converts string values that look like JSON objects or arrays into their
@@ -125,4 +128,51 @@ func stringFieldsFromInputSchema(schema json.RawMessage) map[string]bool {
 		return nil
 	}
 	return out
+}
+
+// builtinToolFullName reconstructs the fully namespaced builtin tool name
+// from the synthetic downstream server ID and the post-namespace remainder
+// that extractOriginalToolName produces at the dispatch site. Builtin server
+// IDs are "<namespace>-builtin" and their tool definitions are named
+// "<namespace>__<tool>", so "mcpx-builtin" + "delegate_worker" resolves to
+// "mcpx__delegate_worker". Returns "" when either part is missing, or when
+// serverID is not a builtin ID.
+func builtinToolFullName(serverID, originalToolName string) string {
+	if originalToolName == "" {
+		return ""
+	}
+	ns, ok := strings.CutSuffix(serverID, "-builtin")
+	if !ok || ns == "" {
+		return ""
+	}
+	// Already namespaced (the caller passed a full name) — use it as-is.
+	if strings.Contains(originalToolName, "__") {
+		return originalToolName
+	}
+	return ns + "__" + originalToolName
+}
+
+// stringFieldsForBuiltinTool resolves the type: "string" top-level fields for
+// a builtin tool. Builtin tools never appear in the downstream tools/list
+// catalog — their schemas live in-process (delegationToolDefinitions and
+// friends) — so schema-aware coercion has to resolve against those
+// definitions instead. Without this, every builtin dispatch fell back to the
+// nil-schema legacy path and re-parsed any string argument beginning with
+// '[' or '{', corrupting string-typed fields such as delegate_worker's
+// tool_allowlist_json (a JSON array carried as text, by contract).
+//
+// fullToolName must be the fully namespaced name; matching is exact so that
+// same-suffix tools in different namespaces (mesh__send vs email__send) can
+// never resolve to each other's schema. Returns nil when the tool is unknown
+// or declares no string fields — the caller then keeps legacy behaviour.
+func stringFieldsForBuiltinTool(tools []Tool, fullToolName string) map[string]bool {
+	if fullToolName == "" {
+		return nil
+	}
+	for _, t := range tools {
+		if t.Name == fullToolName {
+			return stringFieldsFromInputSchema(t.InputSchema)
+		}
+	}
+	return nil
 }

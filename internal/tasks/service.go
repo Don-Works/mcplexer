@@ -55,6 +55,12 @@ type Service struct {
 	// today's behaviour (no file write).
 	brainHook BrainHook
 
+	// monitoringResolutions closes the loop between task resolution and
+	// monitoring triage (see monitoring_feedback.go). Auto-wired in New
+	// when the store implements it; nil = task closure teaches monitoring
+	// nothing, which is the pre-147 behaviour.
+	monitoringResolutions store.MonitoringResolutionStore
+
 	// schemaErr is the boot-probe failure (see health.go). Written once
 	// in New before the service escapes the constructor; read via
 	// SchemaErr by the gateway to surface an actionable degraded-mode
@@ -99,6 +105,9 @@ func New(s store.TaskStore) *Service {
 	}
 	if membershipStore, ok := s.(store.CollaborationMembershipStore); ok {
 		svc.membershipStore = membershipStore
+	}
+	if monitoringResolutions, ok := s.(store.MonitoringResolutionStore); ok {
+		svc.monitoringResolutions = monitoringResolutions
 	}
 	svc.probeSchema(context.Background())
 	return svc
@@ -887,6 +896,18 @@ func (s *Service) updateWithSignals(ctx context.Context, workspaceID, id string,
 	// status_to:<target> transition without polling for completion.
 	if !preClosed && updated.ClosedAt != nil {
 		s.rollupParents(ctx, updated, p)
+	}
+	// Monitoring feedback: a logwatch task's resolution is the signal the
+	// monitoring layer needs to stop re-raising the class (or, for a reopen,
+	// to start again). Deterministic bookkeeping, no model involved, and a
+	// no-op for any task not linked to an incident. See
+	// monitoring_feedback.go for the outcome mapping and why "fixed" and
+	// "benign" are deliberately not collapsed.
+	switch {
+	case !preClosed && updated.ClosedAt != nil:
+		s.onTaskTerminal(ctx, updated, p)
+	case preClosed && updated.ClosedAt == nil:
+		s.onTaskReopened(ctx, updated, p)
 	}
 	return updated, signals, nil
 }

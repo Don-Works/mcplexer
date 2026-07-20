@@ -71,8 +71,22 @@ func (h *handler) handleMeshSend(ctx context.Context, args json.RawMessage) (jso
 	if targetWorkspace == "" && len(meta.WorkspaceIDs) > 0 {
 		targetWorkspace = meta.WorkspaceIDs[0]
 	}
-	if _, ok := workerWorkspaceAccessFromContext(ctx); ok && (targetWorkspace == "*" || targetWorkspace == "global") {
+	_, isWorker := workerWorkspaceAccessFromContext(ctx)
+	if isWorker && (targetWorkspace == "*" || targetWorkspace == "global") {
 		return nil, &RPCError{Code: CodeInvalidRequest, Message: "worker mesh sends must target a granted workspace; global broadcasts are denied"}
+	}
+	// Stamp the actor so worker traffic is distinguishable from agent
+	// traffic. mesh__send is in the default worker allowlist, so without
+	// this every delegated worker's send defaulted to "agent" (mesh.Send)
+	// and three mechanisms silently no-opped on it: exclude_actor_kinds:
+	// "worker" matched nothing, the 24h ArchiveOldWorkerFindings reaper
+	// (which filters actor_kind='worker') never swept it — a direct cause
+	// of inbox backlog — and the UI could not tell the two apart. The
+	// runner's output dispatcher (cmd/mcplexer/workers_wiring.go) already
+	// stamped "worker"; this is the tool agents actually call.
+	actorKind := "agent"
+	if isWorker {
+		actorKind = "worker"
 	}
 	if targetWorkspace != "" && targetWorkspace != "*" && targetWorkspace != "global" {
 		if rpc := h.requireWorkspaceWrite(ctx, targetWorkspace); rpc != nil {
@@ -93,6 +107,7 @@ func (h *handler) handleMeshSend(ctx context.Context, args json.RawMessage) (jso
 		Branch:        req.Branch,
 		WorkspacePath: req.WorkspacePath,
 		ToWorkspace:   req.ToWorkspace,
+		ActorKind:     actorKind,
 	})
 	if err != nil {
 		return marshalErrorResult(err.Error()), nil

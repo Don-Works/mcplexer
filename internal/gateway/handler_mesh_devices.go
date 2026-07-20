@@ -69,6 +69,13 @@ func (h *handler) handleMeshSetDeviceName(ctx context.Context, args json.RawMess
 
 // handleMeshListPeers returns paired peers — friendly name + short peer ID
 // — so agents can see who they can address with to_peer.
+//
+// Peer DisplayName is peer-authored free text (a paired machine sets it
+// via the p2p rename event), so the rendered directory is wrapped in the
+// <untrusted-content> trust marker — builtin results never pass through
+// sanitizeToolResult, so the handler must wrap itself. The remote rename
+// path also validates the name at ingest (mesh.acceptablePeerDisplayName);
+// this is the second layer.
 func (h *handler) handleMeshListPeers(ctx context.Context) (json.RawMessage, *RPCError) {
 	if h.mesh == nil {
 		return marshalErrorResult("Agent mesh is not enabled."), nil
@@ -103,7 +110,8 @@ func (h *handler) handleMeshListPeers(ctx context.Context) (json.RawMessage, *RP
 		fmt.Fprintf(&b, "- %s  (peer:%s, last seen %s)\n", name, shortPeer(p.PeerID), seen)
 	}
 	b.WriteString("\nAddress a peer by passing `to_peer: \"<name>\"` to mesh__send.\n")
-	return marshalToolResult(b.String()), nil
+	wrap := h.meshFieldSanitizer(ctx, MeshPrefix+"list_peers", true)
+	return marshalToolResult(wrap(b.String())), nil
 }
 
 // shortPeer is a log-friendly tail of a libp2p peer ID. Mirrors the helper

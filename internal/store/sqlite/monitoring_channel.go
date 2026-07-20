@@ -16,6 +16,16 @@ import (
 )
 
 const monitoringChannelCols = `id, workspace_id, name, kind, config_json,
+    min_severity, enabled, created_at, updated_at,
+    consecutive_failures, first_failure_at, last_failure_at,
+    last_error, last_success_at`
+
+// monitoringChannelInsertCols is the write set for CreateMonitoringChannel. It
+// stops short of the health columns on purpose: those are owned by the
+// dispatcher (RecordMonitoringChannelFailure/Success) and a new row starts at
+// the schema defaults — zero failures, never delivered, which HealthState
+// reports as "unknown" rather than flattering an unproven route as healthy.
+const monitoringChannelInsertCols = `id, workspace_id, name, kind, config_json,
     min_severity, enabled, created_at, updated_at`
 
 // CreateMonitoringChannel inserts a new channel row. ID is generated
@@ -43,7 +53,7 @@ func (d *DB) CreateMonitoringChannel(ctx context.Context, c *store.MonitoringCha
 	}
 	c.UpdatedAt = now
 	_, err := d.q.ExecContext(ctx, `
-		INSERT INTO monitoring_channels (`+monitoringChannelCols+`)
+		INSERT INTO monitoring_channels (`+monitoringChannelInsertCols+`)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		c.ID, c.WorkspaceID, c.Name, c.Kind, c.ConfigJSON,
 		c.MinSeverity, boolToInt(c.Enabled),
@@ -132,13 +142,31 @@ func scanMonitoringChannel(row interface{ Scan(...any) error }) (*store.Monitori
 	var c store.MonitoringChannel
 	var enabled int
 	var createdAt, updatedAt string
+	var firstFailure, lastFailure, lastSuccess sql.NullString
 	err := row.Scan(&c.ID, &c.WorkspaceID, &c.Name, &c.Kind, &c.ConfigJSON,
-		&c.MinSeverity, &enabled, &createdAt, &updatedAt)
+		&c.MinSeverity, &enabled, &createdAt, &updatedAt,
+		&c.ConsecutiveFailures, &firstFailure, &lastFailure,
+		&c.LastError, &lastSuccess)
 	if err != nil {
 		return nil, err
 	}
 	c.Enabled = enabled != 0
 	c.CreatedAt = parseTime(createdAt)
 	c.UpdatedAt = parseTime(updatedAt)
+	c.FirstFailureAt = nullTime(firstFailure)
+	c.LastFailureAt = nullTime(lastFailure)
+	c.LastSuccessAt = nullTime(lastSuccess)
 	return &c, nil
+}
+
+// nullTime converts a nullable DATETIME column into an optional timestamp.
+// An empty-but-non-NULL string is treated as absent: rows written before the
+// column existed can carry ” rather than NULL, and a zero-value time.Time
+// rendered as "0001-01-01" reads as a real (ancient) delivery in every surface.
+func nullTime(s sql.NullString) *time.Time {
+	if !s.Valid || s.String == "" {
+		return nil
+	}
+	t := parseTime(s.String)
+	return &t
 }

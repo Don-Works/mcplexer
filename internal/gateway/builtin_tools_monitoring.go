@@ -52,6 +52,23 @@ func monitoringNamespaceToolDefinitions() []Tool {
 			Extras: ro("Monitoring Stats"),
 		},
 		{
+			Name: "monitoring__baselines",
+			Description: "What the daemon INFERRED normal looks like, per log template — the learned absence baselines. " +
+				"Shows the decision (promoted / why it was refused), the confidence, the learned period and " +
+				"absence window, and the raw statistics the decision was made from (relative MAD, p95 ratio, " +
+				"sample count, cycles, hour occupancy). REJECTIONS are listed alongside promotions, because " +
+				"'why is there no alert for this job?' is the question operators actually ask. Nobody configures " +
+				"these; they are mined from retained history by plain statistics, with no model involved.",
+			InputSchema: json.RawMessage(`{"type": "object", "properties": {
+				"source_id": {"type": "string", "description": "Scope to one log source. Omit for the whole workspace."},
+				"decision": {"type": "string", "description": "Filter to one decision code, e.g. promoted, irregular, conditional_terminal, day_gaps, few_samples."},
+				"promoted_only": {"type": "boolean", "description": "Only baselines that produced a live rule."},
+				"limit": {"type": "integer", "description": "Default 100, max 500."},
+				"workspace_id": {"type": "string"}
+			}}`),
+			Extras: ro("Learned Baselines"),
+		},
+		{
 			Name:        "monitoring__digest",
 			Description: "Budget-bounded digest of a log window: counts × masked templates, priority-ordered (new critical/error → new → error-class → busiest). This is what a triage worker reads INSTEAD of raw logs — a 10k-line window renders in well under 1k tokens. Drill down with monitoring__raw.",
 			InputSchema: json.RawMessage(`{"type": "object", "properties": {
@@ -125,6 +142,31 @@ func monitoringNamespaceToolDefinitions() []Tool {
 			}, "required": ["template_id"]}`),
 			Extras: withAnnotations(ToolAnnotations{
 				Title: "Ack Template", ReadOnlyHint: boolPtr(false),
+				DestructiveHint: boolPtr(false), IdempotentHint: boolPtr(true),
+				OpenWorldHint: boolPtr(false),
+			}),
+		},
+		{
+			Name: "monitoring__suppressions",
+			Description: "What monitoring is currently NOT telling you, and why. Lists every incident muted by a task resolution: the class, the canonical task, the status word that closed it, who closed it, when, and exactly which templates were acked. " +
+				"Resolving a task as cancelled/wontfix suppresses its class (mutes alerts and stops novelty wake-ups); resolving as done/fixed suppresses nothing and is listed only with include_cleared. Entries flagged stale are suppressions whose task is open again — reverse those with monitoring__unsuppress.",
+			InputSchema: json.RawMessage(`{"type": "object", "properties": {
+				"include_cleared": {"type": "boolean", "description": "Also return non-suppressing (fixed) and already-reversed resolutions. Default false: only what is muted right now."},
+				"limit": {"type": "integer", "description": "Default 200, max 500."},
+				"workspace_id": {"type": "string"}
+			}}`),
+			Extras: ro("Active Monitoring Suppressions"),
+		},
+		{
+			Name:        "monitoring__unsuppress",
+			Description: "Reverse a suppression created by a task resolution. Restores the incident's previous disposition, un-acks and re-queues exactly the templates that resolution acked (never an operator's own acks), and clears the incident's last-notified state so the next occurrence is guaranteed to alert. Idempotent; find incident ids with monitoring__suppressions.",
+			InputSchema: json.RawMessage(`{"type": "object", "properties": {
+				"incident_id": {"type": "string", "description": "From monitoring__suppressions."},
+				"reason": {"type": "string", "description": "Why you are lifting it — stored on the audit row."},
+				"workspace_id": {"type": "string"}
+			}, "required": ["incident_id"]}`),
+			Extras: withAnnotations(ToolAnnotations{
+				Title: "Reverse Monitoring Suppression", ReadOnlyHint: boolPtr(false),
 				DestructiveHint: boolPtr(false), IdempotentHint: boolPtr(true),
 				OpenWorldHint: boolPtr(false),
 			}),

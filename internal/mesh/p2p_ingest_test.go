@@ -1,10 +1,14 @@
 package mesh
 
 // Ingest parity coverage: inbound libp2p envelopes must pass the same
-// content gates as a local Send (validKind, non-blank, size ceiling), and
-// the sender's priority must be carried through with unknown values clamped
-// to "normal" (it used to be dropped — every cross-peer message landed as
-// normal/2h TTL).
+// content gates as a local Send (validULID, validKind, non-blank, size
+// ceiling), and the sender's priority must be carried through with unknown
+// values clamped to "normal" (it used to be dropped — every cross-peer
+// message landed as normal/2h TTL).
+//
+// Envelope ids are peer-controlled, so the stored row id is re-minted
+// locally at ingest and these tests look messages up by content, never by
+// env.ID. See ingestEnvelope and p2p_ingest_cursor_test.go.
 
 import (
 	"context"
@@ -14,7 +18,24 @@ import (
 	"time"
 
 	"github.com/don-works/mcplexer/internal/p2p"
+	"github.com/don-works/mcplexer/internal/store"
 )
+
+// findIngestedByContent returns the stored mesh message whose body equals
+// content, or nil when the envelope was dropped.
+func findIngestedByContent(t *testing.T, db store.MeshStore, content string) *store.MeshMessage {
+	t.Helper()
+	msgs, err := db.QueryMeshMessages(context.Background(), store.MeshMessageFilter{Limit: 500})
+	if err != nil {
+		t.Fatalf("QueryMeshMessages: %v", err)
+	}
+	for i := range msgs {
+		if msgs[i].Content == content {
+			return &msgs[i]
+		}
+	}
+	return nil
+}
 
 func TestIngestEnvelopeAppliesSendGates(t *testing.T) {
 	ctx := context.Background()
@@ -30,7 +51,7 @@ func TestIngestEnvelopeAppliesSendGates(t *testing.T) {
 		{
 			name: "valid finding with high priority carries through",
 			env: p2p.MeshEnvelope{
-				ID: "01INGESThi", SenderPeerID: "peerA",
+				ID: newULID(), SenderPeerID: "peerA",
 				Kind: "finding", Content: "remote insight", Priority: "high",
 			},
 			wantStored:   true,
@@ -39,7 +60,7 @@ func TestIngestEnvelopeAppliesSendGates(t *testing.T) {
 		{
 			name: "missing priority defaults to normal (legacy peers)",
 			env: p2p.MeshEnvelope{
-				ID: "01INGESTno", SenderPeerID: "peerA",
+				ID: newULID(), SenderPeerID: "peerA",
 				Kind: "alert", Content: "remote alert",
 			},
 			wantStored:   true,
@@ -48,7 +69,7 @@ func TestIngestEnvelopeAppliesSendGates(t *testing.T) {
 		{
 			name: "unknown priority clamps to normal",
 			env: p2p.MeshEnvelope{
-				ID: "01INGESTbg", SenderPeerID: "peerA",
+				ID: newULID(), SenderPeerID: "peerA",
 				Kind: "result", Content: "remote result", Priority: "apocalyptic",
 			},
 			wantStored:   true,
@@ -57,22 +78,43 @@ func TestIngestEnvelopeAppliesSendGates(t *testing.T) {
 		{
 			name: "invalid kind is dropped",
 			env: p2p.MeshEnvelope{
-				ID: "01INGESTik", SenderPeerID: "peerA",
+				ID: newULID(), SenderPeerID: "peerA",
 				Kind: "file_claim", Content: "claiming foo.go", Priority: "normal",
 			},
 		},
 		{
 			name: "blank content is dropped",
 			env: p2p.MeshEnvelope{
-				ID: "01INGESTbl", SenderPeerID: "peerA",
+				ID: newULID(), SenderPeerID: "peerA",
 				Kind: "finding", Content: "  \n\t ", Priority: "normal",
 			},
 		},
 		{
 			name: "oversize content is dropped",
 			env: p2p.MeshEnvelope{
-				ID: "01INGESTov", SenderPeerID: "peerA",
+				ID: newULID(), SenderPeerID: "peerA",
 				Kind: "finding", Content: strings.Repeat("x", MaxSendContentBytes+1),
+			},
+		},
+		{
+			name: "non-ULID id is dropped",
+			env: p2p.MeshEnvelope{
+				ID: "zzz", SenderPeerID: "peerA",
+				Kind: "finding", Content: "hostile id", Priority: "normal",
+			},
+		},
+		{
+			name: "empty id is dropped",
+			env: p2p.MeshEnvelope{
+				ID: "", SenderPeerID: "peerA",
+				Kind: "finding", Content: "blank id", Priority: "normal",
+			},
+		},
+		{
+			name: "ULID-length non-base32 id is dropped",
+			env: p2p.MeshEnvelope{
+				ID: strings.Repeat("!", 26), SenderPeerID: "peerA",
+				Kind: "finding", Content: "bad charset id", Priority: "normal",
 			},
 		},
 	}
@@ -84,21 +126,29 @@ func TestIngestEnvelopeAppliesSendGates(t *testing.T) {
 			if err := mgr.ingestEnvelope(ctx, tc.env); err != nil {
 				t.Fatalf("ingestEnvelope: %v", err)
 			}
-			got, err := db.GetMeshMessage(ctx, tc.env.ID)
+			got := findIngestedByContent(t, db, tc.env.Content)
 			if !tc.wantStored {
-				if err == nil {
+				if got != nil {
 					t.Fatalf("envelope %q must be dropped, but was stored: %+v", tc.env.ID, got)
 				}
 				return
 			}
-			if err != nil {
-				t.Fatalf("expected stored message %q: %v", tc.env.ID, err)
+			if got == nil {
+				t.Fatalf("expected stored message for envelope %q", tc.env.ID)
 			}
 			if got.Priority != tc.wantPriority {
 				t.Errorf("priority = %q, want %q", got.Priority, tc.wantPriority)
 			}
 			if got.ActorKind != "peer-import" {
 				t.Errorf("actor_kind = %q, want peer-import", got.ActorKind)
+			}
+			// The peer's id must never become the local row id — that is
+			// what let a peer steer the receive cursor.
+			if got.ID == tc.env.ID {
+				t.Errorf("row id = env.ID (%q); inbound ids must be re-minted locally", got.ID)
+			}
+			if !validULID(got.ID) {
+				t.Errorf("row id %q is not a ULID", got.ID)
 			}
 		})
 	}
@@ -112,16 +162,16 @@ func TestIngestEnvelopePriorityDrivesTTL(t *testing.T) {
 	mgr := NewManager(db)
 
 	env := p2p.MeshEnvelope{
-		ID: "01INGESTtt", SenderPeerID: "peerA",
+		ID: newULID(), SenderPeerID: "peerA",
 		Kind: "alert", Content: "urgent", Priority: "critical",
 		TS: time.Now().UnixMilli(),
 	}
 	if err := mgr.ingestEnvelope(ctx, env); err != nil {
 		t.Fatalf("ingestEnvelope: %v", err)
 	}
-	got, err := db.GetMeshMessage(ctx, env.ID)
-	if err != nil {
-		t.Fatalf("GetMeshMessage: %v", err)
+	got := findIngestedByContent(t, db, env.Content)
+	if got == nil {
+		t.Fatal("expected the ingested message to be stored")
 	}
 	wantMin := time.Now().UTC().Add(priorityTTL["critical"] - time.Minute)
 	if got.ExpiresAt.Before(wantMin) {
@@ -157,7 +207,7 @@ func TestIngestEnvelopeEnforcesCeiling(t *testing.T) {
 
 	for i := 0; i < 6; i++ {
 		env := p2p.MeshEnvelope{
-			ID:           fmt.Sprintf("01CEIL%02d", i),
+			ID:           newULID(),
 			SenderPeerID: "peerA",
 			Kind:         "event",
 			Content:      fmt.Sprintf("remote msg %d", i),
@@ -169,7 +219,9 @@ func TestIngestEnvelopeEnforcesCeiling(t *testing.T) {
 		}
 	}
 
-	count, err := db.CountLiveMessages(ctx, "global")
+	// Broadcast ingest lands in the global namespace (""), the bucket a
+	// local to_workspace:"*" send resolves to — not the literal "global".
+	count, err := db.CountLiveMessages(ctx, "")
 	if err != nil {
 		t.Fatalf("CountLiveMessages: %v", err)
 	}

@@ -318,6 +318,13 @@ func (r *Runner) prepareRun(ctx context.Context, worker *store.Worker, opts RunO
 	if policy.required() && models.IsCLIProvider(worker.ModelProvider) {
 		return nil, nil, errors.New("isolated CLI delegation is unavailable until the capability-required per-run MCP relay can deny direct access to the main daemon socket; use an API provider or explicitly select worker_isolation=none")
 	}
+	// Same missing relay, second symptom: a CLI child's MCP session never
+	// carries this run's capability profile / tool allowlist, so a scoped CLI
+	// worker would execute unscoped. Refuse instead of pretending. See
+	// cli_scope_guard.go for why no in-band carrier closes this.
+	if err := cliScopeUnenforceable(worker); err != nil {
+		return nil, nil, err
+	}
 	workspacePath := ""
 	var lease WorktreeLease
 	leaseTransferred := false
@@ -607,7 +614,8 @@ func (r *Runner) buildPrompt(ctx context.Context, worker *store.Worker, opts Run
 	if err != nil {
 		return "", "", err
 	}
-	systemPrompt := composeSystemPrompt(r.preamble, skillBodies)
+	preamble := preambleForProvider(worker.ModelProvider, r.preamble, r.preambleCLI)
+	systemPrompt := composeSystemPrompt(preamble, skillBodies)
 	paramsJSON := worker.ParametersJSON
 	if opts.ParametersOverrideJSON != "" {
 		paramsJSON = opts.ParametersOverrideJSON

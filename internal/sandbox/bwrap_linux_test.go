@@ -111,6 +111,97 @@ func TestBwrapArgv_SkipsPathInsideDeniedSubtree(t *testing.T) {
 	}
 }
 
+// TestBwrapArgv_CreatesUnboundDefaultWorkingDir is the regression test for
+// the chdir-into-nothing bug. A zero-value Config leaves WorkingDir empty,
+// so cwd falls back to DefaultWorkingDir ("/workspace") — a path nothing in
+// the argv binds or creates. bwrap chdirs inside the new namespace, so the
+// spawn died with "Can't chdir to /workspace". The argv must now create the
+// directory, and must do so BEFORE the chdir that enters it.
+func TestBwrapArgv_CreatesUnboundDefaultWorkingDir(t *testing.T) {
+	argv := bwrapArgv(Config{}, "/home/test", "/bin/true", nil)
+
+	makeDir := indexOfRun(argv, []string{"--dir", DefaultWorkingDir})
+	chdir := indexOfRun(argv, []string{"--chdir", DefaultWorkingDir})
+	if makeDir < 0 {
+		t.Fatalf("nothing creates the default working dir %s, chdir will fail: %v",
+			DefaultWorkingDir, argv)
+	}
+	if chdir < 0 {
+		t.Fatalf("chdir to default working dir missing: %v", argv)
+	}
+	if makeDir > chdir {
+		t.Fatalf("--dir must precede --chdir, got %d > %d: %v", makeDir, chdir, argv)
+	}
+}
+
+// TestBwrapArgv_CreatesUnboundExplicitWorkingDir — the same failure applies
+// to an explicitly configured WorkingDir that no bind covers, not just the
+// empty-config default.
+func TestBwrapArgv_CreatesUnboundExplicitWorkingDir(t *testing.T) {
+	cfg := Config{
+		ReadOnlyPaths: []string{"/repo"},
+		WorkingDir:    "/somewhere/unbound",
+	}
+	argv := bwrapArgv(cfg, "/home/test", "/bin/true", nil)
+
+	makeDir := indexOfRun(argv, []string{"--dir", "/somewhere/unbound"})
+	chdir := indexOfRun(argv, []string{"--chdir", "/somewhere/unbound"})
+	if makeDir < 0 || chdir < 0 {
+		t.Fatalf("unbound explicit working dir must be created before chdir: %v", argv)
+	}
+	if makeDir > chdir {
+		t.Fatalf("--dir must precede --chdir: %v", argv)
+	}
+}
+
+// TestBwrapArgv_DoesNotRecreateBoundWorkingDir — when a bind already
+// provides the working dir (the normal path: PrepareCommandConfig puts
+// workingDir in ReadWritePaths), an extra --dir would mount an empty tmpfs
+// dir over the real workspace and hide the caller's files.
+func TestBwrapArgv_DoesNotRecreateBoundWorkingDir(t *testing.T) {
+	workspace := t.TempDir()
+	resolved, err := filepath.EvalSymlinks(workspace)
+	if err != nil {
+		resolved = workspace
+	}
+	cfg := Config{
+		ReadWritePaths: []string{workspace},
+		WorkingDir:     resolved,
+	}
+	argv := bwrapArgv(cfg, t.TempDir(), "/bin/true", nil)
+
+	if !sliceContainsRun(argv, []string{"--bind", resolved, resolved}) {
+		t.Fatalf("workspace bind missing: %v", argv)
+	}
+	if sliceContainsRun(argv, []string{"--dir", resolved}) {
+		t.Fatalf("bound working dir must not be recreated (would mask the bind): %v", argv)
+	}
+	if !sliceContainsRun(argv, []string{"--chdir", resolved}) {
+		t.Fatalf("chdir to workspace missing: %v", argv)
+	}
+}
+
+// TestBwrapArgv_DoesNotRecreateWorkingDirUnderBoundParent — coverage is by
+// subtree, not exact match: a working dir nested inside a bound parent
+// already exists in the namespace.
+func TestBwrapArgv_DoesNotRecreateWorkingDirUnderBoundParent(t *testing.T) {
+	parent := t.TempDir()
+	resolved, err := filepath.EvalSymlinks(parent)
+	if err != nil {
+		resolved = parent
+	}
+	nested := filepath.Join(resolved, "sub")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := Config{ReadWritePaths: []string{resolved}, WorkingDir: nested}
+	argv := bwrapArgv(cfg, t.TempDir(), "/bin/true", nil)
+
+	if sliceContainsRun(argv, []string{"--dir", nested}) {
+		t.Fatalf("working dir under a bound parent must not be recreated: %v", argv)
+	}
+}
+
 func indexOfRun(s, run []string) int {
 	for i := 0; i+len(run) <= len(s); i++ {
 		if sliceContainsRun(s[i:i+len(run)], run) {

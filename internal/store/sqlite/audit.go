@@ -515,6 +515,80 @@ func (d *DB) CountChildCLIToolCalls(
 	return n, nil
 }
 
+// CountChildCLIToolCallsBySession is the session-attributed counterpart of
+// CountChildCLIToolCalls: same row filter, but grouped by the audit row's
+// session_id and INNER JOINed to the sessions row that produced it, so a
+// caller can tell WHICH MCP client each block of tool calls came from.
+//
+// Two extra constraints beyond the flat count, both load-bearing:
+//
+//   - The join is INNER. An audit row whose session row has been deleted
+//     cannot be attributed to anything, so it is dropped rather than
+//     silently folded into some run's total.
+//   - sessions.connected_at must fall inside [start, end]. A CLI child's MCP
+//     connection is opened by a subprocess the run itself spawned, so its
+//     session always begins during the run window. The operator's own
+//     long-lived orchestrator session (which announces the same client_type
+//     as a claude_cli child — "claude-code") connected long before, and is
+//     excluded here. This is the filter that stops a parent Claude Code
+//     session's tool calls being billed to its own workers.
+//
+// Rows are returned newest-connection-last (connected_at ASC) so callers can
+// reason about session overlap without re-sorting. An empty workspaceID or
+// clientTypes short-circuits to nil, matching CountChildCLIToolCalls.
+func (d *DB) CountChildCLIToolCallsBySession(
+	ctx context.Context, workspaceID string, start, end time.Time, clientTypes []string,
+) ([]store.ChildCLISessionCount, error) {
+	if workspaceID == "" || len(clientTypes) == 0 {
+		return nil, nil
+	}
+	placeholders := strings.Repeat("?,", len(clientTypes))
+	placeholders = placeholders[:len(placeholders)-1] // drop trailing comma
+	startStr, endStr := formatTime(start), formatTime(end)
+	args := []any{workspaceID, startStr, endStr}
+	for _, ct := range clientTypes {
+		args = append(args, ct)
+	}
+	args = append(args, startStr, endStr)
+
+	rows, err := d.q.QueryContext(ctx, `
+		SELECT a.session_id, s.client_type, s.connected_at, s.disconnected_at,
+		       COUNT(*)
+		FROM audit_records a
+		JOIN sessions s ON s.id = a.session_id
+		WHERE a.workspace_id = ?
+		  AND a.timestamp >= ?
+		  AND a.timestamp <= ?
+		  AND COALESCE(a.actor_kind, '') != 'worker'
+		  AND a.client_type IN (`+placeholders+`)
+		  AND a.status = 'success'
+		  AND s.connected_at >= ?
+		  AND s.connected_at <= ?
+		GROUP BY a.session_id
+		ORDER BY s.connected_at ASC`,
+		args...,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("count child CLI tool calls by session: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []store.ChildCLISessionCount
+	for rows.Next() {
+		var c store.ChildCLISessionCount
+		var connectedAt string
+		var disconnectedAt *string
+		if err := rows.Scan(&c.SessionID, &c.ClientType, &connectedAt,
+			&disconnectedAt, &c.Count); err != nil {
+			return nil, fmt.Errorf("scan child CLI session count: %w", err)
+		}
+		c.ConnectedAt = parseTime(connectedAt)
+		c.DisconnectedAt = parseTimePtr(disconnectedAt)
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
 // PruneAuditRecords deletes audit_records whose created_at is older than
 // `before`. Safe to call concurrently — SQLite serialises writes and the
 // statement is a single-shot DELETE. Returns the number of rows removed

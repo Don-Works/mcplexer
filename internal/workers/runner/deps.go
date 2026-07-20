@@ -241,20 +241,21 @@ func (c Caps) applyDefaults() Caps {
 // Runner executes one or more Worker runs synchronously. Construct via
 // New; the caller wires real impls of each interface.
 type Runner struct {
-	store      store.Store
-	secrets    SecretReader
-	skills     SkillReader
-	dispatcher ToolDispatcher
-	mesh       MeshSender
-	clock      Clock
-	httpClient *http.Client
-	adapter    AdapterFactory
-	caps       Caps
-	auditor    Auditor
-	outputsDir string
-	runBus     *RunBus
-	preamble   string
-	worktrees  WorktreeManager
+	store       store.Store
+	secrets     SecretReader
+	skills      SkillReader
+	dispatcher  ToolDispatcher
+	mesh        MeshSender
+	clock       Clock
+	httpClient  *http.Client
+	adapter     AdapterFactory
+	caps        Caps
+	auditor     Auditor
+	outputsDir  string
+	runBus      *RunBus
+	preamble    string
+	preambleCLI string
+	worktrees   WorktreeManager
 
 	// peerTiers gates the memory-consolidator Tier-1 broadcast. Nil →
 	// broadcast unconditionally; non-nil → broadcast only when at
@@ -332,6 +333,13 @@ type Deps struct {
 	// mcpx__execute_code. Empty string disables injection (used by tests
 	// that want clean prompt assertions).
 	Preamble string
+	// PreambleCLI — the variant used for CLI-backed providers
+	// (models.IsCLIProvider). Those adapters shell out to a coding agent
+	// that runs its own loop with its own native tools and never receives
+	// the runner's tool list, so Preamble's "your surface is exactly two
+	// tools" claim is false for them. Empty falls back to Preamble, which
+	// preserves the pre-split behaviour exactly.
+	PreambleCLI string
 	// PeerTiers — optional. Gates the memory-consolidator Tier-1
 	// provenance broadcast on the presence of at least one same-user
 	// paired peer. Nil → broadcast unconditionally (tests / single-
@@ -369,6 +377,7 @@ func New(deps Deps) *Runner {
 		outputsDir:     deps.OutputsDir,
 		runBus:         deps.RunBus,
 		preamble:       deps.Preamble,
+		preambleCLI:    deps.PreambleCLI,
 		peerTiers:      deps.PeerTiers,
 		selfDisplay:    deps.SelfDisplay,
 		cliToolCounter: deps.CLIToolCounter,

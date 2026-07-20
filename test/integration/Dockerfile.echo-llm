@@ -8,8 +8,10 @@ FROM golang:1.25-alpine AS build
 WORKDIR /src
 # go run/build of a single-file program needs a module to satisfy Go 1.25.
 RUN go mod init echo-llm
-COPY echo-llm.go ./
-RUN CGO_ENABLED=0 go build -o /out/echo-llm echo-llm.go
+# echo-sink.go adds the webhook delivery sink the monitoring scenarios assert
+# on; build the package rather than the single file so both are compiled in.
+COPY echo-llm.go echo-sink.go ./
+RUN CGO_ENABLED=0 go build -o /out/echo-llm .
 
 FROM alpine:3.20 AS runtime
 # wget is required by the docker-compose healthcheck.

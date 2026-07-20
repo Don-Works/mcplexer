@@ -26,7 +26,7 @@ func TestSanitizeToolResult_TrustedBuiltinShortCircuits(t *testing.T) {
 		"memory__recall",
 		"secret__prompt",
 		"mcplexer__status",
-		"mesh__list_agents",
+		"mesh__list_queue",
 		"mesh__send",
 	} {
 		t.Run(tool, func(t *testing.T) {

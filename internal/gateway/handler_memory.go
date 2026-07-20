@@ -188,6 +188,35 @@ func toEntityRefs(args []entityArg) []store.EntityRef {
 	return out
 }
 
+// validateMemorySaveArgs runs the aggregate save-argument validation and
+// resolves the caller's `kind` onto a canonical store kind. Returns
+// (canonicalKind, errorEnvelope, true) when validation failed — surfacing
+// every problem in one response so the LLM converges in one retry instead
+// of N — and (canonicalKind, nil, false) when the args are usable.
+//
+// Each field error is nil-guarded before v.add because v.add takes an
+// `error`, and a typed-nil *fieldArgError would arrive as a non-nil
+// interface and be reported as a spurious failure.
+func validateMemorySaveArgs(
+	content, kind string, ents flexEntities,
+) (string, json.RawMessage, bool) {
+	v := newValidator()
+	v.requireStringWithHint("content", content,
+		"the actual fact / preference / decision to persist")
+	// Map the vocabulary agents actually use (`decision`, `preference`,
+	// `anti-pattern`, …) onto the two kinds the store accepts, rather than
+	// letting WriteMemory reject the save with a bare "invalid kind".
+	canonical, kindErr := resolveMemoryKind(kind)
+	if kindErr != nil {
+		v.add(kindErr)
+	}
+	if entErr := validateEntities("entities", ents); entErr != nil {
+		v.add(entErr)
+	}
+	env, failed := v.envelope()
+	return canonical, env, failed
+}
+
 func (h *handler) handleMemorySave(
 	ctx context.Context, raw json.RawMessage,
 ) (json.RawMessage, *RPCError) {
@@ -199,17 +228,13 @@ func (h *handler) handleMemorySave(
 		Scope    string         `json:"scope"`
 		Pinned   bool           `json:"pinned"`
 		Meta     map[string]any `json:"metadata"`
-		Entities []entityArg    `json:"entities"`
+		Entities flexEntities   `json:"entities"`
 	}
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return nil, &RPCError{Code: CodeInvalidParams, Message: err.Error()}
 	}
-	// Aggregate validation — surface every missing required field in
-	// one response so the LLM converges in one retry instead of N.
-	v := newValidator()
-	v.requireStringWithHint("content", args.Content,
-		"the actual fact / preference / decision to persist")
-	if env, ok := v.envelope(); ok {
+	kind, env, ok := validateMemorySaveArgs(args.Content, args.Kind, args.Entities)
+	if ok {
 		return env, nil
 	}
 	if strings.TrimSpace(args.Name) == "" {
@@ -230,7 +255,7 @@ func (h *handler) handleMemorySave(
 	// the advisory candidates in its response.
 	res, err := h.memorySvc.WriteWithResult(ctx, memory.WriteOptions{
 		Name:            args.Name,
-		Kind:            args.Kind,
+		Kind:            kind,
 		Content:         args.Content,
 		Tags:            args.Tags,
 		Metadata:        args.Meta,
@@ -309,17 +334,27 @@ func (h *handler) handleMemoryRecall(
 	ctx context.Context, raw json.RawMessage,
 ) (json.RawMessage, *RPCError) {
 	var args struct {
-		Query          string      `json:"query"`
-		Limit          int         `json:"limit"`
-		Kind           string      `json:"kind"`
-		Tags           flexStrings `json:"tags"`
-		IncludeInvalid bool        `json:"include_invalid"`
-		ValidAt        string      `json:"valid_at"`
-		Entities       []entityArg `json:"entities"`
-		EntitiesAny    []entityArg `json:"entities_any"`
+		Query          string       `json:"query"`
+		Limit          int          `json:"limit"`
+		Kind           string       `json:"kind"`
+		Tags           flexStrings  `json:"tags"`
+		IncludeInvalid bool         `json:"include_invalid"`
+		ValidAt        string       `json:"valid_at"`
+		Entities       flexEntities `json:"entities"`
+		EntitiesAny    flexEntities `json:"entities_any"`
 	}
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return nil, &RPCError{Code: CodeInvalidParams, Message: err.Error()}
+	}
+	v := newValidator()
+	if e := validateEntities("entities", args.Entities); e != nil {
+		v.add(e)
+	}
+	if e := validateEntities("entities_any", args.EntitiesAny); e != nil {
+		v.add(e)
+	}
+	if env, ok := v.envelope(); ok {
+		return env, nil
 	}
 	validAt, rpcErr := parseValidAt(args.ValidAt)
 	if rpcErr != nil {
@@ -359,36 +394,35 @@ func (h *handler) handleMemoryRecall(
 	if err != nil {
 		return marshalErrorResult(fmt.Sprintf("Recall failed: %v", err)), nil
 	}
-	if len(hits) == 0 {
-		b, _ := json.Marshal(struct {
-			Count int               `json:"count"`
-			Hits  []memoryRecallHit `json:"hits"`
-		}{Count: 0, Hits: []memoryRecallHit{}})
-		return marshalToolResult(string(b)), nil
+	subject := ""
+	if q := strings.TrimSpace(args.Query); q != "" {
+		subject = fmt.Sprintf("query %q", q)
 	}
-	hitItems := make([]memoryRecallHit, 0, len(hits))
+	env := newMemoryRecallEnvelope(toRecallHits(hits), subject)
+	return marshalToolResult(env.marshal()), nil
+}
+
+// toRecallHits projects service-layer hits onto the wire shape. Shared by
+// memory__recall and memory__recall_about so both surfaces stay identical.
+func toRecallHits(hits []store.MemoryHit) []memoryRecallHit {
+	out := make([]memoryRecallHit, 0, len(hits))
 	for _, h := range hits {
 		sc := "global"
 		if h.Entry.WorkspaceID != nil {
 			sc = *h.Entry.WorkspaceID
 		}
-		tags := readTagsList(h.Entry.TagsJSON)
-		hitItems = append(hitItems, memoryRecallHit{
+		out = append(out, memoryRecallHit{
 			ID:      h.Entry.ID,
 			Name:    h.Entry.Name,
 			Kind:    h.Entry.Kind,
 			Content: h.Entry.Content,
-			Tags:    tags,
+			Tags:    readTagsList(h.Entry.TagsJSON),
 			Scope:   sc,
 			Score:   h.Score,
 			Source:  h.Source,
 		})
 	}
-	b, _ := json.Marshal(struct {
-		Count int               `json:"count"`
-		Hits  []memoryRecallHit `json:"hits"`
-	}{Count: len(hitItems), Hits: hitItems})
-	return marshalToolResult(string(b)), nil
+	return out
 }
 
 // handleMemoryRecallAbout is the "tell me everything about X" surface.
@@ -440,16 +474,17 @@ func (h *handler) handleMemoryRecallAbout(
 	if err != nil {
 		return marshalErrorResult(fmt.Sprintf("Recall failed: %v", err)), nil
 	}
-	if len(hits) == 0 {
-		scopeLbl := "this scope"
-		if escape {
-			scopeLbl = "any workspace"
-		}
-		return marshalToolResult(fmt.Sprintf(
-			"No memories about %s:%s in %s yet.",
-			args.Kind, args.ID, scopeLbl)), nil
+	// Both arms return the SAME JSON envelope. The empty case used to return
+	// prose ("No memories about X yet."), which meant a JSON-parsing caller
+	// hit a parse error on empty and a valid object otherwise — a second way
+	// to read a real result as nothing.
+	scopeLbl := "this scope"
+	if escape {
+		scopeLbl = "any workspace"
 	}
-	return marshalToolResult(renderRecallHits(hits)), nil
+	subject := fmt.Sprintf("%s:%s in %s", args.Kind, args.ID, scopeLbl)
+	env := newMemoryRecallEnvelope(toRecallHits(hits), subject)
+	return marshalToolResult(env.marshal()), nil
 }
 
 func (h *handler) handleMemoryListEntities(
@@ -886,35 +921,6 @@ func (h *handler) memoryForgetBySourceScope(ctx context.Context) (store.SkillSco
 		return store.SkillScope{WorkspaceIDs: ids}, nil
 	}
 	return store.SkillScope{WorkspaceIDs: h.readableWorkspaceIDs(ctx)}, nil
-}
-
-func renderRecallHits(hits []store.MemoryHit) string {
-	// Structured JSON so execute_code / workers get parseable objects
-	// (count + hits) instead of prose. Auto-unwrap in codemode yields
-	// usable {count, hits: [...] }.
-	hitItems := make([]memoryRecallHit, 0, len(hits))
-	for _, h := range hits {
-		sc := "global"
-		if h.Entry.WorkspaceID != nil {
-			sc = *h.Entry.WorkspaceID
-		}
-		tags := readTagsList(h.Entry.TagsJSON)
-		hitItems = append(hitItems, memoryRecallHit{
-			ID:      h.Entry.ID,
-			Name:    h.Entry.Name,
-			Kind:    h.Entry.Kind,
-			Content: h.Entry.Content,
-			Tags:    tags,
-			Scope:   sc,
-			Score:   h.Score,
-			Source:  h.Source,
-		})
-	}
-	b, _ := json.Marshal(struct {
-		Count int               `json:"count"`
-		Hits  []memoryRecallHit `json:"hits"`
-	}{Count: len(hitItems), Hits: hitItems})
-	return string(b)
 }
 
 func (h *handler) handleMemoryList(

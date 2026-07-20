@@ -95,6 +95,7 @@ func countLiveMeshMessages(ctx context.Context, t *testing.T, db store.Store, ws
 func resetMonitoringSingletons() {
 	monitoringOnce = sync.Once{}
 	monitoringColOnce = sync.Once{}
+	monitoringRenotifyOnce = sync.Once{}
 	monitoringDispatch = nil
 	monitoringQry = nil
 	monitoringCollector = nil

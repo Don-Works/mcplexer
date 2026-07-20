@@ -61,3 +61,30 @@ func TestWorkerPreamble_Stable(t *testing.T) {
 		}
 	}
 }
+
+// TestWorkerPreambleCLI_AccurateAndShorter locks the CLI variant's two
+// reasons for existing. Accuracy: a CLI-backed adapter runs its own agent
+// loop and discards the runner's tool list, so the variant must NOT repeat
+// the API preamble's "your surface is exactly mcpx__search_tools +
+// mcpx__execute_code" claim — it would be a factually wrong instruction the
+// worker pays real tokens to read. Cost: it must be materially shorter,
+// since that is the entire point on a 100k-window local model.
+func TestWorkerPreambleCLI_AccurateAndShorter(t *testing.T) {
+	cli := WorkerPreambleCLI()
+
+	// The false claim must be gone.
+	for _, mustNot := range []string{"mcpx__search_tools", "mcpx__execute_code", "exactly two tools"} {
+		if strings.Contains(cli, mustNot) {
+			t.Errorf("CLI preamble repeats the API-only claim %q\n--- preamble ---\n%s", mustNot, cli)
+		}
+	}
+	// What remains has to still orient the worker.
+	for _, must := range []string{"mcplexer", "memory"} {
+		if !strings.Contains(cli, must) {
+			t.Errorf("CLI preamble missing required token %q\n--- preamble ---\n%s", must, cli)
+		}
+	}
+	if full := WorkerPreamble(); len(cli) >= len(full) {
+		t.Errorf("CLI preamble (%d B) must be shorter than the API preamble (%d B)", len(cli), len(full))
+	}
+}

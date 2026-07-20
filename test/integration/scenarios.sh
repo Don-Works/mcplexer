@@ -248,6 +248,12 @@ scenario_skill_publish_request() {
 . "$(dirname "$0")/scenario_shellguard.sh"
 # shellcheck source=scenario_aux.sh
 . "$(dirname "$0")/scenario_aux.sh"
+# shellcheck source=scenario_monitoring.sh
+. "$(dirname "$0")/scenario_logwatch_ingest.sh"
+
+. "$(dirname "$0")/scenario_monitoring.sh"
+# shellcheck source=scenario_monitoring_incidents.sh
+. "$(dirname "$0")/scenario_monitoring_incidents.sh"
 
 scenario_audit() {
     step 9 "audit ledger captures upstream activity"
@@ -296,6 +302,45 @@ scenario_audit_redaction() {
     fi
 }
 
+# run_monitoring_scenarios — steps 40.x + 41.x in dependency order. 40.1
+# provisions the workspace/sources/sink every later step reads; 40.2 promotes
+# the rule 41.1/41.2/41.6 evaluate against. Called from main() and from
+# SCENARIO_MODE=monitoring.
+# run_logwatch_ingest_scenarios — steps 42.x: the injection plumbing every
+# 40.x/41.x assertion stands on. Runs FIRST of the monitoring block on
+# purpose: if the rig cannot put realistic history in front of the collector,
+# a detector verdict above it is meaningless, and this says so loudly instead
+# of letting the detector steps skip into a green suite.
+run_logwatch_ingest_scenarios() {
+    scenario_logwatch_ingest_setup
+    scenario_logwatch_ingest_pull_path
+    scenario_logwatch_ingest_backdating
+    scenario_logwatch_ingest_incremental
+    scenario_logwatch_ingest_error_alerting
+    scenario_logwatch_ingest_shim_fidelity
+    scenario_logwatch_ingest_refusal_shapes
+    scenario_logwatch_ingest_cursor_precision
+    scenario_logwatch_ingest_learner_gap
+}
+
+run_monitoring_scenarios() {
+    run_logwatch_ingest_scenarios
+    scenario_monitoring_setup
+    scenario_monitoring_bursty_promotes
+    scenario_monitoring_irregular_refused
+    scenario_monitoring_conditional_terminal_refused
+    scenario_monitoring_template_identity
+    scenario_monitoring_baseline_explainable
+    scenario_monitoring_absence_raised
+    scenario_monitoring_absence_converges
+    scenario_monitoring_collection_not_absence
+    scenario_monitoring_deploy_is_not_an_anomaly
+    scenario_monitoring_error_during_deploy_alerts
+    scenario_monitoring_broken_by_deploy_alerts
+    scenario_monitoring_dead_channel_surfaced
+    scenario_monitoring_throttle_does_not_mask
+}
+
 # ----- main ---------------------------------------------------------------
 main() {
     printf 'mcplexer integration scenarios\n'
@@ -306,6 +351,22 @@ main() {
         exit 2
     fi
     printf '  tokens loaded (len A=%d B=%d C=%d)\n' ${#TOK_A} ${#TOK_B} ${#TOK_C}
+
+    # SCENARIO_MODE=monitoring runs only the log-monitoring acceptance steps
+    # (40.x learning + 41.x incidents). They seed multi-day backdated fixtures
+    # and drive the learner/evaluator directly, so they are slow relative to the
+    # rest of the suite and worth running alone while the detector is in flight.
+    if [ "${SCENARIO_MODE:-all}" = "monitoring" ]; then
+        scenario_health
+        run_monitoring_scenarios
+        printf '\n=== SUMMARY ===\n'
+        printf 'PASS=%d FAIL=%d SKIP=%d\n' "$PASS" "$FAIL" "$SKIP"
+        for line in "${RESULTS[@]}"; do
+            printf '  %s\n' "$line"
+        done
+        [ "$FAIL" -eq 0 ]
+        return
+    fi
 
     if [ "${SCENARIO_MODE:-all}" = "collaboration" ]; then
         scenario_health
@@ -422,6 +483,10 @@ main() {
     scenario_hammerspoon_probe_unconfigured
     scenario_hammerspoon_probe_persists_cache
     scenario_hammerspoon_probe_audit
+    # Log monitoring (40.x learning + 41.x incidents). Runs late: it seeds
+    # multi-day backdated log fixtures into its own workspace, so nothing
+    # earlier can be perturbed by the volume.
+    run_monitoring_scenarios
     scenario_audit
     scenario_audit_redaction
 

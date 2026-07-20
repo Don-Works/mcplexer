@@ -60,6 +60,7 @@ func buildWorkerRunner(d *serverDeps, db store.Store, dbDSN string) *runner.Runn
 		OutputsDir:     workerOutputsRoot(dbDSN),
 		RunBus:         d.workerRunBus,
 		Preamble:       gateway.WorkerPreamble(),
+		PreambleCLI:    gateway.WorkerPreambleCLI(),
 		PeerTiers:      newSameUserPeerLister(db, d.consentResolver),
 		SelfDisplay:    selfDisplayLabel(d.selfUser),
 		CLIToolCounter: db,

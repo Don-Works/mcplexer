@@ -15,6 +15,11 @@ import (
 // The intent is to make agents first-class addressable entities for
 // `to_agent` routing on mesh__send (mirrors mesh__list_peers's role for
 // devices).
+//
+// Peer-origin rows carry Name/Role strings authored on another machine, so
+// the rendered directory is wrapped in the <untrusted-content> trust
+// marker. Builtin results never pass through sanitizeToolResult, so the
+// handler wraps itself.
 func (h *handler) handleMeshListAgents(ctx context.Context) ([]byte, *RPCError) {
 	if h.mesh == nil {
 		return marshalErrorResult("Agent mesh is not enabled."), nil
@@ -23,7 +28,8 @@ func (h *handler) handleMeshListAgents(ctx context.Context) ([]byte, *RPCError) 
 	if err != nil {
 		return marshalErrorResult(err.Error()), nil
 	}
-	return marshalToolResult(formatAgentDirectory(agents)), nil
+	wrap := h.meshFieldSanitizer(ctx, MeshPrefix+"list_agents", true)
+	return marshalToolResult(wrap(formatAgentDirectory(agents))), nil
 }
 
 // formatAgentDirectory renders the active-agents listing. Splits local from

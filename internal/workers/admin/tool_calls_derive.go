@@ -24,6 +24,7 @@ import (
 
 	"github.com/don-works/mcplexer/internal/models"
 	"github.com/don-works/mcplexer/internal/store"
+	"github.com/don-works/mcplexer/internal/workers/runner"
 )
 
 const (
@@ -31,30 +32,16 @@ const (
 	toolCallsSourceDerived = "derived"
 )
 
-// childCLIClientTypes is the set of MCP client_type values the
-// CLI child processes announce when they open
-// their MCP-back-to-mcplexer connection. We accept both the underscore
-// and hyphen variants of "claude-code" since the host claude binary
-// historically used both, and "opencode" + "opencode_cli" for the same
-// reason on the opencode side. Order-insensitive.
-var childCLIClientTypes = []string{
-	"claude_cli",
-	"claude_code",
-	"claude-code",
-	"opencode",
-	"opencode_cli",
-	"grok",
-	"grok_cli",
-	"xai",
-	"xai_cli",
-	"mimo",
-	"mimo_cli",
-	"gemini",
-	"gemini_cli",
-	"codex_cli",
-	"pi",
-	"pi_cli",
-	"mimocode",
+// childCLISessionCounter is the session-attributed audit counter. The
+// Service's configured AuditCounter is asserted to it at use time rather
+// than being required by the AuditCounter interface itself: a counter that
+// predates session attribution simply yields no attribution, which lands on
+// the safe side (count stays 0, still annotated "derived") instead of
+// forcing every implementation to be updated in lockstep.
+type childCLISessionCounter interface {
+	CountChildCLIToolCallsBySession(
+		ctx context.Context, workspaceID string, start, end time.Time, clientTypes []string,
+	) ([]store.ChildCLISessionCount, error)
 }
 
 // isCLIAdapter reports whether the WorkerRun's model_provider is one
@@ -117,11 +104,29 @@ func (s *Service) annotateToolCallsSource(ctx context.Context, run *store.Worker
 	if start.IsZero() {
 		return
 	}
-	n, err := s.auditCounter.CountChildCLIToolCalls(ctx, run.WorkspaceID, start, end, childCLIClientTypes)
+	counter, ok := s.auditCounter.(childCLISessionCounter)
+	if !ok {
+		return
+	}
+	clientTypes := runner.CLIChildClientTypes(run.ModelProvider)
+	if len(clientTypes) == 0 {
+		return
+	}
+	sessions, err := counter.CountChildCLIToolCallsBySession(
+		ctx, run.WorkspaceID, start, end, clientTypes)
 	if err != nil {
 		slog.Warn("worker run tool_calls_count derive failed",
 			"run_id", run.ID, "worker_id", run.WorkerID,
 			"workspace_id", run.WorkspaceID, "error", err)
+		return
+	}
+	// Same attribution policy the runner's cap uses, deliberately shared:
+	// the number the UI shows and the number the cap fires on must never
+	// disagree. Unattributable leaves the count at 0 — a run whose audit
+	// rows cannot be told apart from a concurrent run's has no honest
+	// count to display.
+	n, attributed := runner.AttributeCLIToolCalls(sessions, end)
+	if !attributed {
 		return
 	}
 	run.ToolCallsCount = n

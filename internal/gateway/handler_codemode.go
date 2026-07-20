@@ -159,6 +159,25 @@ func workerCapabilityFromContext(ctx context.Context) *toolgate.CapabilityProfil
 // allows everything (back-compat). The write-class flag is computed here via
 // the shared writeclass heuristic and passed into toolgate.Allows so the
 // gate stays the single source of truth while toolgate stays cycle-free.
+//
+// SCOPE OF THIS GATE: it reads the CALL CONTEXT and nothing else. The profile
+// is attached by the in-process worker loop (cmd/mcplexer's
+// toolDispatcher.withWorkerAllowlist) on its way into the sandbox. There is
+// deliberately no session-derived resolution here, because nil MUST stay
+// allow-all — the operator's own MCP sessions carry no run identity and must
+// never be gated.
+//
+// The consequence is that a worker whose tool calls do NOT come back through
+// the runner is not covered. That is every CLI provider: claude_cli and its
+// siblings hand the agent loop to an external process which connects to the
+// gateway as its own MCP session, carrying none of the run's context values,
+// so it lands in the nil branch below and runs unscoped. Closing that needs
+// the run identity to be an ambient property of the connection (a per-run
+// endpoint the child cannot bypass); no carrier the runner controls at spawn
+// time — environment, CWD, MCP client config — survives a child that simply
+// reconnects without it. Until that exists the runner refuses to start a
+// scoped CLI worker at all; see cliScopeUnenforceable in
+// internal/workers/runner/cli_scope_guard.go, and keep the two in step.
 func checkWorkerCapability(ctx context.Context, toolName string) error {
 	profile := workerCapabilityFromContext(ctx)
 	if profile == nil {

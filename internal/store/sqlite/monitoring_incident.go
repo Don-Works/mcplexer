@@ -156,6 +156,22 @@ func (d *DB) RecordMonitoringTriage(
 			incident.TaskID = in.TaskID
 		}
 
+		// Suppression break-out. A class that is being triaged again is by
+		// definition not settled, so a live benign suppression is reversed
+		// here rather than being allowed to swallow the recurrence. Without
+		// this the UPDATE below would silently overwrite disposition=benign
+		// with the incoming actionable value, leaving the resolution receipt
+		// claiming a suppression that no longer exists and the acked
+		// templates invisible to the worker forever.
+		//
+		// RecordMonitoringTriage rejects a benign in.Disposition outright, so
+		// this can only ever run when real triage is landing on the class.
+		if !newIncident && incident.Disposition == store.MonitoringDispositionBenign {
+			if err := breakMonitoringSuppressionQ(q, ctx, incident.ID, observedAt); err != nil {
+				return err
+			}
+		}
+
 		for _, templateID := range ids {
 			var existingIncident string
 			err := q.QueryRowContext(ctx,
@@ -247,11 +263,15 @@ func (d *DB) RecordMonitoringTriage(
 		if err != nil {
 			return fmt.Errorf("read monitoring occurrence after triage: %w", err)
 		}
-		shouldNotify, reason := monitoringNotificationDue(incident, newIncident)
+		// observedAt, not the wall clock, is "now": it is the timeline the
+		// incident's own first_seen/last_seen live on, so the verdict stays
+		// deterministic and correct when collection lags.
+		decision := monitoringNotificationDue(incident, newIncident, observedAt)
 		result = &store.MonitoringTriageResult{
 			Incident: incident, Occurrence: occurrence,
 			NewIncident: newIncident, NewOccurrence: newOccurrence,
-			ShouldNotify: shouldNotify, NotificationReason: reason,
+			ShouldNotify: decision.Notify, NotificationReason: decision.Reason,
+			EffectiveSeverity: decision.EffectiveSeverity,
 		}
 		return nil
 	})
@@ -602,22 +622,6 @@ func scanMonitoringOccurrence(row interface{ Scan(...any) error }) (*store.Monit
 	}
 	o.FirstSeen, o.LastSeen, o.CreatedAt = parseTime(firstSeen), parseTime(lastSeen), parseTime(createdAt)
 	return &o, nil
-}
-
-func monitoringNotificationDue(i *store.MonitoringIncident, newIncident bool) (bool, string) {
-	if i == nil || store.SeverityRank(i.Severity) < store.SeverityRank(store.SeverityWarn) {
-		return false, ""
-	}
-	if i.LastNotifiedAt == nil {
-		if newIncident {
-			return true, "new_incident"
-		}
-		return true, "unnotified_incident"
-	}
-	if severityHigher(i.Severity, i.LastNotifiedSeverity) {
-		return true, "severity_escalation"
-	}
-	return false, ""
 }
 
 func monitoringBucketKey(at time.Time) string {

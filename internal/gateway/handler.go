@@ -337,10 +337,7 @@ func (h *handler) handleInitialize(
 		},
 		ServerInfo: ServerInfo{Name: "mcplexer", Version: buildVersion},
 	}
-	result.Instructions = buildCodeModeInstructions(
-		harnessProfileForClient(p.ClientInfo.Name),
-		h.mesh != nil,
-	)
+	result.Instructions = buildCodeModeInstructionsForClient(p.ClientInfo.Name, h.mesh != nil)
 
 	data, err := json.Marshal(result)
 	if err != nil {

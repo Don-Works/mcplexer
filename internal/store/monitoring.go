@@ -114,6 +114,11 @@ type LogSource struct {
 // plaintext URLs/credentials are rejected at CRUD time. MinSeverity is
 // the per-channel floor: an incident fans out to every enabled channel
 // whose floor admits its severity.
+// Delivery health (migration 148) is carried on the channel itself rather than
+// in a side table: "is this route working" is a property of the route, and the
+// dispatcher held it only in memory until a gchat webhook died for six days
+// without a single surface able to say so. See monitoring_channel_health.go for
+// the derived state and the JSON contract.
 type MonitoringChannel struct {
 	ID          string    `json:"id"`
 	WorkspaceID string    `json:"workspace_id"`
@@ -124,6 +129,20 @@ type MonitoringChannel struct {
 	Enabled     bool      `json:"enabled"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
+
+	// ConsecutiveFailures is the current unbroken run of failed deliveries;
+	// a success resets it to 0. Written only by the dispatcher.
+	ConsecutiveFailures int `json:"consecutive_failures"`
+	// FirstFailureAt starts the CURRENT run (nil when not failing), so
+	// "broken since" is answerable; LastFailureAt closes the bound.
+	FirstFailureAt *time.Time `json:"first_failure_at,omitempty"`
+	LastFailureAt  *time.Time `json:"last_failure_at,omitempty"`
+	// LastError is a short, redacted reason. Never carries credentials:
+	// the store scrubs on write (RedactChannelError).
+	LastError string `json:"last_error,omitempty"`
+	// LastSuccessAt is the last delivery this channel actually accepted.
+	// nil means never — deliberately distinct from healthy.
+	LastSuccessAt *time.Time `json:"last_success_at,omitempty"`
 }
 
 // LogTemplate is one masked line shape per source: the distiller's
@@ -223,6 +242,12 @@ type MonitoringTriageResult struct {
 	NewOccurrence      bool                  `json:"new_occurrence"`
 	ShouldNotify       bool                  `json:"should_notify"`
 	NotificationReason string                `json:"notification_reason,omitempty"`
+	// EffectiveSeverity is the deterministic notification severity: the
+	// classifier severity raised by sustained incident age. Dispatch and
+	// record notifications with THIS value rather than the raw classifier
+	// severity, or an ageing incident never crosses a channel min_severity
+	// floor and the operator keeps hearing nothing.
+	EffectiveSeverity string `json:"effective_severity,omitempty"`
 }
 
 type MonitoringTriageCompletion struct {
@@ -422,6 +447,8 @@ type MonitoringStore interface {
 	ListMonitoringChannels(ctx context.Context, workspaceID string) ([]*MonitoringChannel, error)
 	UpdateMonitoringChannel(ctx context.Context, c *MonitoringChannel) error
 	DeleteMonitoringChannel(ctx context.Context, id string) error
+	// Channel delivery health lives on MonitoringChannelHealthStore, a
+	// consumer-boundary interface — see monitoring_channel_health.go.
 
 	// Distiller surface (M3). UpsertLogTemplate returns isNew — the
 	// novelty signal. Window counts come from CountLinesByTemplate so

@@ -284,8 +284,40 @@ func (m *Manager) SetNotifyBus(b *notify.Bus) {
 	m.notifyBus = b
 }
 
+// ulidEntropy is MONOTONIC, not plain random, and newULID is the only
+// caller — the difference is load-bearing.
+//
+// mesh_messages.id is the receive cursor, and the cursor filter is a
+// lexicographic `id > ?`. With plain random entropy, two ULIDs minted in
+// the SAME millisecond sort in random order (measured: ~52% inverted), so
+// the invariant selectOldestBatch documents — "ULIDs sort lexicographically
+// by creation time" — was false at millisecond resolution. The consequence
+// is silent message loss: when a receive poll lands between two same-
+// millisecond sends, it advances the cursor to the delivered id, and the
+// second message sorts BELOW that cursor half the time and is never
+// delivered. Bursty traffic (task_event broadcasts fire on every status
+// transition) makes same-millisecond sends routine.
+//
+// ulid.Monotonic guarantees strictly increasing ids within a millisecond,
+// which makes the documented invariant actually true. The mutex is required
+// because a monotonic entropy source carries state across calls and mesh
+// sends run concurrently.
+var (
+	ulidMu      sync.Mutex
+	ulidEntropy = ulid.Monotonic(rand.Reader, 0)
+)
+
 func newULID() string {
-	return ulid.MustNew(ulid.Timestamp(time.Now()), rand.Reader).String()
+	ulidMu.Lock()
+	defer ulidMu.Unlock()
+	ts := ulid.Timestamp(time.Now())
+	if id, err := ulid.New(ts, ulidEntropy); err == nil {
+		return id.String()
+	}
+	// Monotonic entropy exhausted within this millisecond (needs ~2^80
+	// mints in one ms). Fall back to random entropy rather than panicking:
+	// a theoretically mis-ordered id beats a dead daemon.
+	return ulid.MustNew(ts, rand.Reader).String()
 }
 
 // Send creates a message in the mesh.

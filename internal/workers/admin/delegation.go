@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 
@@ -16,6 +17,31 @@ import (
 	"github.com/don-works/mcplexer/internal/store"
 	"github.com/don-works/mcplexer/internal/toolgate"
 	"github.com/don-works/mcplexer/internal/workers/runner"
+)
+
+// Caller-supplied prompt-section budgets. Before these existed the only
+// backstop was runner.maxUserPromptBytes (128 KB ≈ 32k tokens), which a
+// 100k-window local model (Qwen-class behind pi_cli) cannot absorb — the
+// prompt alone would eat a third of its context before the worker read a
+// single file. The split favours instructions over pre-computed context:
+// a handoff the parent actually wrote is denser and more load-bearing per
+// byte than an index pack, and an over-long repo brief is the failure mode
+// seen in practice.
+//
+// Sizing rationale (≈4 bytes/token, the estimateBriefTokens heuristic):
+//   - repo brief 24 KB ≈ 6,000 tokens — comfortably fits a generous
+//     index.context pack plus a file tree.
+//   - handoff 16 KB ≈ 4,000 tokens — several pages of prose; a brief
+//     longer than this belongs in a task work-context the worker fetches.
+//
+// Combined worst case ≈10k tokens, leaving a 100k-window worker ~90% of
+// its budget for actual work. Over-budget input is TRUNCATED, never
+// rejected: a delegation that runs on a trimmed brief beats one that
+// never starts, and the drop is reported in warnings + logs so the parent
+// can re-scope.
+const (
+	maxRepoBriefBytes = 24 * 1024
+	maxHandoffBytes   = 16 * 1024
 )
 
 const (
@@ -54,6 +80,11 @@ type DelegationInput struct {
 	// (memory + recent mesh), rendered into the worker prompt. Not a
 	// caller input — populated in Delegate.
 	autoContext string
+	// truncationWarnings records over-budget RepoBrief/Handoff clipping
+	// done by normalizeDelegationInput, so Delegate can surface it in the
+	// delegation's warnings alongside the frontier/overlap advisories.
+	// Not a caller input.
+	truncationWarnings []string
 
 	ModelProfileID      string                     `json:"model_profile_id,omitempty"`
 	ModelProvider       string                     `json:"model_provider,omitempty"`
@@ -486,6 +517,14 @@ func (s *Service) Delegate(ctx context.Context, in DelegationInput) (DelegationO
 		slog.WarnContext(ctx, "delegation: frontier-class worker discouraged",
 			"delegation_objective", in.Objective, "advisory", msg)
 	}
+	// Over-budget repo_brief/handoff was clipped in normalizeDelegationInput.
+	// Report it: a parent that silently loses half its handoff has no way to
+	// tell whether the worker under-performed or was under-briefed.
+	for _, msg := range in.truncationWarnings {
+		slog.WarnContext(ctx, "delegation: input truncated to fit worker context budget",
+			"delegation_id", delegationID, "advisory", msg)
+	}
+	warnings = append(warnings, in.truncationWarnings...)
 	// Coordination: surface overlap warnings before creating anything.
 	claimRepo := ""
 	if len(in.TouchesFiles) > 0 {
@@ -636,6 +675,17 @@ func (s *Service) normalizeDelegationInput(ctx context.Context, in *DelegationIn
 	in.Name = strings.TrimSpace(in.Name)
 	in.TaskID = strings.TrimSpace(in.TaskID)
 	in.RepoBrief = strings.TrimSpace(in.RepoBrief)
+	// Bound the two caller-supplied prompt sections BEFORE classification so
+	// everything downstream (shape classifier, metadata, prompt) sees the same
+	// bytes the worker will actually read.
+	in.truncationWarnings = nil
+	var truncWarn string
+	if in.RepoBrief, truncWarn = truncateSection("repo_brief", in.RepoBrief, maxRepoBriefBytes); truncWarn != "" {
+		in.truncationWarnings = append(in.truncationWarnings, truncWarn)
+	}
+	if in.Handoff, truncWarn = truncateSection("handoff", in.Handoff, maxHandoffBytes); truncWarn != "" {
+		in.truncationWarnings = append(in.truncationWarnings, truncWarn)
+	}
 	if in.TaskShape = normalizeTaskShape(in.TaskShape); in.TaskShape == "" {
 		in.TaskShape = classifyTaskShape(in.Objective, in.Handoff)
 	}
@@ -1378,7 +1428,17 @@ func aggregateDelegation(d DelegationContext) (DelegationAggregate, string) {
 		// terminal while useful work is still pending.
 		status = "dispatched"
 	} else if agg.Failure > 0 {
-		if d.ReviewRequired && !d.Review.Reviewed && hasRun {
+		// An all-operational failure never reached the model — every worker
+		// died at the adapter/launch stage with zero tokens either way. There
+		// is no model output for a parent to score, so gating it into
+		// needs_review parks the delegation forever demanding a quality
+		// judgement about a model that produced nothing. Same discrimination
+		// the Blocked branch below already makes via hasPostExecuteBlock, and
+		// the same predicate modelStatsForDelegation uses to keep launch
+		// crashes out of model ranking. A MIX of operational and genuine
+		// failures is not operational-only, so it still honours the gate.
+		if d.ReviewRequired && !d.Review.Reviewed && hasRun &&
+			!delegationIsOperationalOnly(d.Workers) {
 			status = "needs_review"
 		} else if agg.Success > 0 {
 			status = "partial"
@@ -1600,7 +1660,7 @@ func modelStatsForDelegation(d DelegationContext) []DelegationModelStat {
 			// review applies to the model's quality. The pathological
 			// case is rare in practice (most operational failures
 			// affect the whole delegation, not a single worker).
-			if !delegationIsOperationalOnlyForModel(modelWorkers[stat.ModelKey]) {
+			if !delegationIsOperationalOnly(modelWorkers[stat.ModelKey]) {
 				review := reviewForDelegationModel(d.Review, stat.ModelKey, stat.WorkerIDs)
 				stat.ReviewCount = 1
 				stat.ReviewScore = review.Score
@@ -1706,6 +1766,37 @@ func estimateBriefTokens(brief string) int {
 		return 0
 	}
 	return (len(brief) + 3) / 4
+}
+
+// truncateMarker is appended in place of dropped bytes so the worker can
+// see that its context was clipped rather than silently ending mid-thought.
+const truncateMarker = "\n\n[…truncated by mcplexer: %s exceeded %d bytes, %d bytes (~%d tokens) dropped. Ask the parent for the rest, or fetch it from the task work-context.]"
+
+// truncateSection clips s to at most maxBytes, appending a marker that names
+// the field and the drop size. The cut is UTF-8-safe (never splits a rune) and
+// prefers the last newline in the final 10% of the kept window so the worker
+// reads whole lines. Returns the (possibly clipped) string and a warning that
+// is empty when nothing was dropped.
+func truncateSection(field, s string, maxBytes int) (string, string) {
+	if maxBytes <= 0 || len(s) <= maxBytes {
+		return s, ""
+	}
+	cut := maxBytes
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	// Snap back to a line boundary when one is close, so the tail of the
+	// kept window isn't a half-sentence.
+	if nl := strings.LastIndexByte(s[:cut], '\n'); nl > cut-maxBytes/10 {
+		cut = nl + 1 // keep the newline so the last kept line is whole
+	}
+	dropped := len(s) - cut
+	warn := fmt.Sprintf(
+		"%s truncated: %d bytes supplied, %d byte cap, %d bytes (~%d tokens) dropped — "+
+			"the worker will not see the remainder",
+		field, len(s), maxBytes, dropped, (dropped+3)/4,
+	)
+	return s[:cut] + fmt.Sprintf(truncateMarker, field, maxBytes, dropped, (dropped+3)/4), warn
 }
 
 func (s *Service) archiveDelegationWorkerMessages(ctx context.Context, workerIDs []string) {

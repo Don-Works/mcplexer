@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/don-works/mcplexer/internal/models"
 	"github.com/don-works/mcplexer/internal/store"
 )
 
@@ -71,6 +72,19 @@ const (
 	maxSystemPromptBytes = 128 * 1024
 	maxUserPromptBytes   = 128 * 1024
 )
+
+// preambleForProvider picks the gateway-owned preamble variant that matches
+// how the worker will actually be driven. CLI-backed adapters run their own
+// agent loop with their own native tools and never see the runner's tool
+// list, so the API-provider preamble's two-tool claim is wrong for them.
+// An empty cliVariant falls back to the default — callers that wire only
+// Deps.Preamble keep exactly their previous behaviour.
+func preambleForProvider(provider, defaultVariant, cliVariant string) string {
+	if cliVariant != "" && models.IsCLIProvider(provider) {
+		return cliVariant
+	}
+	return defaultVariant
+}
 
 // composeSystemPrompt joins the gateway-owned preamble (when present)
 // with the worker's skill bodies. Either piece may be empty — when both

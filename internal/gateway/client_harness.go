@@ -196,6 +196,57 @@ func stripMCPServerPrefixes(name string) string {
 	}
 }
 
+// buildCodeModeInstructionsForClient returns the initialize instructions for a
+// connecting client, chosen by clientInfo.name.
+//
+// Pi fronts local models (Qwen-class, ~100k window) where the handshake
+// instructions are a fixed tax on a small budget, so it gets a compact variant
+// carrying only the rules a snippet cannot be written without. Every other
+// harness gets the full text unchanged — this is a Pi-only narrowing, not a
+// global trim.
+func buildCodeModeInstructionsForClient(clientName string, meshEnabled bool) string {
+	if isPiHarness(strings.ToLower(strings.TrimSpace(clientName))) {
+		return buildCompactCodeModeInstructions(meshEnabled)
+	}
+	return buildCodeModeInstructions(harnessProfileForClient(clientName), meshEnabled)
+}
+
+// buildCompactCodeModeInstructions is the reduced handshake for local-model
+// harnesses. It keeps the five rules a worker cannot write a correct snippet
+// without — the `<namespace>.<tool>(args)` call form, synchronous/no-await
+// semantics, auto-unwrapped results, batch-into-one-snippet, and never print
+// raw responses — plus the null-on-failure contract of parallel(), and drops
+// the discovery prose, browser routing, skill-registry naming, and
+// context-eviction advice that the full variant spends most of its bytes on.
+// Pi always uses canonical (HarnessDirect) tool names.
+func buildCompactCodeModeInstructions(meshEnabled bool) string {
+	var b strings.Builder
+	b.WriteString("# MCPlexer Code Mode\n\n")
+	b.WriteString("tools/list shows only `mcpx__execute_code`, `mcpx__search_tools`, " +
+		"`secret__prompt`, `secret__list_refs`, and `mcpx__retrieve`. Everything else — " +
+		"task, mesh, memory, index, skills, downstream MCP servers — is called INSIDE " +
+		"`mcpx__execute_code`. Find it with `mcpx__search_tools` (`detail: \"full\"` for " +
+		"signatures), or `help()` / `help('memory')` inside a snippet.\n\n")
+	b.WriteString("Call form — JavaScript, `<namespace>.<tool>(args)`:\n\n")
+	b.WriteString("```js\n")
+	b.WriteString("const snap = customer.get_customer_snapshot({ slug: \"acme\" });\n")
+	b.WriteString("print(snap.name, snap.tier);\n")
+	b.WriteString("```\n\n")
+	b.WriteString("Rules:\n")
+	b.WriteString("- Calls are synchronous — no `await`. Use `sleep(ms)` for poll loops.\n")
+	b.WriteString("- Results are **auto-unwrapped**: read `result.id`, never " +
+		"`JSON.parse(result.content[0].text)`.\n")
+	b.WriteString("- ALWAYS batch related calls into ONE snippet — that is the point of Code Mode.\n")
+	b.WriteString("- NEVER print raw responses; filter and summarize first.\n")
+	b.WriteString("- `parallel()` returns null entries for failed calls instead of throwing — " +
+		"check for null.\n")
+	if meshEnabled {
+		b.WriteString("- Other agents can message you: `mesh.receive(...)` / `mesh.send(...)` " +
+			"inside `mcpx__execute_code`.\n")
+	}
+	return b.String()
+}
+
 // buildCodeModeInstructions returns initialize instructions tailored to the
 // connecting harness. Server-prefixed clients see mcplexer__* qualified names.
 func buildCodeModeInstructions(profile HarnessProfile, meshEnabled bool) string {

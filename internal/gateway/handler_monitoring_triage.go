@@ -140,8 +140,15 @@ func (h *handler) handleMonitoringCommitTriage(ctx context.Context, raw json.Raw
 		if h.monitoringNtf == nil {
 			return marshalErrorResult("incident recorded but monitoring notify dispatcher is not enabled; triage remains pending")
 		}
+		// Age escalation only counts if it survives channel delivery: the
+		// dispatcher drops anything ranked below channel.MinSeverity, which
+		// defaults to "error". Dispatching the raw classifier severity meant an
+		// aged-up warn was computed correctly and then silently discarded at the
+		// floor, so a sustained incident escalated on paper and never reached
+		// the operator.
+		severity := monitoringEffectiveSeverity(result, args.Severity)
 		n := distill.Notification{
-			WorkspaceID: wsID, Severity: args.Severity,
+			WorkspaceID: wsID, Severity: severity,
 			Title: args.Title, Body: truncateMonitoringGateway(args.Body, 4000),
 			TaskID: task.ID, NewIncident: result.NewIncident,
 			SourceName: strings.TrimSpace(args.SourceName), TemplateID: ids[0],
@@ -157,7 +164,7 @@ func (h *handler) handleMonitoringCommitTriage(ctx context.Context, raw json.Raw
 		if err := h.monitoringNtf.Notify(ctx, n); err != nil {
 			return marshalErrorResult("incident recorded but notification failed; triage remains pending: " + err.Error())
 		}
-		if err := h.store.MarkMonitoringIncidentNotified(ctx, result.Incident.ID, args.Severity, time.Now().UTC()); err != nil {
+		if err := h.store.MarkMonitoringIncidentNotified(ctx, result.Incident.ID, severity, time.Now().UTC()); err != nil {
 			return marshalErrorResult("notification sent but notification state failed to commit: " + err.Error())
 		}
 		notified = true
@@ -182,6 +189,22 @@ func (h *handler) handleMonitoringCommitTriage(ctx context.Context, raw json.Raw
 		"notification_reason":     result.NotificationReason,
 		"run_id":                  runID,
 	})
+}
+
+// monitoringEffectiveSeverity picks the severity a notification is dispatched
+// and recorded with. The store computes EffectiveSeverity (classifier severity
+// raised by sustained incident age) and that is authoritative. Callers and
+// store implementations predating that field leave it empty; fall back to the
+// classifier severity rather than dispatching an empty one, which would rank
+// below every channel floor and deliver nothing at all.
+func monitoringEffectiveSeverity(result *store.MonitoringTriageResult, fallback string) string {
+	if result == nil {
+		return fallback
+	}
+	if effective := strings.TrimSpace(result.EffectiveSeverity); effective != "" {
+		return effective
+	}
+	return fallback
 }
 
 func (h *handler) handleMonitoringTriageEffect(ctx context.Context, raw json.RawMessage) json.RawMessage {
@@ -236,29 +259,6 @@ func (h *handler) monitoringTemplatesForCommit(
 		observedAt = time.Now().UTC()
 	}
 	return templates, observedAt, nil
-}
-
-func (h *handler) monitoringClassForTemplates(
-	ctx context.Context, workspaceID string, ids []string, correlationKey string,
-) (string, *store.MonitoringIncident, error) {
-	mapped, err := h.store.ListMonitoringIncidentsByTemplateIDs(ctx, workspaceID, ids)
-	if err != nil {
-		return "", nil, err
-	}
-	if len(mapped) > 1 {
-		classKeys := make([]string, 0, len(mapped))
-		for _, incident := range mapped {
-			classKeys = append(classKeys, incident.ClassKey)
-		}
-		return "", nil, fmt.Errorf("selected templates already belong to different incident classes: %s", strings.Join(classKeys, ", "))
-	}
-	if len(mapped) == 1 {
-		return mapped[0].ClassKey, mapped[0], nil
-	}
-	if correlationKey != "" {
-		return "correlation:" + correlationKey, nil, nil
-	}
-	return "template:" + ids[0], nil, nil
 }
 
 func (h *handler) ensureMonitoringCanonicalTask(
@@ -374,7 +374,29 @@ func (h *handler) updateMonitoringTaskMeta(
 	if monitoringPriorityRank(wantPriority) > monitoringPriorityRank(task.Priority) {
 		patch.Priority = &wantPriority
 	}
-	if task.Meta == metaText && patch.Priority == nil {
+	// Recurrence after resolution. Reaching here means fresh triage is landing
+	// on the class that this task IS, so a closed task is stale: the problem
+	// came back. Reopening is what makes a recurrence surface instead of
+	// silently mutating a closed row that nobody will ever look at again —
+	// the previous behaviour patched Meta and Priority only and never touched
+	// status, so a regression after "fixed" was invisible by construction.
+	//
+	// Reopening also drives the feedback loop in reverse: the tasks service
+	// fires its reopen hook, which lifts any suppression this task's earlier
+	// resolution applied (restores the disposition, un-acks and re-queues the
+	// templates, and clears last_notified_at so the triage that follows this
+	// call is guaranteed to notify rather than being eaten by the backoff).
+	//
+	// This cannot churn: an already-triaged template only re-enters the
+	// pending queue on a genuine severity increase (see UpsertLogTemplate),
+	// so ordinary repeats of a resolved class never reach this path.
+	reopened := false
+	if task.ClosedAt != nil {
+		open, terminal := "open", false
+		patch.Status, patch.Terminal = &open, &terminal
+		reopened = true
+	}
+	if !reopened && task.Meta == metaText && patch.Priority == nil {
 		return task, nil
 	}
 	return h.tasksSvc.Update(ctx, task.WorkspaceID, task.ID, patch)

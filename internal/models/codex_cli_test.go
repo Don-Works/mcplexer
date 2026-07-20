@@ -53,7 +53,10 @@ func TestCodexCLISendBuildsExpectedArgs(t *testing.T) {
 		t.Fatalf("Send: %v", err)
 	}
 	wantArgs := []string{
-		"-q", "--format", "json", "--full-auto",
+		"exec",
+		"--json",
+		"--sandbox", "workspace-write",
+		"--skip-git-repo-check",
 		"--cd", "/tmp/project",
 		"--model", "o3",
 	}
@@ -257,4 +260,94 @@ func newCodexAdapterWithFakeRunner(t *testing.T, modelID string, fake *fakeCodex
 	a := newCodexCLIAdapter("", modelID)
 	a.runner = fake.run
 	return a
+}
+
+// TestParseCodexRealEventStream locks in the ACTUAL `codex exec --json` wire
+// format, captured verbatim from a live codex-cli 0.144.5 run on 2026-07-20
+// (thread/item ids redacted). This is the regression test for the adapter
+// being wired to a format codex no longer emits: parseCodexJSON previously
+// expected a flat {"text":…,"usage":{…}} envelope and returned
+// "no JSON envelope in output" for every real run, so even the auth error
+// was swallowed.
+func TestParseCodexRealEventStream(t *testing.T) {
+	t.Parallel()
+	raw := []byte(strings.Join([]string{
+		`{"type":"thread.started","thread_id":"REDACTED-THREAD-ID"}`,
+		`{"type":"turn.started"}`,
+		`{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"OK"}}`,
+		`{"type":"turn.completed","usage":{"input_tokens":13635,"cached_input_tokens":9984,"output_tokens":5,"reasoning_output_tokens":0}}`,
+	}, "\n"))
+	resp, err := parseCodexJSON(raw)
+	if err != nil {
+		t.Fatalf("parseCodexJSON: %v", err)
+	}
+	if resp.Text != "OK" {
+		t.Fatalf("Text = %q, want OK", resp.Text)
+	}
+	// cached_input_tokens (9984) is the cache-hit PORTION of input_tokens,
+	// not an addition to it (documented OpenAI usage semantics: cached ⊆
+	// input). The pre-0.144 code summed them, reporting 23619 — input
+	// inflated ~73%, and every derived cost figure with it.
+	if resp.InputTokens != 13635 {
+		t.Fatalf("InputTokens = %d, want 13635 (cached is a subset, never added)", resp.InputTokens)
+	}
+	if resp.OutputTokens != 5 {
+		t.Fatalf("OutputTokens = %d, want 5", resp.OutputTokens)
+	}
+}
+
+// TestParseCodexRealFailureStream — captured verbatim from a live run with no
+// credentials. The transient "Reconnecting…" error events must NOT abort the
+// parse on their own; turn.failed is the authoritative outcome, and its
+// message must reach the caller instead of a generic envelope complaint.
+func TestParseCodexRealFailureStream(t *testing.T) {
+	t.Parallel()
+	raw := []byte(strings.Join([]string{
+		`{"type":"thread.started","thread_id":"REDACTED-THREAD-ID"}`,
+		`{"type":"turn.started"}`,
+		`{"type":"error","message":"Reconnecting... 2/5 (unexpected status 401 Unauthorized)"}`,
+		`{"type":"item.completed","item":{"id":"item_0","type":"error","message":"Falling back from WebSockets to HTTPS transport."}}`,
+		`{"type":"error","message":"unexpected status 401 Unauthorized: Missing bearer or basic authentication in header"}`,
+		`{"type":"turn.failed","error":{"message":"unexpected status 401 Unauthorized: Missing bearer or basic authentication in header"}}`,
+	}, "\n"))
+	_, err := parseCodexJSON(raw)
+	if err == nil {
+		t.Fatal("expected an error for a failed turn")
+	}
+	if !strings.Contains(err.Error(), "401 Unauthorized") {
+		t.Fatalf("err = %v, want the real 401 surfaced", err)
+	}
+}
+
+// TestParseCodexTransientErrorsDoNotFailSuccessfulTurn — a run that recovers
+// after transient reconnects must still be parsed as a success.
+func TestParseCodexTransientErrorsDoNotFailSuccessfulTurn(t *testing.T) {
+	t.Parallel()
+	raw := []byte(strings.Join([]string{
+		`{"type":"thread.started","thread_id":"REDACTED-THREAD-ID"}`,
+		`{"type":"turn.started"}`,
+		`{"type":"error","message":"Reconnecting... 1/5 (transient)"}`,
+		`{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"recovered"}}`,
+		`{"type":"turn.completed","usage":{"input_tokens":10,"output_tokens":2}}`,
+	}, "\n"))
+	resp, err := parseCodexJSON(raw)
+	if err != nil {
+		t.Fatalf("transient error must not fail a completed turn: %v", err)
+	}
+	if resp.Text != "recovered" {
+		t.Fatalf("Text = %q, want recovered", resp.Text)
+	}
+}
+
+// TestParseCodexLegacyEnvelopeStillWorks — older codex builds emit a flat
+// envelope; the stream parser must not have broken that path.
+func TestParseCodexLegacyEnvelopeStillWorks(t *testing.T) {
+	t.Parallel()
+	resp, err := parseCodexJSON([]byte(`{"text":"hello","stop_reason":"stop","usage":{"input_tokens":10,"output_tokens":20}}`))
+	if err != nil {
+		t.Fatalf("parseCodexJSON: %v", err)
+	}
+	if resp.Text != "hello" || resp.InputTokens != 10 || resp.OutputTokens != 20 {
+		t.Fatalf("legacy envelope regressed: %+v", resp)
+	}
 }

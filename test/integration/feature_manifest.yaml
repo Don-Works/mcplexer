@@ -455,3 +455,103 @@ features:
     surface: rest
     owner: core
     scenario_functions: [scenario_hammerspoon_disabled_by_default]
+
+  # ---- Log monitoring (logwatch) ------------------------------------------
+  # Two production incidents drive this block; see lib_monitoring.sh for the
+  # measured signal shape and the test-hook contract. Until 2026-07-20 there
+  # were ZERO monitoring scenarios here, which is precisely why a detector that
+  # could not fire passed every unit test it had.
+  # 42.x covers the COLLECTION path itself. It is listed before the detector
+  # entries because every one of them stands on it: the rig collects from a
+  # real sshd (log-host) whose `docker` CLI replays fixtures, so the lines
+  # reach the store through sshx, the --since window, the cursor and the
+  # distiller rather than a test-only store seam.
+  - id: monitoring.collect.ssh_pull_end_to_end
+    surface: ssh
+    owner: core
+    scenario_functions: [scenario_logwatch_ingest_setup, scenario_logwatch_ingest_pull_path]
+
+  - id: monitoring.collect.backdated_history
+    surface: ssh
+    owner: core
+    scenario_functions: [scenario_logwatch_ingest_backdating]
+
+  - id: monitoring.collect.incremental_cursor
+    surface: ssh
+    owner: core
+    scenario_functions: [scenario_logwatch_ingest_incremental, scenario_logwatch_ingest_cursor_precision]
+
+  - id: monitoring.collect.read_only_command_surface
+    surface: ssh
+    owner: core
+    scenario_functions: [scenario_logwatch_ingest_shim_fidelity]
+
+  - id: monitoring.distill.error_alerts_without_baseline
+    surface: rest
+    owner: core
+    scenario_functions: [scenario_logwatch_ingest_error_alerting]
+
+  - id: monitoring.baseline.learn_promote
+    surface: rest
+    owner: core
+    scenario_functions: [scenario_monitoring_bursty_promotes]
+
+  - id: monitoring.baseline.refuse_irregular
+    surface: rest
+    owner: core
+    scenario_functions: [scenario_monitoring_irregular_refused]
+
+  - id: monitoring.baseline.refuse_conditional_terminal
+    surface: rest
+    owner: core
+    scenario_functions: [scenario_monitoring_conditional_terminal_refused]
+
+  - id: monitoring.baseline.read_surface
+    surface: rest
+    owner: core
+    scenario_functions: [scenario_monitoring_baseline_explainable]
+
+  - id: monitoring.template.identity_across_deploy
+    surface: rest
+    owner: core
+    scenario_functions: [scenario_monitoring_template_identity]
+
+  - id: monitoring.absence.raise_incident
+    surface: scheduler
+    owner: core
+    scenario_functions: [scenario_monitoring_absence_raised]
+
+  - id: monitoring.absence.converge_and_recover
+    surface: scheduler
+    owner: core
+    scenario_functions: [scenario_monitoring_absence_converges]
+
+  - id: monitoring.absence.collection_not_absence
+    surface: scheduler
+    owner: core
+    scenario_functions: [scenario_monitoring_collection_not_absence]
+
+  - id: monitoring.deploy.tolerated_by_anomaly
+    surface: scheduler
+    owner: core
+    scenario_functions: [scenario_monitoring_deploy_is_not_an_anomaly]
+
+  - id: monitoring.deploy.errors_still_alert
+    surface: scheduler
+    owner: core
+    scenario_functions: [scenario_monitoring_error_during_deploy_alerts]
+
+  - id: monitoring.deploy.breakage_still_alerts
+    surface: scheduler
+    owner: core
+    scenario_functions: [scenario_monitoring_broken_by_deploy_alerts]
+
+  - id: monitoring.channel.health_surfaced
+    surface: rest
+    owner: core
+    scenario_functions: [scenario_monitoring_dead_channel_surfaced]
+
+  - id: monitoring.channel.throttle_does_not_mask
+    surface: rest
+    owner: core
+    scenario_functions: [scenario_monitoring_throttle_does_not_mask]

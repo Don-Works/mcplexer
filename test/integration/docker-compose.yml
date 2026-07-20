@@ -42,6 +42,33 @@ services:
       retries: 10
       start_period: 5s
 
+  # A stand-in production box for the Monitoring feature. It runs a REAL
+  # sshd; only the `docker` CLI behind it is a fixture reader (see
+  # Dockerfile.loghost). The collector has no ingest surface other than SSH —
+  # `file` kind sources are rejected by validateCollectedKind and no REST or
+  # MCP route appends log lines — so the rig supplies a host worth collecting
+  # from rather than a test-only backdoor into the store.
+  #
+  # Fixtures are streamed in at scenario time (lib_logwatch.sh), so this image
+  # carries no log data and no key material.
+  log-host:
+    build:
+      context: ../..
+      dockerfile: test/integration/Dockerfile.loghost
+    image: mcplexer-test-loghost:latest
+    container_name: mcplexer-test-log-host
+    hostname: log-host
+    networks:
+      - mcplexer-test
+    volumes:
+      - mcplexer-fixtures:/fixtures
+    healthcheck:
+      test: ["CMD", "sh", "-c", "docker ps --no-trunc --format '{{.ID}}' >/dev/null"]
+      interval: 3s
+      timeout: 2s
+      retries: 10
+      start_period: 3s
+
   node-a:
     build:
       context: ../..
@@ -63,6 +90,14 @@ services:
       MCPLEXER_SELF_USER_DISPLAY_NAME: "Alice (AcmeCo, machine 1)"
       GOOGLECHAT_DISABLE_JWT_VALIDATION: "true"
       GOOGLECHAT_BOT_NAME: "users/999"
+      # Opens POST /api/v1/monitoring/{test-ingest,test-tick} — the seam the
+      # monitoring scenarios (40.x/41.x) seed backdated log history through and
+      # force a learner pass + absence tick with. Without it both routes answer
+      # 404 and EVERY monitoring scenario skips, which is indistinguishable
+      # from a green suite over a detector that cannot fire. Node-a only: the
+      # scenarios drive one node, and the gate should stay shut everywhere it
+      # is not actually needed.
+      MCPLEXER_ALLOW_TEST_INGEST: "1"
     healthcheck:
       test: ["CMD", "curl", "-fs", "http://localhost:3333/api/v1/health"]
       interval: 3s
@@ -175,6 +210,9 @@ networks:
     driver: bridge
 
 volumes:
+  # Log fixtures for the monitoring scenarios. A named volume rather than a
+  # bind mount so a run never writes generated data into the repo tree.
+  mcplexer-fixtures:
   mcplexer-data-a:
   mcplexer-data-b:
   mcplexer-data-c:

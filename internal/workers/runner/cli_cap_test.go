@@ -9,6 +9,10 @@ import (
 	"github.com/don-works/mcplexer/internal/store"
 )
 
+// stubCLICounter reports n tool calls from a single, cleanly-disconnected
+// child session — the unambiguous shape, so these tests stay focused on the
+// cap/outcome logic rather than on attribution (which
+// cli_cap_attribution_test.go covers against the real store).
 type stubCLICounter struct {
 	n int
 }
@@ -17,6 +21,19 @@ func (s *stubCLICounter) CountChildCLIToolCalls(
 	_ context.Context, _ string, _, _ time.Time, _ []string,
 ) (int, error) {
 	return s.n, nil
+}
+
+func (s *stubCLICounter) CountChildCLIToolCallsBySession(
+	_ context.Context, _ string, start, _ time.Time, _ []string,
+) ([]store.ChildCLISessionCount, error) {
+	disconnected := start.Add(2 * time.Second)
+	return []store.ChildCLISessionCount{{
+		SessionID:      "child-session",
+		ClientType:     "grok",
+		ConnectedAt:    start.Add(time.Second),
+		DisconnectedAt: &disconnected,
+		Count:          s.n,
+	}}, nil
 }
 
 func TestApplyCLIToolCallCap_Exceeds(t *testing.T) {

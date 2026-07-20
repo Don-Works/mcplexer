@@ -16,11 +16,14 @@ func TestIsTrustedBuiltinResult(t *testing.T) {
 		{"memory__recall", true, "trusted builtin"},
 		{"secret__prompt", true, "trusted builtin"},
 		{"mcplexer__status", true, "trusted builtin"},
-		{"mesh__list_agents", true, "local mesh"},
+		{"mesh__list_queue", true, "local mesh"},
 		{"mesh__send", true, "local mesh"},
 		{"mesh__receive", false, "peer-origin"},
 		{"mesh__hydrate", false, "peer-origin"},
 		{"mesh__thread", false, "peer-origin"},
+		{"mesh__list_peers", false, "peer-origin"},
+		{"mesh__list_agents", false, "peer-origin"},
+		{"mesh__list_pending_secrets", false, "peer-origin"},
 		{"linear__search", false, "downstream"},
 		{"playwright__browser_evaluate", false, "downstream"},
 		{"brw_chromium__brw_list_tabs", true, "trusted downstream metadata"},
@@ -120,10 +123,7 @@ func TestClassifyTrust_BuiltinPrefixesSkipSanitize(t *testing.T) {
 // in-process registries / settings, not on cross-peer payloads.
 func TestClassifyTrust_MeshLocalToolsSkipSanitize(t *testing.T) {
 	cases := []string{
-		"mesh__list_agents",
-		"mesh__list_peers",
 		"mesh__list_queue",
-		"mesh__list_pending_secrets",
 		"mesh__set_agent_status",
 		"mesh__set_device_name",
 		"mesh__grant_peer_scope",
@@ -149,8 +149,14 @@ func TestClassifyTrust_MeshLocalToolsSkipSanitize(t *testing.T) {
 // whose payload includes cross-peer content must force-envelope regardless of
 // dashboard toggles, with trust="peer" so downstream policy can distinguish
 // mesh ingest from generic low-trust web scrape.
+// The peer directory listings are included deliberately: their rows are
+// local but the display names, agent names, and offer metadata inside them
+// are authored on another machine.
 func TestClassifyTrust_MeshReadsAlwaysEnvelope(t *testing.T) {
-	for _, name := range []string{"mesh__receive", "mesh__hydrate", "mesh__thread"} {
+	for _, name := range []string{
+		"mesh__receive", "mesh__hydrate", "mesh__thread",
+		"mesh__list_peers", "mesh__list_agents", "mesh__list_pending_secrets",
+	} {
 		t.Run(name, func(t *testing.T) {
 			got := classifyTrust(name)
 			if !got.NeedsSanitize {

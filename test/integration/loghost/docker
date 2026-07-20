@@ -1,0 +1,137 @@
+#!/bin/sh
+# docker — fixture-replaying stand-in for the Docker CLI, installed on the
+# `log-host` rig container's PATH.
+#
+# WHY THIS AND NOT A REST BACKDOOR. The collector has exactly one ingest
+# path: SSH into a host and run a fixed, read-only command. There is no line
+# ingest endpoint, no admin tool that appends lines, and `file` kind sources
+# are explicitly rejected by validateCollectedKind. Adding a test-only ingest
+# seam would prove the seam works, not the product — so the rig runs a REAL
+# sshd and gives it a `docker` that reads fixtures instead of a daemon. Every
+# layer above the container runtime is the shipping code: sshx.Dial, host-key
+# TOFU and pinning, CommandForSource, the byte-capped run, timestamp parsing,
+# cursor advance and reconciliation, the distiller, and the day-history
+# trigger.
+#
+# Only the four command shapes sshx can construct are implemented. Anything
+# else exits non-zero on purpose: if the collector starts issuing a new
+# command, this must fail loudly rather than silently return nothing.
+#
+# Fixture layout, per selector, under $FIXTURE_DIR (default /fixtures):
+#   <selector>.log      docker-logs-format lines (see gen_logs.sh)
+#   <selector>.state    optional "<id>|<restart_count>|<started_at>"
+#   <selector>.events   optional "<stamp>|<action>|<actor_id>" restart events
+#   ports.inventory     optional `docker ps` inventory lines, shared per host
+set -eu
+
+FIXTURE_DIR="${FIXTURE_DIR:-/fixtures}"
+AWKLIB="${AWKLIB:-/usr/local/lib/loghost/timelib.awk}"
+
+verb="${1:-}"
+[ -n "$verb" ] || { echo "docker: no command" >&2; exit 64; }
+shift
+
+# pad9 right-pads a fractional-second string to nanosecond width. Go's
+# time.RFC3339Nano TRIMS trailing zeros, so the collector's --since arrives as
+# anything from "…:04Z" to "…:04.117272576Z"; ".1" means 100000000ns, not 1ns.
+pad9() {
+    printf '%s' "$1" | awk '{ s = $0; while (length(s) < 9) s = s "0"; print substr(s, 1, 9) }'
+}
+
+# normalise_ts turns an RFC3339Nano token into the fixed-width form
+# timelib.awk's parse_stamp_* functions read by column.
+normalise_ts() {
+    raw="$(printf '%s' "$1" | tr -d "'" | sed 's/Z$//')"
+    case "$raw" in
+        *.*) datepart="${raw%%.*}"; frac="${raw#*.}" ;;
+        *)   datepart="$raw";       frac="0" ;;
+    esac
+    printf '%s.%sZ' "$datepart" "$(pad9 "$frac")"
+}
+
+case "$verb" in
+logs)
+    # docker logs --timestamps [--since '<ts>'] '<selector>'
+    since=""
+    selector=""
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --timestamps) shift ;;
+            --since) since="$2"; shift 2 ;;
+            --*) shift ;;
+            *) selector="$(printf '%s' "$1" | tr -d "'")"; shift ;;
+        esac
+    done
+    [ -n "$selector" ] || { echo "docker logs: no container" >&2; exit 64; }
+    file="$FIXTURE_DIR/$selector.log"
+    # A container that exists but has logged nothing is an empty stream, not
+    # an error — the collector must treat it as "no new lines", which is
+    # exactly the state the silent-hang incident presents.
+    [ -f "$file" ] || exit 0
+    if [ -z "$since" ]; then
+        cat "$file"
+        exit 0
+    fi
+    awk -f "$AWKLIB" -f /usr/local/lib/loghost/since.awk \
+        -v since_str="$(normalise_ts "$since")" "$file"
+    ;;
+inspect)
+    # docker inspect --type container --format '{{.Id}}|{{.RestartCount}}|{{.State.StartedAt}}' '<sel>'
+    selector=""
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --type|--format) shift 2 ;;
+            --*) shift ;;
+            *) selector="$(printf '%s' "$1" | tr -d "'")"; shift ;;
+        esac
+    done
+    state="$FIXTURE_DIR/$selector.state"
+    if [ -f "$state" ]; then
+        cat "$state"
+    elif [ -f "$FIXTURE_DIR/$selector.log" ]; then
+        # Default: one long-lived container that has never restarted. The
+        # silent-hang incident depends on this being the honest answer —
+        # the process really is up.
+        printf 'c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00c0ffee00|0|2026-07-01T00:00:00.000000000Z\n'
+    else
+        echo "Error: No such container: $selector" >&2
+        exit 1
+    fi
+    ;;
+events)
+    # docker events --since '<ts>' --until '<ts>' --filter ... --format '...'
+    since=""; until_ts=""; selector=""
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --since) since="$2"; shift 2 ;;
+            --until) until_ts="$2"; shift 2 ;;
+            --filter)
+                case "$2" in container=*) selector="$(printf '%s' "${2#container=}" | tr -d "'")" ;; esac
+                shift 2 ;;
+            --format) shift 2 ;;
+            --*) shift ;;
+            *) shift ;;
+        esac
+    done
+    file="$FIXTURE_DIR/$selector.events"
+    [ -f "$file" ] || exit 0
+    [ -n "$since" ] && [ -n "$until_ts" ] || exit 0
+    awk -f "$AWKLIB" -f /usr/local/lib/loghost/events.awk \
+        -v from_str="$(normalise_ts "$since")" \
+        -v to_str="$(normalise_ts "$until_ts")" "$file"
+    ;;
+ps)
+    # docker ps --no-trunc --format '{{.ID}}|{{.Names}}|{{.Ports}}'
+    #
+    # A STABLE inventory by default. The collector raises a notify-class line
+    # on every change to the exposure fingerprint, so an inventory that
+    # wobbled would inject alerts into every monitoring assertion.
+    if [ -f "$FIXTURE_DIR/ports.inventory" ]; then
+        cat "$FIXTURE_DIR/ports.inventory"
+    fi
+    ;;
+*)
+    echo "docker: unsupported command '$verb' — the loghost shim implements only the four read-only shapes sshx can build" >&2
+    exit 64
+    ;;
+esac

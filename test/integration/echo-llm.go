@@ -181,6 +181,9 @@ func main() {
 	// isn't, by design, to keep accidental routes off the surface).
 	mux.HandleFunc("/v1/chat/completions", handleChat)
 	mux.HandleFunc("/v1/chat/completions/consolidate", handleChat)
+	// Webhook delivery sink for the monitoring scenarios (echo-sink.go). Keeps
+	// every notification the alert tests provoke inside this container.
+	registerSink(mux)
 	log.Println("echo-llm listening on :8080")
 	srv := &http.Server{
 		Addr:              ":8080",

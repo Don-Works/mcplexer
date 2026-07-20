@@ -201,7 +201,12 @@ func (h *handler) handleMeshListPendingSecrets(ctx context.Context, args json.Ra
 	if direction == "inbound" {
 		b.WriteString("\nCall `mesh__accept_secret { offer_id, save_as }` or `mesh__reject_secret { offer_id }` to decide.\n")
 	}
-	return marshalToolResult(b.String()), nil
+	// Inbound offers carry three peer-authored strings — the peer's display
+	// name, the offer name, and free-form metadata — rendered straight into
+	// the agent's context. Wrap in the <untrusted-content> trust marker;
+	// builtin results never reach sanitizeToolResult.
+	wrap := h.meshFieldSanitizer(ctx, MeshPrefix+"list_pending_secrets", true)
+	return marshalToolResult(wrap(b.String())), nil
 }
 
 // handleMeshAcceptSecret decrypts a pending inbound offer with the local

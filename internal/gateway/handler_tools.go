@@ -183,16 +183,22 @@ func (h *handler) liveCatalogDiscoveryServerIDs(ctx context.Context, serverIDs [
 }
 
 // toolInputStringFields returns the set of top-level input-schema fields
-// declared as type: "string" for a given downstream tool, using the cached
-// tools/list catalog. Returns nil for built-ins or when the schema is
-// unavailable — callers should fall back to legacy unconditional coercion.
+// declared as type: "string" for a given tool: from the cached tools/list
+// catalog for downstream servers, and from the in-process definitions for
+// built-ins. Returns nil when the schema is unavailable — callers should fall
+// back to legacy unconditional coercion.
 func (h *handler) toolInputStringFields(ctx context.Context, serverID, originalToolName string) map[string]bool {
 	if serverID == "" || originalToolName == "" {
 		return nil
 	}
-	// Built-in namespaces aren't in the downstream catalog; skip.
+	// Built-in namespaces are absent from the downstream tools/list catalog —
+	// their schemas are compile-time definitions held in-process. Resolve
+	// against those rather than returning nil, which dropped every builtin onto
+	// the legacy coerce-everything path and re-parsed string-typed fields such
+	// as mcpx__delegate_worker's tool_allowlist_json (a JSON array carried as
+	// text, by contract) into an array the decoder then rejects.
 	if _, ok := builtinDownstreamIDs[serverID]; ok {
-		return nil
+		return h.builtinStringFields(ctx, builtinToolFullName(serverID, originalToolName))
 	}
 
 	catalog, err := h.cachedListToolsForServers(ctx, []string{serverID})
@@ -218,6 +224,31 @@ func (h *handler) toolInputStringFields(ctx context.Context, serverID, originalT
 		}
 	}
 	return nil
+}
+
+// codeExecuteToolName is the one builtin whose full definition is expensive to
+// build, so its schema is resolved from the mirror below instead.
+const codeExecuteToolName = "mcpx__execute_code"
+
+// codeExecuteInputSchema mirrors the TYPES of mcpx__execute_code's input
+// schema (see buildCodeExecuteTool). Only declared types affect argument
+// coercion — descriptions are irrelevant here and are exactly the part that
+// costs a downstream introspection to produce. Kept honest by
+// TestCodeExecuteInputSchemaMirrorMatchesDefinition, which fails if the real
+// schema ever grows a field this mirror does not declare.
+const codeExecuteInputSchema = `{"type":"object","properties":{"code":{"type":"string"}},"required":["code"]}`
+
+// builtinStringFields resolves a builtin tool's declared type: "string" fields
+// from the in-process definitions. Returns nil for unknown tools so the caller
+// keeps legacy unconditional coercion.
+func (h *handler) builtinStringFields(ctx context.Context, fullToolName string) map[string]bool {
+	if fullToolName == "" {
+		return nil
+	}
+	if fullToolName == codeExecuteToolName {
+		return stringFieldsFromInputSchema(json.RawMessage(codeExecuteInputSchema))
+	}
+	return stringFieldsForBuiltinTool(h.builtinToolsExceptCodeExecute(ctx), fullToolName)
 }
 
 // backgroundRefreshInterval bounds how often a given server-group catalog is
@@ -818,10 +849,24 @@ func marshalEmptyToolsList() json.RawMessage {
 // it to enumerate slim-mode deferred tools for discovery) can share one
 // source of truth.
 func (h *handler) buildAllBuiltinTools(ctx context.Context) []Tool {
+	// execute_code is built separately because its DESCRIPTION embeds a live
+	// namespace summary, which introspects every downstream server's catalog.
+	// Everything that only needs schemas takes builtinToolsExceptCodeExecute.
+	execTool, _ := h.buildCodeExecuteTool(ctx)
+	return append([]Tool{execTool}, h.builtinToolsExceptCodeExecute(ctx)...)
+}
+
+// builtinToolsExceptCodeExecute assembles every built-in definition whose
+// construction is purely static — no store reads, no downstream introspection.
+// Split out because argument coercion resolves a builtin's input schema on
+// EVERY builtin dispatch: routing that through buildAllBuiltinTools would put
+// a downstream catalog round-trip (and possible server auto-start) on the
+// critical path of calls that never touch a downstream, including
+// execute_code snippets rejected at preflight before any discovery is meant
+// to happen.
+func (h *handler) builtinToolsExceptCodeExecute(ctx context.Context) []Tool {
 	tools := make([]Tool, 0, 64)
 
-	execTool, _ := h.buildCodeExecuteTool(ctx)
-	tools = append(tools, execTool)
 	tools = append(tools, searchToolsDefinition())
 	tools = append(tools, recipeSearchToolDef())
 	tools = append(tools, recipeStatsToolDef())

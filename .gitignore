@@ -100,3 +100,6 @@ addons/*.yaml
 mcplexer.yaml
 todo.md
 *.mcskill
+
+# citation-bench.sh run artifacts (scratch, never committed)
+citation-bench-*.json

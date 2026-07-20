@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/don-works/mcplexer/internal/config"
 	"github.com/don-works/mcplexer/internal/p2p"
 	"github.com/don-works/mcplexer/internal/store"
 )
@@ -105,7 +106,7 @@ func (m *Manager) LocalDisplayName() string {
 //
 // The stored display_name is trim-and-lowercased on the comparison side
 // because legacy rows pre-dating the resolveSelfDisplayName sanitiser fix
-// can carry trailing whitespace ("peer-laptop.ts.net lan ") from a raw OS hostname.
+// can carry trailing whitespace ("peer-laptop.example.net lan ") from a raw OS hostname.
 // Without this trim a user typing the visible name still gets "does not
 // match any paired device" until they re-pair. The trim is read-only —
 // callers that round-trip the DisplayName back to the wire still see the
@@ -172,7 +173,9 @@ func (m *Manager) applyDisplayNameChange(ctx context.Context, env p2p.MeshEnvelo
 		return
 	}
 	newName := parseRenameContent(env.Content)
-	if newName == "" {
+	if !acceptablePeerDisplayName(newName) {
+		slog.Default().Debug("p2p: rejected peer display name",
+			"peer", env.SenderPeerID, "bytes", len(newName))
 		return
 	}
 	if err := m.peerRenamer.UpdateDisplayName(ctx, env.SenderPeerID, newName); err != nil {
@@ -216,6 +219,26 @@ func (m *Manager) BroadcastDisplayNameChange(ctx context.Context, newName string
 		return err
 	}
 	return nil
+}
+
+// acceptablePeerDisplayName reports whether a peer-supplied display name
+// may be persisted into the local peer directory.
+//
+// The local rename path (mesh__set_device_name) has always enforced
+// config.ValidateDisplayName — 1-50 chars, [A-Za-z0-9._-] only. The
+// REMOTE path enforced nothing: parseRenameContent JSON-decoded whatever
+// the peer sent and applyDisplayNameChange persisted it verbatim. Because
+// mesh__list_peers / mesh__list_agents render that string straight into an
+// agent's context, a peer could ship arbitrary free text — including
+// instruction-shaped text — through a field nothing treated as untrusted.
+//
+// Enforcing the SAME rule on both sides closes the injection at the
+// boundary; the render-side <untrusted-content> wrapper (gateway
+// handler_mesh_devices/agents/secrets) is the second layer, for peer text
+// that legitimately reaches an agent. A peer running matching code always
+// produces a conformant name, so this rejects only malformed input.
+func acceptablePeerDisplayName(name string) bool {
+	return name != "" && config.ValidateDisplayName(name) == nil
 }
 
 // isDisplayNameChange returns true when env carries the rename signal

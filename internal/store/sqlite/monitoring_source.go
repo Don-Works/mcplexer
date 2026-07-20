@@ -160,7 +160,8 @@ func (d *DB) UpdateLogSourceCursor(ctx context.Context, id string, ts time.Time,
 		UPDATE log_sources SET cursor_ts = ?, cursor_hash = ?,
 			consecutive_failures = 0, updated_at = ?
 		WHERE id = ?`,
-		formatTime(ts.UTC()), hash, formatTime(time.Now().UTC()), id)
+		// Nanosecond precision is load-bearing here — see formatTimeNano.
+		formatTimeNano(ts.UTC()), hash, formatTime(time.Now().UTC()), id)
 	if err != nil {
 		return fmt.Errorf("update log source cursor: %w", err)
 	}

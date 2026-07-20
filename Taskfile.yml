@@ -205,6 +205,21 @@ tasks:
     cmds:
       - docker compose -f test/integration/docker-compose.yml down -v --remove-orphans
 
+  test-integration-monitoring:
+    desc: Run only the log-monitoring acceptance scenarios (steps 40.x + 41.x) against a running harness
+    cmds:
+      - SCENARIO_MODE=monitoring bash test/integration/scenarios.sh
+
+  test-integration-logwatch:
+    desc: "Log-injection harness (42.x): brings up only log-host + node-a, seeds nine backdated days over real SSH"
+    cmds:
+      - bash test/integration/run_logwatch.sh
+
+  test-fixtures-logwatch:
+    desc: Verify the log-history fixtures reproduce the measured production shape (no containers needed)
+    cmds:
+      - bash test/integration/_fixtures/logwatch/verify_fixtures.sh
+
   test-integration-overnight:
     desc: Repeat the bulletproof integration suite
     cmds:

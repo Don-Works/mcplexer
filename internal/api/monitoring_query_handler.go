@@ -34,11 +34,25 @@ type monitoringQueryHandler struct {
 // is and whether IT is the peer group's monitoring runner.
 func (h *monitoringQueryHandler) status(w http.ResponseWriter, r *http.Request) {
 	hostname, _ := os.Hostname()
-	writeJSON(w, http.StatusOK, map[string]any{
+	body := map[string]any{
 		"gateway_hostname": hostname,
 		"runner_enabled":   collect.RunnerEnabled(),
 		"notify_enabled":   h.notifier != nil,
-	})
+	}
+	// Alert-route health, when a workspace is named. Optional and additive so
+	// existing callers are unaffected: notify_enabled says the notifier is
+	// WIRED, which a dead webhook does not contradict — the six-day outage had
+	// notify_enabled=true throughout. `channels` is what makes the difference
+	// between "we can notify" and "notifications are arriving" visible.
+	if wsID := workspaceIDParam(r); wsID != "" {
+		summary, err := summarizeChannelHealth(r.Context(), h.store, wsID)
+		if err != nil {
+			writeMonitoringErr(w, err, "summarize channel health")
+			return
+		}
+		body["channels"] = summary
+	}
+	writeJSON(w, http.StatusOK, body)
 }
 
 // templates lists the explorer rows: masked shapes, severity, counts,

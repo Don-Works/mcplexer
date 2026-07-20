@@ -96,9 +96,10 @@ func (m *Manager) StartP2PBridge(ctx context.Context, logger *slog.Logger) {
 // ingestEnvelope translates a libp2p MeshEnvelope into a store.MeshMessage
 // and inserts it. Workspace resolution (G1):
 //
-//   - env.WorkspaceID == ""  → land in the "global" bucket (legacy peers
-//     or explicit broadcast). Workers in real workspaces refuse to
-//     trigger on these (G2).
+//   - env.WorkspaceID == "" or "global" → land in the global namespace
+//     (WorkspaceID=""), the same bucket a local to_workspace:"*" send
+//     resolves to and the only one Receive reads for every session.
+//     Workers in real workspaces refuse to trigger on these (G2).
 //   - env.WorkspaceID != "" + binding exists → land in
 //     binding.LocalWorkspaceID; triggers in that workspace can fire.
 //   - env.WorkspaceID != "" + no binding → DROP the envelope and audit
@@ -152,7 +153,12 @@ func (m *Manager) ingestEnvelope(ctx context.Context, env p2p.MeshEnvelope) erro
 	// Every regular envelope carries SenderDisplayName as a UX hint. Persist
 	// it so the peer directory tracks the sender's current device name,
 	// even when they didn't explicitly broadcast a rename. NOT auth-bearing.
-	if env.SenderDisplayName != "" && m.peerRenamer != nil {
+	//
+	// Gated on the same rule as the explicit rename path: this is the second
+	// way a peer-controlled string reaches p2p_peers.display_name, and
+	// mesh__list_peers renders it into an agent's context. See
+	// acceptablePeerDisplayName.
+	if m.peerRenamer != nil && acceptablePeerDisplayName(env.SenderDisplayName) {
 		_ = m.peerRenamer.UpdateDisplayName(ctx, env.SenderPeerID, env.SenderDisplayName)
 	}
 
@@ -168,12 +174,22 @@ func (m *Manager) ingestEnvelope(ctx context.Context, env p2p.MeshEnvelope) erro
 
 	// G1 — workspace resolution. The wire format reserves the sentinel
 	// "global" (and the empty string) for "broadcast / no workspace
-	// scoping"; both land in the local "global" bucket where workers in
-	// real workspaces refuse to trigger on them (G2 in the dispatcher).
-	// Any other env.WorkspaceID is a workspace-scoped envelope that
-	// MUST resolve through workspace_peer_bindings; unbound senders are
-	// dropped here so a malicious peer cannot pick a target workspace.
-	localWorkspaceID := "global"
+	// scoping"; both land in the LOCAL global namespace, WorkspaceID="".
+	//
+	// "" — not the literal "global" — is the one bucket Receive reads for
+	// every session (readableWorkspaceIDs unconditionally appends ""), and
+	// it is where a local to_workspace:"*" send lands. Writing the literal
+	// instead put every cross-machine broadcast in a bucket no agent reads:
+	// durably stored, on the dashboard, invisible to every recipient, while
+	// the sender saw a success receipt.
+	//
+	// This does NOT reintroduce the shared-bucket leak defaultMeshWorkspace
+	// (gateway/handler_mesh.go) warns about: that was unbound LOCAL sessions
+	// collapsing into one namespace, and their traffic still resolves to
+	// "dir:<root>" / "session:<id>". Only envelopes the sender explicitly
+	// marked as a broadcast reach this line with ""; workspace-scoped ones
+	// still require a binding below.
+	localWorkspaceID := ""
 	if env.WorkspaceID != "" && env.WorkspaceID != "global" && env.SenderPeerID != "" {
 		binding, err := m.store.GetWorkspacePeerBinding(ctx, env.SenderPeerID, env.WorkspaceID)
 		if err != nil || binding == nil {
@@ -211,8 +227,28 @@ func (m *Manager) ingestEnvelope(ctx context.Context, env p2p.MeshEnvelope) erro
 	if sanitized := stripReservedTags(env.Tags); sanitized != "" {
 		inboundTags = inboundTags + "," + sanitized
 	}
+	// The stored row id is minted LOCALLY, never carried from env.ID.
+	//
+	// mesh_messages.id doubles as the receive cursor, filtered with a
+	// lexicographic `id > ?`. A peer-supplied id sorting above the local id
+	// space therefore advances the cursor past every future local message
+	// and kills the inbox permanently — and silently, since PendingCount
+	// reads the same cursor and also reports 0.
+	//
+	// Malice is not required: ULIDs are timestamp-prefixed, so a peer whose
+	// clock runs fast mints ids above every local id for the duration of the
+	// skew. Validating the id (validateInboundEnvelope) does not help there —
+	// it is well-formed, just from the future. Re-minting holds by
+	// construction and makes selectOldestBatch's ULID-ordering invariant
+	// (mesh.go) true on the ingest path, not just for local sends.
+	//
+	// Tradeoff: the primary key no longer dedupes a replayed envelope. That
+	// is deliberate — dedupe belongs to the transport, which rejects
+	// duplicate (sender, envelope id) pairs before ingest via a 100k-entry
+	// window (p2p.MeshTransport.handleStream). The peer's id is still
+	// recorded in the audit ledger below for cross-machine correlation.
 	msg := &store.MeshMessage{
-		ID:                env.ID,
+		ID:                newULID(),
 		WorkspaceID:       localWorkspaceID,
 		SessionID:         env.SenderPeerID, // remote peer acts as the agent's session for routing
 		AgentName:         displayAgentName(env),
@@ -266,9 +302,12 @@ func (m *Manager) ingestEnvelope(ctx context.Context, env p2p.MeshEnvelope) erro
 // reached via the local stdio socket.
 //
 // localWorkspaceID is the workspace the matching mesh_message landed in
-// (resolved via workspace_peer_bindings or "global" for legacy peers).
-// We mirror it onto the agent row so the directory query in that
-// workspace's UI surface includes this peer.
+// (resolved via workspace_peer_bindings, or "" for broadcasts). We mirror
+// it onto the agent row so the directory query in that workspace's UI
+// surface includes this peer — except for "", which the agent-directory
+// query skips entirely (activeAgentsForWorkspaces ignores blank ids), so
+// broadcast-origin peers keep landing under the "global" workspace row
+// they have always used.
 func (m *Manager) upsertRemoteAgent(ctx context.Context, env p2p.MeshEnvelope, localWorkspaceID string) error {
 	if env.SenderPeerID == "" {
 		return nil

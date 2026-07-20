@@ -11,6 +11,17 @@ type notifyMark struct {
 	rank int
 }
 
+// templateCooldown is the quiet period the same key must observe at this
+// severity. Critical is deliberately tighter than everything else: the cooldown
+// exists to stop one noisy template chattering, not to overrule the persistence
+// policy's judgement that a critical incident is due another reminder.
+func templateCooldown(severity string) time.Duration {
+	if store.SeverityRank(severity) >= store.SeverityRank(store.SeverityCritical) {
+		return perTemplateCooldownCritical
+	}
+	return perTemplateCooldown
+}
+
 // throttled keeps independent hourly budgets for critical and lower-severity
 // traffic. A severity increase for the same template bypasses its cooldown.
 func (d *Dispatcher) throttled(workspaceID, templateID, severity string) string {
@@ -20,7 +31,7 @@ func (d *Dispatcher) throttled(workspaceID, templateID, severity string) string 
 	rank := store.SeverityRank(severity)
 	if templateID != "" {
 		last, ok := d.perTemplate[workspaceID+"/"+templateID]
-		if ok && now.Sub(last.at) < perTemplateCooldown && rank <= last.rank {
+		if ok && now.Sub(last.at) < templateCooldown(severity) && rank <= last.rank {
 			return "per-template cooldown"
 		}
 	}
@@ -62,6 +73,8 @@ func (d *Dispatcher) recordNotify(workspaceID, templateID, severity string) {
 	d.evictLapsedTemplates(mark.at)
 }
 
+// evictLapsedTemplates prunes against the LONGEST cooldown, so an entry always
+// outlives the shorter critical window that may also consult it.
 func (d *Dispatcher) evictLapsedTemplates(now time.Time) {
 	for key, mark := range d.perTemplate {
 		if now.Sub(mark.at) >= perTemplateCooldown {

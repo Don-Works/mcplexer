@@ -58,7 +58,7 @@ func geminiStandardPaths() []string {
 
 func (a *geminiCLIAdapter) Send(ctx context.Context, req SendRequest) (*SendResponse, error) {
 	start := time.Now()
-	args := buildGeminiCLIArgs(a.modelID, req.WorkspacePath)
+	args := buildGeminiCLIArgs(a.modelID)
 	prompt := buildClaudeCLIStdin(req.System, req.Messages)
 	slog.LogAttrs(ctx, slog.LevelDebug, "gemini_cli: dispatch",
 		slog.String("provider", geminiCLIProvider),
@@ -115,13 +115,16 @@ func (a *geminiCLIAdapter) Send(ctx context.Context, req SendRequest) (*SendResp
 	return resp, nil
 }
 
-func buildGeminiCLIArgs(modelID, workspacePath string) []string {
+// buildGeminiCLIArgs assembles the argv for a headless `gemini` run. The
+// workspace is NOT passed as a flag: gemini has no option that sets its
+// working directory (`--include-directories` only ADDS directories to the
+// workspace) and it parses argv in yargs strict mode, so an unknown flag
+// aborts the run before the prompt is read. The workspace reaches the CLI
+// as the subprocess CWD, which runSandboxedModelCLI sets via cmd.Dir.
+func buildGeminiCLIArgs(modelID string) []string {
 	args := []string{
 		"--output-format", "json",
 		"--sandbox", "false",
-	}
-	if workspacePath != "" {
-		args = append(args, "--directory", workspacePath)
 	}
 	if modelID != "" {
 		args = append(args, "--model", modelID)

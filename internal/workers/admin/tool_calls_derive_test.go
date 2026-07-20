@@ -39,6 +39,27 @@ func (f *fakeAuditCounter) CountChildCLIToolCalls(
 	return f.result, f.err
 }
 
+// CountChildCLIToolCallsBySession reports result as a single, cleanly
+// disconnected child session — the unambiguous shape, so these tests stay
+// about the derive wiring. Attribution across overlapping sessions is
+// covered against the real store in workers/runner.
+func (f *fakeAuditCounter) CountChildCLIToolCallsBySession(
+	ctx context.Context, workspaceID string, start, end time.Time, clientTypes []string,
+) ([]store.ChildCLISessionCount, error) {
+	n, err := f.CountChildCLIToolCalls(ctx, workspaceID, start, end, clientTypes)
+	if err != nil {
+		return nil, err
+	}
+	disconnected := start.Add(time.Second)
+	return []store.ChildCLISessionCount{{
+		SessionID:      "child-session",
+		ClientType:     clientTypes[0],
+		ConnectedAt:    start,
+		DisconnectedAt: &disconnected,
+		Count:          n,
+	}}, nil
+}
+
 // TestAnnotateToolCallsSource exercises every branch of the derive
 // fallback: native adapter (anthropic), CLI adapter with the counter
 // reporting non-zero (the typical case the fix targets), CLI adapter
@@ -103,29 +124,19 @@ func TestAnnotateToolCallsSource(t *testing.T) {
 		if !ac.lastArgs.end.Equal(*finished) {
 			t.Fatalf("counter end = %v, want %v", ac.lastArgs.end, *finished)
 		}
-		// The full child-CLI client_type set must reach the counter so
-		// the SQL IN-clause matches every variant the CLI children might
-		// announce. Order doesn't matter; presence does.
+		// Only THIS provider's child client_types reach the counter. The
+		// query used to pass the flat union of every CLI family, which is
+		// how a concurrent grok_cli or pi_cli run's audit rows ended up in
+		// a claude_cli run's total. Order doesn't matter; membership does.
 		want := map[string]bool{
-			"claude_cli":   true,
-			"claude_code":  true,
-			"claude-code":  true,
-			"opencode":     true,
-			"opencode_cli": true,
-			"grok":         true,
-			"grok_cli":     true,
-			"xai":          true,
-			"xai_cli":      true,
-			"mimo":         true,
-			"mimo_cli":     true,
-			"mimocode":     true,
-			"gemini":       true,
-			"gemini_cli":   true,
-			"codex_cli":    true,
-			"pi":           true,
-			"pi_cli":       true,
+			"claude_cli":  true,
+			"claude_code": true,
+			"claude-code": true,
 		}
 		for _, ct := range ac.lastArgs.clientTypes {
+			if !want[ct] {
+				t.Fatalf("counter called with foreign client_type %q — a claude_cli run must not match other families", ct)
+			}
 			delete(want, ct)
 		}
 		if len(want) > 0 {

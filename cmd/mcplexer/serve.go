@@ -1685,6 +1685,7 @@ func runServer(ctx context.Context, cfg *Config, db *sqlite.DB, cfgSvc *config.S
 		AddonCreator:           d.addonCreator,
 		MeshManager:            d.meshMgr,
 		MonitoringNotifier:     ensureMonitoringDispatch(db, d.secretsMgr, d.meshMgr, d.notifyBus),
+		MonitoringTicker:       newMonitoringTicker(db, d.secretsMgr, d.meshMgr, d.notifyBus, d.tasksSvc),
 		AddonPreview:           addon.NewPreviewExecutorWithRequestAuth(d.authInj.HeadersForDownstream, d.authInj.ApplyToRequest),
 		OAuthWizard:            oauth.NewWizard(db, db, d.flow, d.enc),
 		TelegramManager:        d.telegramMgr,
@@ -1758,7 +1759,11 @@ func runServer(ctx context.Context, cfg *Config, db *sqlite.DB, cfgSvc *config.S
 	// Monitoring collector — pull loop for remote log sources. The
 	// single-runner gate (MCPLEXER_MONITORING_RUNNER=0) keeps viewer
 	// daemons from double-pulling in a peer group.
-	startMonitoringCollector(ctx, db, d.secretsMgr, d.meshMgr)
+	// This one call also starts the renotify sweep, the baseline learner and
+	// the absence evaluator. Learned absence detection is the 2026-07-20
+	// failure mode: a hung job emitted nothing, stayed alive, and so was
+	// invisible to every liveness signal and every error-pattern detector.
+	startMonitoringCollector(ctx, db, d.secretsMgr, d.meshMgr, d.tasksSvc)
 
 	err = g.Wait()
 
