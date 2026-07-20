@@ -38,20 +38,53 @@ func TestHealthState(t *testing.T) {
 		{"just below the threshold",
 			store.MonitoringChannel{TargetedSinceSuccess: store.ChannelBrokenThreshold - 1},
 			store.ChannelHealthDegraded, false},
-		{"at the threshold",
-			store.MonitoringChannel{TargetedSinceSuccess: store.ChannelBrokenThreshold},
+		{"debt at the threshold and stale",
+			store.MonitoringChannel{
+				TargetedSinceSuccess: store.ChannelBrokenThreshold,
+				LastSuccessAt:        ptrTime(now.Add(-store.ChannelStaleAfter - time.Minute)),
+			},
 			store.ChannelHealthBroken, true},
-		{"long dead — owed 191 and delivered none",
-			store.MonitoringChannel{TargetedSinceSuccess: 191, LastSuccessAt: ptrTime(now)},
+		{
+			// THE FALSE POSITIVE, caught live. The throttle withholds a whole
+			// notification before any channel is consulted, so a capped burst
+			// increments the debt of every eligible route — including one that
+			// delivered seconds earlier. A mesh sink that had just delivered
+			// six notifications reported broken because the next three were
+			// capped. Flagging working routes is worse than the original
+			// silence: the operator switches the flag off.
+			name: "healthy route caught in a suppression burst is NOT broken",
+			channel: store.MonitoringChannel{
+				TargetedSinceSuccess: 3,
+				LastSuccessAt:        ptrTime(now.Add(-30 * time.Second)),
+			},
+			want: store.ChannelHealthDegraded, broken: false,
+		},
+		{
+			// Direct refusal needs no waiting: if the route was actually tried
+			// and refused, that is conclusive on its own.
+			name: "refused outright is broken immediately, no staleness needed",
+			channel: store.MonitoringChannel{
+				ConsecutiveFailures:  store.ChannelBrokenThreshold,
+				TargetedSinceSuccess: store.ChannelBrokenThreshold,
+				LastSuccessAt:        ptrTime(now.Add(-time.Second)),
+			},
+			want: store.ChannelHealthBroken, broken: true,
+		},
+		{"long dead — owed 191, last delivered six days ago",
+			store.MonitoringChannel{
+				TargetedSinceSuccess: 191,
+				LastSuccessAt:        ptrTime(now.Add(-6 * 24 * time.Hour)),
+			},
 			store.ChannelHealthBroken, true},
 		{
 			// THE INVERSION. This is the 2026-07-14 row: the throttle stopped
 			// the route being attempted, so its failure count froze at one,
 			// while it went on being owed notification after notification.
 			// Health must read the debt, not the frozen counter.
-			name: "suppressed dead route — failures frozen, debt still growing",
+			name: "suppressed dead route — failures frozen, debt old and growing",
 			channel: store.MonitoringChannel{
 				ConsecutiveFailures: 1, TargetedSinceSuccess: 191,
+				FirstFailureAt: ptrTime(now.Add(-6 * 24 * time.Hour)),
 			},
 			want: store.ChannelHealthBroken, broken: true,
 		},
@@ -68,11 +101,11 @@ func TestHealthState(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := tc.channel.HealthState(); got != tc.want {
-				t.Errorf("HealthState() = %q, want %q", got, tc.want)
+			if got := tc.channel.HealthStateAt(now); got != tc.want {
+				t.Errorf("HealthStateAt() = %q, want %q", got, tc.want)
 			}
-			if got := tc.channel.Broken(); got != tc.broken {
-				t.Errorf("Broken() = %v, want %v", got, tc.broken)
+			if got := tc.channel.BrokenAt(now); got != tc.broken {
+				t.Errorf("BrokenAt() = %v, want %v", got, tc.broken)
 			}
 		})
 	}

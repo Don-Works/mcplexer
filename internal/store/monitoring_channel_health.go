@@ -72,6 +72,23 @@ const (
 // threshold to this one and a test in that package asserts they match.
 const ChannelBrokenThreshold = 3
 
+// ChannelStaleAfter is how long a route must be owed messages it has not
+// delivered before that debt alone counts as broken.
+//
+// It has to exceed the longest suppression a HEALTHY route can legitimately sit
+// under, or the throttle marks working channels broken. The two suppressions
+// that withhold a whole notification are the workspace hourly notify cap and
+// the per-template cooldown, both one hour, so anything at or under an hour
+// would fire on a route that is merely waiting for its budget to reset. Two
+// hours clears both with margin for clock skew and the 5m sweep tick.
+//
+// The cost of the margin is bounded and worth naming: a route that dies while
+// suppressed takes up to two hours to be called broken on debt alone. Against
+// the six days it actually took, and given the refusal arm reports instantly
+// whenever the route IS attempted, that is a good trade. Shortening it below
+// the cap would buy minutes and reintroduce the false positive.
+const ChannelStaleAfter = 2 * time.Hour
+
 // HealthState derives the channel's current delivery health.
 //
 // The signal is TargetedSinceSuccess — notifications this route was eligible
@@ -89,10 +106,42 @@ const ChannelBrokenThreshold = 3
 // Every failure is also a targeting, so TargetedSinceSuccess already dominates
 // the failure count and no case is lost by preferring it.
 func (c MonitoringChannel) HealthState() string {
+	return c.HealthStateAt(time.Now().UTC())
+}
+
+// HealthStateAt derives health as of now. Two INDEPENDENT kinds of evidence can
+// call a route broken, because neither covers the other's case:
+//
+//   - Direct refusal: consecutive_failures at the threshold. Available only
+//     when the route is actually attempted, but conclusive when it is, and
+//     immediate — no waiting.
+//   - Unpaid debt: targeted_since_success at the threshold AND nothing
+//     delivered for longer than any legitimate suppression could last. This is
+//     the one that survives the throttle, and the only one that could have
+//     caught 2026-07-14.
+//
+// The debt arm REQUIRES the time condition, and that is not belt-and-braces —
+// it is load bearing. The throttle suppresses a whole notification before any
+// channel is consulted, so a suppressed burst increments the debt of every
+// eligible route, healthy ones included. Counting debt alone therefore marks a
+// perfectly working channel broken as soon as its workspace hits the hourly
+// cap three times, which a live run reproduced immediately: a mesh sink that
+// had just delivered six notifications reported `broken` because the next
+// three were capped. That false positive is worse than the silence this whole
+// feature exists to fix — an operator who sees healthy routes flagged broken
+// switches the flag off, and then nobody is told about anything.
+//
+// Time is what separates the two: a healthy route's debt is minutes old and
+// clears the moment the budget frees; a dead route's is hours or days old and
+// never clears.
+func (c MonitoringChannel) HealthStateAt(now time.Time) string {
+	refused := c.ConsecutiveFailures >= ChannelBrokenThreshold
+	inDebt := c.TargetedSinceSuccess >= ChannelBrokenThreshold
+	stale := c.UndeliveredFor(now) >= ChannelStaleAfter
 	switch {
-	case c.TargetedSinceSuccess >= ChannelBrokenThreshold:
+	case refused || (inDebt && stale):
 		return ChannelHealthBroken
-	case c.TargetedSinceSuccess > 0:
+	case c.ConsecutiveFailures > 0 || c.TargetedSinceSuccess > 0:
 		return ChannelHealthDegraded
 	case c.LastSuccessAt != nil:
 		return ChannelHealthHealthy
@@ -112,14 +161,24 @@ func (c MonitoringChannel) UndeliveredFor(now time.Time) time.Duration {
 	if c.TargetedSinceSuccess == 0 {
 		return 0
 	}
-	if c.LastSuccessAt != nil {
+	switch {
+	case c.LastSuccessAt != nil:
 		return now.Sub(*c.LastSuccessAt)
-	}
-	// Never delivered at all: measure from when it was first owed something.
-	if c.FirstFailureAt != nil {
+	case c.FirstFailureAt != nil:
+		// Never delivered, but has been tried: measure from the first refusal.
 		return now.Sub(*c.FirstFailureAt)
+	case !c.CreatedAt.IsZero():
+		// Never delivered and never even attempted — configured wrong and
+		// suppressed from birth. Creation is the only honest starting point,
+		// and without this arm such a route could never go stale at all.
+		return now.Sub(c.CreatedAt)
 	}
 	return 0
+}
+
+// Broken reports whether alerts routed here are known not to be arriving.
+func (c MonitoringChannel) BrokenAt(now time.Time) bool {
+	return c.HealthStateAt(now) == ChannelHealthBroken
 }
 
 // Broken reports whether alerts routed here are known not to be arriving.
