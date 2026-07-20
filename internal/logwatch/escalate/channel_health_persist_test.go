@@ -10,6 +10,7 @@ package escalate
 import (
 	"context"
 	"errors"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -22,6 +23,7 @@ import (
 type recorderCall struct {
 	channelID string
 	success   bool
+	targeted  bool
 	reason    string
 }
 
@@ -47,6 +49,39 @@ func (f *fakeHealthRecorder) RecordMonitoringChannelSuccess(
 	defer f.mu.Unlock()
 	f.calls = append(f.calls, recorderCall{channelID: id, success: true})
 	return f.err
+}
+
+func (f *fakeHealthRecorder) RecordMonitoringChannelTargeted(
+	_ context.Context, ids []string, _ time.Time,
+) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, id := range ids {
+		f.calls = append(f.calls, recorderCall{channelID: id, targeted: true})
+	}
+	return f.err
+}
+
+// deliveryCalls filters out targeting, which every notification emits, so the
+// existing assertions about failure/success counts stay readable.
+func (f *fakeHealthRecorder) deliveryCalls() []recorderCall {
+	out := []recorderCall{}
+	for _, c := range f.snapshot() {
+		if !c.targeted {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+func (f *fakeHealthRecorder) targetedCount() int {
+	n := 0
+	for _, c := range f.snapshot() {
+		if c.targeted {
+			n++
+		}
+	}
+	return n
 }
 
 func (f *fakeHealthRecorder) snapshot() []recorderCall {
@@ -95,7 +130,7 @@ func TestFailureIsPersistedEveryTime(t *testing.T) {
 		_, _ = d.NotifyWithOutcome(context.Background(), n)
 	}
 
-	calls := rec.snapshot()
+	calls := rec.deliveryCalls()
 	if len(calls) != attempts {
 		t.Fatalf("persisted %d failures, want %d — the cadence gate is "+
 			"swallowing them", len(calls), attempts)
@@ -134,7 +169,7 @@ func TestSuccessIsPersistedEveryTime(t *testing.T) {
 		}
 	}
 
-	calls := rec.snapshot()
+	calls := rec.deliveryCalls()
 	if len(calls) != 3 {
 		t.Fatalf("persisted %d successes, want 3", len(calls))
 	}
@@ -167,7 +202,7 @@ func TestRecoveryPersistsSuccessAfterFailures(t *testing.T) {
 		t.Fatalf("notify after fix: %v", err)
 	}
 
-	calls := rec.snapshot()
+	calls := rec.deliveryCalls()
 	if len(calls) != store.ChannelBrokenThreshold+1 {
 		t.Fatalf("persisted %d calls, want %d", len(calls), store.ChannelBrokenThreshold+1)
 	}
@@ -225,4 +260,108 @@ func (s *swappableSender) setErr(err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.err = err
+}
+
+// TestTargetingRecordedEvenWhenSuppressed is the 2026-07-14 regression, and the
+// reason health hangs off targeting rather than failures.
+//
+// The throttle runs BEFORE channels are consulted, so a suppressed notification
+// never touches the delivery path and nothing downstream of it observes
+// anything. Drive a workspace past its hourly budget and the failure counter
+// stops advancing entirely — which is how a dead webhook sat at one failure for
+// six days. Targeting is recorded ahead of the throttle, so the route keeps
+// accruing the debt it is not paying.
+func TestTargetingRecordedEvenWhenSuppressed(t *testing.T) {
+	d, _ := newTestDispatcher(identifiedChannel(),
+		map[string]Sender{store.ChannelKindMesh: &captureSender{}})
+	rec := &fakeHealthRecorder{}
+	d.RegisterChannelHealthRecorder(rec)
+
+	// Real (non-Test) notifications so the throttle genuinely applies. Well
+	// past maxNotifiesPerHour, each a distinct template so the per-template
+	// cooldown is not what is being measured.
+	const sent = 20
+	suppressedAtLeastOnce := false
+	for i := 0; i < sent; i++ {
+		n := testNotification(store.SeverityError, "tpl-suppress-"+strconv.Itoa(i))
+		outcome, _ := d.NotifyWithOutcome(context.Background(), n)
+		if outcome.Status == StatusSuppressed {
+			suppressedAtLeastOnce = true
+		}
+	}
+	if !suppressedAtLeastOnce {
+		t.Fatal("throttle never engaged — this test is not measuring what it claims")
+	}
+
+	// Every notification must have recorded targeting, including the
+	// suppressed ones. This is the count that cannot be silenced.
+	if got := rec.targetedCount(); got != sent {
+		t.Fatalf("targeting recorded %d times, want %d — suppression is hiding "+
+			"the route again, which is the whole defect", got, sent)
+	}
+}
+
+// TestTargetingRespectsSeverityFloor: a channel that would never have received
+// the notification must not accrue a debt for it. Counting an ineligible route
+// would make it drift into "broken" while working perfectly — a false positive
+// that gets the feature switched off, landing us back at silence.
+func TestTargetingRespectsSeverityFloor(t *testing.T) {
+	channels := []*store.MonitoringChannel{{
+		ID: "chan-critical-only", Name: "pager", Kind: store.ChannelKindMesh,
+		MinSeverity: store.SeverityCritical, Enabled: true, WorkspaceID: "ws",
+	}, {
+		ID: "chan-disabled", Name: "off", Kind: store.ChannelKindMesh,
+		MinSeverity: store.SeverityInfo, Enabled: false, WorkspaceID: "ws",
+	}}
+	d, _ := newTestDispatcher(channels, map[string]Sender{store.ChannelKindMesh: &captureSender{}})
+	rec := &fakeHealthRecorder{}
+	d.RegisterChannelHealthRecorder(rec)
+
+	n := testNotification(store.SeverityError, "tpl-floor")
+	n.Test = true
+	_, _ = d.NotifyWithOutcome(context.Background(), n)
+
+	if got := rec.targetedCount(); got != 0 {
+		t.Fatalf("targeted %d channels, want 0 — an error is below the pager's "+
+			"critical floor and the other route is disabled", got)
+	}
+}
+
+// TestTargetingMatchesDeliveryEligibility pins the two sets together. A channel
+// counted as targeted but skipped by deliverChannels accrues a debt it can
+// never clear, and eventually reports broken while working perfectly.
+func TestTargetingMatchesDeliveryEligibility(t *testing.T) {
+	channels := []*store.MonitoringChannel{{
+		ID: "chan-eligible", Name: "incidents", Kind: store.ChannelKindMesh,
+		MinSeverity: store.SeverityError, Enabled: true, WorkspaceID: "ws",
+	}, {
+		ID: "chan-too-high", Name: "pager", Kind: store.ChannelKindMesh,
+		MinSeverity: store.SeverityCritical, Enabled: true, WorkspaceID: "ws",
+	}}
+	d, _ := newTestDispatcher(channels, map[string]Sender{store.ChannelKindMesh: &captureSender{}})
+	rec := &fakeHealthRecorder{}
+	d.RegisterChannelHealthRecorder(rec)
+
+	n := testNotification(store.SeverityError, "tpl-match")
+	n.Test = true
+	if _, err := d.NotifyWithOutcome(context.Background(), n); err != nil {
+		t.Fatalf("notify: %v", err)
+	}
+
+	targeted := map[string]bool{}
+	delivered := map[string]bool{}
+	for _, c := range rec.snapshot() {
+		if c.targeted {
+			targeted[c.channelID] = true
+		}
+		if c.success {
+			delivered[c.channelID] = true
+		}
+	}
+	if len(targeted) != 1 || !targeted["chan-eligible"] {
+		t.Fatalf("targeted = %v, want only chan-eligible", targeted)
+	}
+	if len(delivered) != 1 || !delivered["chan-eligible"] {
+		t.Fatalf("delivered = %v, want only chan-eligible", delivered)
+	}
 }

@@ -62,6 +62,7 @@ func (d *DB) RecordMonitoringChannelSuccess(ctx context.Context, id string, at t
 	res, err := d.q.ExecContext(ctx, `
 		UPDATE monitoring_channels SET
 			consecutive_failures = 0,
+			targeted_since_success = 0,
 			first_failure_at = NULL,
 			last_error = '',
 			last_success_at = ?,
@@ -72,4 +73,42 @@ func (d *DB) RecordMonitoringChannelSuccess(ctx context.Context, id string, at t
 		return fmt.Errorf("record monitoring channel success: %w", err)
 	}
 	return requireRowAffected(res, store.ErrMonitoringChannelNotFound)
+}
+
+// RecordMonitoringChannelTargeted marks each channel as owed one notification.
+//
+// This runs before the throttle, on every notification, so it is the one health
+// input a suppression decision cannot erase. It is a single statement over the
+// whole eligible set: fanning out one UPDATE per channel would put N round
+// trips on the notification path, and a partial failure would leave some routes
+// counted and others not — skewing exactly the comparison health is derived
+// from.
+//
+// A missing row is deliberately NOT an error here, unlike the failure and
+// success writes. Those are told about one specific channel the dispatcher just
+// used; this one is handed a set that was read moments earlier and may have had
+// a channel deleted from under it. A concurrent delete is normal operation, not
+// a wiring bug, and must not fail a notification.
+func (d *DB) RecordMonitoringChannelTargeted(
+	ctx context.Context, ids []string, at time.Time,
+) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	ts := formatTime(at.UTC())
+	args := make([]any, 0, len(ids)+2)
+	args = append(args, ts, ts)
+	for _, id := range ids {
+		args = append(args, id)
+	}
+	_, err := d.q.ExecContext(ctx, `
+		UPDATE monitoring_channels SET
+			targeted_since_success = targeted_since_success + 1,
+			last_targeted_at = ?,
+			updated_at = ?
+		WHERE id IN (`+placeholders(len(ids))+`)`, args...)
+	if err != nil {
+		return fmt.Errorf("record monitoring channel targeted: %w", err)
+	}
+	return nil
 }

@@ -27,22 +27,45 @@ func TestHealthState(t *testing.T) {
 		want    string
 		broken  bool
 	}{
-		{"never attempted", store.MonitoringChannel{}, store.ChannelHealthUnknown, false},
-		{"delivered, no failures",
+		{"never targeted, never delivered", store.MonitoringChannel{},
+			store.ChannelHealthUnknown, false},
+		{"delivered and owes nothing",
 			store.MonitoringChannel{LastSuccessAt: ptrTime(now)},
 			store.ChannelHealthHealthy, false},
-		{"one failure is a wobble",
-			store.MonitoringChannel{ConsecutiveFailures: 1},
+		{"one undelivered notification is a wobble",
+			store.MonitoringChannel{TargetedSinceSuccess: 1},
 			store.ChannelHealthDegraded, false},
 		{"just below the threshold",
-			store.MonitoringChannel{ConsecutiveFailures: store.ChannelBrokenThreshold - 1},
+			store.MonitoringChannel{TargetedSinceSuccess: store.ChannelBrokenThreshold - 1},
 			store.ChannelHealthDegraded, false},
 		{"at the threshold",
-			store.MonitoringChannel{ConsecutiveFailures: store.ChannelBrokenThreshold},
+			store.MonitoringChannel{TargetedSinceSuccess: store.ChannelBrokenThreshold},
 			store.ChannelHealthBroken, true},
-		{"long dead",
-			store.MonitoringChannel{ConsecutiveFailures: 191, LastSuccessAt: ptrTime(now)},
+		{"long dead — owed 191 and delivered none",
+			store.MonitoringChannel{TargetedSinceSuccess: 191, LastSuccessAt: ptrTime(now)},
 			store.ChannelHealthBroken, true},
+		{
+			// THE INVERSION. This is the 2026-07-14 row: the throttle stopped
+			// the route being attempted, so its failure count froze at one,
+			// while it went on being owed notification after notification.
+			// Health must read the debt, not the frozen counter.
+			name: "suppressed dead route — failures frozen, debt still growing",
+			channel: store.MonitoringChannel{
+				ConsecutiveFailures: 1, TargetedSinceSuccess: 191,
+			},
+			want: store.ChannelHealthBroken, broken: true,
+		},
+		{
+			// The mirror: a quiet workspace owes its channel nothing, so
+			// however old last_success_at is, the route is not broken. Without
+			// this the feature cries wolf on every idle channel and gets
+			// switched off, which is the silence we started from.
+			name: "idle but healthy — old success, no debt",
+			channel: store.MonitoringChannel{
+				LastSuccessAt: ptrTime(now.Add(-90 * 24 * time.Hour)),
+			},
+			want: store.ChannelHealthHealthy, broken: false,
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := tc.channel.HealthState(); got != tc.want {
@@ -171,7 +194,7 @@ func TestChannelJSONRoundTrip(t *testing.T) {
 	original := store.MonitoringChannel{
 		ID: "chan-1", WorkspaceID: "acme", Name: "incidents",
 		Kind: store.ChannelKindGChatWebhook, MinSeverity: store.SeverityWarn,
-		Enabled: true, ConsecutiveFailures: 4,
+		Enabled: true, ConsecutiveFailures: 4, TargetedSinceSuccess: 4,
 		FirstFailureAt: ptrTime(now), LastFailureAt: ptrTime(now.Add(time.Hour)),
 		LastError: "webhook status 400",
 	}

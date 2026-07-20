@@ -18,7 +18,8 @@ import (
 const monitoringChannelCols = `id, workspace_id, name, kind, config_json,
     min_severity, enabled, created_at, updated_at,
     consecutive_failures, first_failure_at, last_failure_at,
-    last_error, last_success_at`
+    last_error, last_success_at,
+    targeted_since_success, last_targeted_at`
 
 // monitoringChannelInsertCols is the write set for CreateMonitoringChannel. It
 // stops short of the health columns on purpose: those are owned by the
@@ -142,11 +143,12 @@ func scanMonitoringChannel(row interface{ Scan(...any) error }) (*store.Monitori
 	var c store.MonitoringChannel
 	var enabled int
 	var createdAt, updatedAt string
-	var firstFailure, lastFailure, lastSuccess sql.NullString
+	var firstFailure, lastFailure, lastSuccess, lastTargeted sql.NullString
 	err := row.Scan(&c.ID, &c.WorkspaceID, &c.Name, &c.Kind, &c.ConfigJSON,
 		&c.MinSeverity, &enabled, &createdAt, &updatedAt,
 		&c.ConsecutiveFailures, &firstFailure, &lastFailure,
-		&c.LastError, &lastSuccess)
+		&c.LastError, &lastSuccess,
+		&c.TargetedSinceSuccess, &lastTargeted)
 	if err != nil {
 		return nil, err
 	}
@@ -156,6 +158,7 @@ func scanMonitoringChannel(row interface{ Scan(...any) error }) (*store.Monitori
 	c.FirstFailureAt = nullTime(firstFailure)
 	c.LastFailureAt = nullTime(lastFailure)
 	c.LastSuccessAt = nullTime(lastSuccess)
+	c.LastTargetedAt = nullTime(lastTargeted)
 	return &c, nil
 }
 

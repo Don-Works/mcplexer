@@ -20,6 +20,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/don-works/mcplexer/internal/logwatch/distill"
 	"github.com/don-works/mcplexer/internal/store"
 )
 
@@ -34,6 +35,58 @@ const channelBrokenThreshold = store.ChannelBrokenThreshold
 type ChannelHealthRecorder interface {
 	RecordMonitoringChannelFailure(ctx context.Context, id string, at time.Time, reason string) error
 	RecordMonitoringChannelSuccess(ctx context.Context, id string, at time.Time) error
+	RecordMonitoringChannelTargeted(ctx context.Context, ids []string, at time.Time) error
+}
+
+// recordChannelTargeting marks every route eligible for this notification as
+// owed a message, BEFORE the throttle has had a say.
+//
+// Placement is the entire point. deliverChannels runs after prepareNotification,
+// so when the workspace hourly cap is spent no channel is consulted and nothing
+// downstream of the throttle observes anything at all. On 2026-07-14 the budget
+// was spent by OTHER traffic in the workspace — a dead route never succeeds, so
+// it never writes a throttle mark, so it never suppresses itself — and the
+// broken webhook simply stopped being attempted. Its failure count froze at one
+// while it was owed 191 more notifications.
+//
+// Recording eligibility here makes that visible: the route accrues the debt
+// whether or not the throttle lets anyone try to pay it.
+//
+// Eligibility mirrors deliverChannels exactly (enabled, and severity at or above
+// the channel's floor). It has to: a channel counted here but skipped there
+// would accrue a debt it can never clear and eventually report broken while
+// working perfectly.
+func (d *Dispatcher) recordChannelTargeting(ctx context.Context, n distill.Notification) {
+	recorder := d.healthRecorder()
+	if recorder == nil {
+		return
+	}
+	channels, err := d.store.ListMonitoringChannels(ctx, n.WorkspaceID)
+	if err != nil {
+		// Non-fatal: the delivery path lists channels again and reports the
+		// error properly there. Failing the notification here would let a
+		// transient store blip cost an alert.
+		slog.Warn("escalate: could not record channel targeting",
+			"workspace", n.WorkspaceID, "error", err)
+		return
+	}
+	rank := store.SeverityRank(n.Severity)
+	ids := make([]string, 0, len(channels))
+	for _, c := range channels {
+		if !c.Enabled || store.SeverityRank(c.MinSeverity) > rank || c.ID == "" {
+			continue
+		}
+		ids = append(ids, c.ID)
+	}
+	if len(ids) == 0 {
+		return
+	}
+	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), channelHealthWriteTimeout)
+	defer cancel()
+	if err := recorder.RecordMonitoringChannelTargeted(writeCtx, ids, d.now()); err != nil {
+		slog.Warn("escalate: could not record channel targeting",
+			"workspace", n.WorkspaceID, "channels", len(ids), "error", err)
+	}
 }
 
 // RegisterChannelHealthRecorder wires durable channel health. Optional; without

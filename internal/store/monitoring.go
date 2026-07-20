@@ -143,6 +143,15 @@ type MonitoringChannel struct {
 	// LastSuccessAt is the last delivery this channel actually accepted.
 	// nil means never — deliberately distinct from healthy.
 	LastSuccessAt *time.Time `json:"last_success_at,omitempty"`
+
+	// TargetedSinceSuccess counts notifications this channel was eligible for
+	// since it last delivered. Recorded BEFORE the throttle, so unlike
+	// ConsecutiveFailures it advances even while suppression prevents the
+	// route being attempted — which is why HealthState derives from it.
+	// Migration 149.
+	TargetedSinceSuccess int `json:"targeted_since_success"`
+	// LastTargetedAt is when this channel was last owed a notification.
+	LastTargetedAt *time.Time `json:"last_targeted_at,omitempty"`
 }
 
 // LogTemplate is one masked line shape per source: the distiller's

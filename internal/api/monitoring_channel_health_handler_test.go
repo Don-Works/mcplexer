@@ -56,6 +56,20 @@ func decodeChannel(t *testing.T, body []byte) map[string]any {
 	return out
 }
 
+// driveFailure mirrors production order: targeting is recorded before the
+// throttle, then the attempt fails. Health derives from the targeting debt, so
+// a test that only wrote failures would assert a state the dispatcher cannot
+// produce.
+func driveFailure(t *testing.T, db *sqlite.DB, ctx context.Context, id string, at time.Time, reason string) {
+	t.Helper()
+	if err := db.RecordMonitoringChannelTargeted(ctx, []string{id}, at); err != nil {
+		t.Fatalf("record targeted: %v", err)
+	}
+	if err := db.RecordMonitoringChannelFailure(ctx, id, at, reason); err != nil {
+		t.Fatalf("record failure: %v", err)
+	}
+}
+
 // TestChannelHealthExposedOnGet is the core ask: the health of a route is
 // readable from the route's own resource, as a derived state rather than as
 // counters a caller has to interpret.
@@ -65,11 +79,8 @@ func TestChannelHealthExposedOnGet(t *testing.T) {
 
 	at := time.Date(2026, 7, 14, 6, 12, 0, 0, time.UTC)
 	for i := 0; i < store.ChannelBrokenThreshold; i++ {
-		if err := db.RecordMonitoringChannelFailure(
-			ctx, c.ID, at.Add(time.Duration(i)*time.Minute), "delivery failed: webhook status 400",
-		); err != nil {
-			t.Fatalf("record failure: %v", err)
-		}
+		driveFailure(t, db, ctx, c.ID, at.Add(time.Duration(i)*time.Minute),
+			"delivery failed: webhook status 400")
 	}
 
 	rr := doMonitoringRoute(t, router, http.MethodGet, "/api/v1/monitoring-channels/"+c.ID, "")
@@ -153,9 +164,7 @@ func TestChannelHealthNotForgeableOverAPI(t *testing.T) {
 	ctx := context.Background()
 	at := time.Date(2026, 7, 14, 6, 12, 0, 0, time.UTC)
 	for i := 0; i < store.ChannelBrokenThreshold; i++ {
-		if err := db.RecordMonitoringChannelFailure(ctx, c.ID, at, "webhook status 400"); err != nil {
-			t.Fatalf("record failure: %v", err)
-		}
+		driveFailure(t, db, ctx, c.ID, at, "webhook status 400")
 	}
 
 	rr := doMonitoringRoute(t, router, http.MethodPatch, "/api/v1/monitoring-channels/"+c.ID,
@@ -223,9 +232,7 @@ func TestChannelHealthAPIDoesNotLeakCredential(t *testing.T) {
 	router, db, c := newChannelHealthFixture(t)
 	ctx := context.Background()
 	leak := "post https://chat.example.com/v1/spaces/AAA/messages?key=AIzaLEAKED&token=deadbeef: 400"
-	if err := db.RecordMonitoringChannelFailure(ctx, c.ID, time.Now().UTC(), leak); err != nil {
-		t.Fatalf("record failure: %v", err)
-	}
+	driveFailure(t, db, ctx, c.ID, time.Now().UTC(), leak)
 
 	rr := doMonitoringRoute(t, router, http.MethodGet, "/api/v1/monitoring-channels/"+c.ID, "")
 	body := rr.Body.String()
@@ -260,11 +267,7 @@ func TestChannelHealthStatusSummary(t *testing.T) {
 		t.Fatalf("record success: %v", err)
 	}
 	for i := 0; i < store.ChannelBrokenThreshold; i++ {
-		if err := db.RecordMonitoringChannelFailure(
-			ctx, broken.ID, time.Now().UTC(), "webhook status 400",
-		); err != nil {
-			t.Fatalf("record failure: %v", err)
-		}
+		driveFailure(t, db, ctx, broken.ID, time.Now().UTC(), "webhook status 400")
 	}
 
 	rr := doMonitoringRoute(t, router, http.MethodGet,
@@ -317,11 +320,7 @@ func TestChannelHealthAllBrokenIsStated(t *testing.T) {
 	router, db, broken := newChannelHealthFixture(t)
 	ctx := context.Background()
 	for i := 0; i < store.ChannelBrokenThreshold; i++ {
-		if err := db.RecordMonitoringChannelFailure(
-			ctx, broken.ID, time.Now().UTC(), "webhook status 400",
-		); err != nil {
-			t.Fatalf("record failure: %v", err)
-		}
+		driveFailure(t, db, ctx, broken.ID, time.Now().UTC(), "webhook status 400")
 	}
 
 	rr := doMonitoringRoute(t, router, http.MethodGet,

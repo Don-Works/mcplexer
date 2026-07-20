@@ -27,6 +27,12 @@ func (d *Dispatcher) NotifyWithOutcome(
 	if !store.ValidSeverity(n.Severity) {
 		return Outcome{Status: StatusFailed}, fmt.Errorf("escalate: invalid severity %q", n.Severity)
 	}
+	// Record which routes are OWED this notification before the throttle gets a
+	// say. Everything below this line is downstream of suppression, and a
+	// suppressed notification never consults a channel — so this is the only
+	// point at which a route that is being starved of attempts can be observed
+	// at all. See recordChannelTargeting.
+	d.recordChannelTargeting(ctx, n)
 	suppressed := d.prepareNotification(&n)
 	if suppressed != "" && !isHumanCandidate(n) {
 		slog.Info("escalate: suppressed", "workspace", n.WorkspaceID,

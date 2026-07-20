@@ -27,6 +27,20 @@ func seedChannel(t *testing.T, db interface {
 	return c
 }
 
+// driveFailure mirrors production order: every delivery attempt is preceded by
+// the targeting record (written before the throttle), then the failure record.
+// Tests that only wrote failures were asserting a state the dispatcher cannot
+// actually produce.
+func driveFailure(t *testing.T, db *sqlite.DB, ctx context.Context, id string, at time.Time, reason string) {
+	t.Helper()
+	if err := db.RecordMonitoringChannelTargeted(ctx, []string{id}, at); err != nil {
+		t.Fatalf("record targeted: %v", err)
+	}
+	if err := db.RecordMonitoringChannelFailure(ctx, id, at, reason); err != nil {
+		t.Fatalf("record failure: %v", err)
+	}
+}
+
 // TestChannelHealthNewChannelIsUnknownNotHealthy pins the distinction the whole
 // feature rests on: a channel nobody has ever delivered through is NOT healthy.
 // Folding "never tried" into "healthy" is how a misconfigured route looks fine
@@ -67,12 +81,8 @@ func TestChannelHealthSurvivesSuppression(t *testing.T) {
 
 	start := time.Date(2026, 7, 14, 6, 12, 0, 0, time.UTC)
 	for i := 0; i < store.ChannelBrokenThreshold; i++ {
-		at := start.Add(time.Duration(i) * time.Minute)
-		if err := db.RecordMonitoringChannelFailure(
-			ctx, c.ID, at, "delivery failed: escalate: webhook status 400",
-		); err != nil {
-			t.Fatalf("record failure %d: %v", i, err)
-		}
+		driveFailure(t, db, ctx, c.ID, start.Add(time.Duration(i)*time.Minute),
+			"delivery failed: escalate: webhook status 400")
 	}
 
 	got, err := db.GetMonitoringChannel(ctx, c.ID)
@@ -116,11 +126,8 @@ func TestChannelHealthRecoveryClearsRun(t *testing.T) {
 
 	failed := time.Date(2026, 7, 14, 6, 12, 0, 0, time.UTC)
 	for i := 0; i < 5; i++ {
-		if err := db.RecordMonitoringChannelFailure(
-			ctx, c.ID, failed.Add(time.Duration(i)*time.Minute), "webhook status 400",
-		); err != nil {
-			t.Fatalf("record failure: %v", err)
-		}
+		driveFailure(t, db, ctx, c.ID, failed.Add(time.Duration(i)*time.Minute),
+			"webhook status 400")
 	}
 	fixed := time.Date(2026, 7, 20, 9, 0, 0, 0, time.UTC)
 	if err := db.RecordMonitoringChannelSuccess(ctx, c.ID, fixed); err != nil {
@@ -163,9 +170,7 @@ func TestChannelHealthDegradedBeforeBroken(t *testing.T) {
 	c := seedChannel(t, db, ctx, wsID, "incidents")
 
 	at := time.Date(2026, 7, 14, 6, 12, 0, 0, time.UTC)
-	if err := db.RecordMonitoringChannelFailure(ctx, c.ID, at, "timeout"); err != nil {
-		t.Fatalf("record failure: %v", err)
-	}
+	driveFailure(t, db, ctx, c.ID, at, "timeout")
 	got, err := db.GetMonitoringChannel(ctx, c.ID)
 	if err != nil {
 		t.Fatalf("get: %v", err)
@@ -225,9 +230,7 @@ func TestChannelHealthUpdateCannotForgeHealth(t *testing.T) {
 
 	at := time.Date(2026, 7, 14, 6, 12, 0, 0, time.UTC)
 	for i := 0; i < store.ChannelBrokenThreshold; i++ {
-		if err := db.RecordMonitoringChannelFailure(ctx, c.ID, at, "webhook status 400"); err != nil {
-			t.Fatalf("record failure: %v", err)
-		}
+		driveFailure(t, db, ctx, c.ID, at, "webhook status 400")
 	}
 
 	edit, err := db.GetMonitoringChannel(ctx, c.ID)
@@ -284,3 +287,119 @@ func TestChannelHealthUnknownChannel(t *testing.T) {
 // keeps the narrow interface honest now that nothing else references it
 // structurally.
 var _ store.MonitoringChannelHealthStore = (*sqlite.DB)(nil)
+
+// TestChannelHealthBrokenWhileNeverAttempted is the 2026-07-14 row reproduced
+// at the store layer: a route suppressed out of the delivery path entirely.
+//
+// One failure got through before the workspace hourly cap was spent by other
+// traffic; after that the route was never attempted again, so its failure count
+// froze at one while it went on being owed notification after notification. A
+// health check reading consecutive_failures sees a wobble. Reading the debt, it
+// sees what it is — a dead route.
+func TestChannelHealthBrokenWhileNeverAttempted(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	wsID, _ := seedWorkspaceAndScope(t, db, ctx)
+	c := seedChannel(t, db, ctx, wsID, "incidents")
+
+	start := time.Date(2026, 7, 14, 6, 12, 0, 0, time.UTC)
+	driveFailure(t, db, ctx, c.ID, start, "webhook status 400")
+
+	// The cap is now spent by unrelated traffic. Notifications keep being
+	// generated and this route keeps being eligible, but deliverChannels is
+	// never reached, so NO further failure is ever recorded.
+	for i := 1; i <= 190; i++ {
+		if err := db.RecordMonitoringChannelTargeted(
+			ctx, []string{c.ID}, start.Add(time.Duration(i)*time.Minute),
+		); err != nil {
+			t.Fatalf("record targeted %d: %v", i, err)
+		}
+	}
+
+	got, err := db.GetMonitoringChannel(ctx, c.ID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got.ConsecutiveFailures != 1 {
+		t.Fatalf("consecutive_failures = %d, want 1 — the premise of this test "+
+			"is that suppression froze it", got.ConsecutiveFailures)
+	}
+	if got.TargetedSinceSuccess != 191 {
+		t.Fatalf("targeted_since_success = %d, want 191", got.TargetedSinceSuccess)
+	}
+	if !got.Broken() {
+		t.Fatalf("health = %q, want broken — a route owed 191 notifications that "+
+			"delivered none is dead, whatever its frozen failure count says",
+			got.HealthState())
+	}
+}
+
+// TestChannelHealthTargetingClearedBySuccess: the debt must be cleared by a
+// real delivery and by nothing else, or a recovered route reads broken forever.
+func TestChannelHealthTargetingClearedBySuccess(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	wsID, _ := seedWorkspaceAndScope(t, db, ctx)
+	c := seedChannel(t, db, ctx, wsID, "incidents")
+
+	at := time.Date(2026, 7, 14, 6, 12, 0, 0, time.UTC)
+	if err := db.RecordMonitoringChannelTargeted(
+		ctx, []string{c.ID}, at,
+	); err != nil {
+		t.Fatalf("record targeted: %v", err)
+	}
+	for i := 0; i < 5; i++ {
+		driveFailure(t, db, ctx, c.ID, at, "webhook status 400")
+	}
+	if err := db.RecordMonitoringChannelSuccess(ctx, c.ID, at.Add(time.Hour)); err != nil {
+		t.Fatalf("record success: %v", err)
+	}
+
+	got, err := db.GetMonitoringChannel(ctx, c.ID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got.TargetedSinceSuccess != 0 {
+		t.Fatalf("targeted_since_success = %d, want 0 after a real delivery",
+			got.TargetedSinceSuccess)
+	}
+	if got.HealthState() != store.ChannelHealthHealthy {
+		t.Fatalf("health = %q, want healthy", got.HealthState())
+	}
+}
+
+// TestChannelHealthTargetingIsBatched: one notification fans out to every
+// eligible route in a single statement. Per-channel writes would put N round
+// trips on the notification path, and a partial failure would count some routes
+// and not others — skewing the very comparison health is derived from.
+func TestChannelHealthTargetingIsBatched(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	wsID, _ := seedWorkspaceAndScope(t, db, ctx)
+	a := seedChannel(t, db, ctx, wsID, "route-a")
+	b := seedChannel(t, db, ctx, wsID, "route-b")
+
+	at := time.Now().UTC()
+	if err := db.RecordMonitoringChannelTargeted(ctx, []string{a.ID, b.ID}, at); err != nil {
+		t.Fatalf("record targeted: %v", err)
+	}
+	for _, id := range []string{a.ID, b.ID} {
+		got, err := db.GetMonitoringChannel(ctx, id)
+		if err != nil {
+			t.Fatalf("get %s: %v", id, err)
+		}
+		if got.TargetedSinceSuccess != 1 {
+			t.Fatalf("%s targeted_since_success = %d, want 1", got.Name, got.TargetedSinceSuccess)
+		}
+	}
+	// A concurrently deleted channel must not fail the notification: the id
+	// set was read moments earlier and a delete is normal operation.
+	if err := db.RecordMonitoringChannelTargeted(
+		ctx, []string{a.ID, "deleted-channel"}, at,
+	); err != nil {
+		t.Fatalf("targeting a since-deleted channel must not error: %v", err)
+	}
+	if err := db.RecordMonitoringChannelTargeted(ctx, nil, at); err != nil {
+		t.Fatalf("empty targeting set must be a no-op: %v", err)
+	}
+}

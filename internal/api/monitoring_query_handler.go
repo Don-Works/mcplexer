@@ -247,6 +247,21 @@ func (h *monitoringQueryHandler) notify(w http.ResponseWriter, r *http.Request) 
 		}
 		n.RemoteHostName, n.RemoteHostAddr = host.Name, host.SSHHost
 	}
+	// Prefer the outcome-reporting contract. Notify's nil/error return cannot
+	// distinguish "delivered" from "released to backoff after six failed
+	// attempts", and reported the latter as 200 dispatched:true.
+	if rich, ok := h.notifier.(outcomeNotifier); ok {
+		outcome, err := rich.NotifyWithOutcome(r.Context(), n)
+		if err != nil && outcome.Status == "" {
+			// No outcome was produced at all — a genuine internal failure
+			// (invalid severity, workspace lookup) rather than a delivery
+			// verdict. Those keep reporting as errors.
+			writeMonitoringErr(w, err, "dispatch notification")
+			return
+		}
+		writeNotifyOutcome(w, outcome)
+		return
+	}
 	if err := h.notifier.Notify(r.Context(), n); err != nil {
 		writeMonitoringErr(w, err, "dispatch notification")
 		return

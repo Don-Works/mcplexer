@@ -35,6 +35,11 @@ type MonitoringChannelHealthStore interface {
 	// This is the primary health signal: it is the only one that stays true
 	// while a route is suppressed rather than attempted.
 	RecordMonitoringChannelSuccess(ctx context.Context, id string, at time.Time) error
+	// RecordMonitoringChannelTargeted marks these channels as owed one
+	// notification. Called BEFORE the throttle decision, which is the whole
+	// point: it is the only health input suppression cannot silence. Batched
+	// because one notification fans out to every eligible route at once.
+	RecordMonitoringChannelTargeted(ctx context.Context, ids []string, at time.Time) error
 }
 
 // Channel health states, ordered by how much attention they deserve.
@@ -67,18 +72,54 @@ const (
 // threshold to this one and a test in that package asserts they match.
 const ChannelBrokenThreshold = 3
 
-// HealthState derives the channel's current delivery health from its counters.
+// HealthState derives the channel's current delivery health.
+//
+// The signal is TargetedSinceSuccess — notifications this route was eligible
+// for that it has not delivered — and deliberately NOT ConsecutiveFailures.
+// The dispatcher throttles before it consults channels, so a suppressed
+// notification is never attempted and the failure counter cannot advance;
+// on 2026-07-14 other traffic in the workspace spent the hourly budget and the
+// dead webhook's failure count froze at one for six days. Targeting is
+// recorded before the throttle, so it advances whether the notification was
+// delivered, failed, or suppressed. Health has to hang off the observable that
+// suppression cannot silence.
+//
+// ConsecutiveFailures and LastError remain as colour — they say HOW it is
+// failing, which is the diagnosis — but nothing derived here depends on them.
+// Every failure is also a targeting, so TargetedSinceSuccess already dominates
+// the failure count and no case is lost by preferring it.
 func (c MonitoringChannel) HealthState() string {
 	switch {
-	case c.ConsecutiveFailures >= ChannelBrokenThreshold:
+	case c.TargetedSinceSuccess >= ChannelBrokenThreshold:
 		return ChannelHealthBroken
-	case c.ConsecutiveFailures > 0:
+	case c.TargetedSinceSuccess > 0:
 		return ChannelHealthDegraded
 	case c.LastSuccessAt != nil:
 		return ChannelHealthHealthy
 	default:
+		// Never owed a notification and never delivered one. Unknown, not
+		// healthy: an idle route is unproven, not working.
 		return ChannelHealthUnknown
 	}
+}
+
+// UndeliveredFor is how long this route has been owed messages it has not
+// delivered — the wall-clock span an operator asks for ("dead since when?").
+// It measures from the last success rather than the first failure, because the
+// last success is the last moment the route is known to have worked; a route
+// suppressed into silence has no failures to measure from.
+func (c MonitoringChannel) UndeliveredFor(now time.Time) time.Duration {
+	if c.TargetedSinceSuccess == 0 {
+		return 0
+	}
+	if c.LastSuccessAt != nil {
+		return now.Sub(*c.LastSuccessAt)
+	}
+	// Never delivered at all: measure from when it was first owed something.
+	if c.FirstFailureAt != nil {
+		return now.Sub(*c.FirstFailureAt)
+	}
+	return 0
 }
 
 // Broken reports whether alerts routed here are known not to be arriving.
