@@ -403,3 +403,51 @@ func TestChannelHealthTargetingIsBatched(t *testing.T) {
 		t.Fatalf("empty targeting set must be a no-op: %v", err)
 	}
 }
+
+// TestChannelHealthSuppressionBurstDoesNotBreakHealthyRoute is the false
+// positive a live run caught, at the store layer.
+//
+// The throttle withholds a whole notification before any channel is consulted,
+// so a capped burst increments the debt of EVERY eligible route — including one
+// that delivered seconds earlier. Counting debt alone reported a working mesh
+// sink as broken after three capped sends. An operator who sees healthy routes
+// flagged broken switches the flag off, and then nobody is told about anything:
+// strictly worse than the silence this feature exists to end.
+func TestChannelHealthSuppressionBurstDoesNotBreakHealthyRoute(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	wsID, _ := seedWorkspaceAndScope(t, db, ctx)
+	c := seedChannel(t, db, ctx, wsID, "working-sink")
+
+	now := time.Now().UTC()
+	// It just delivered.
+	if err := db.RecordMonitoringChannelSuccess(ctx, c.ID, now.Add(-30*time.Second)); err != nil {
+		t.Fatalf("record success: %v", err)
+	}
+	// Then the workspace hit its hourly cap and the next three notifications
+	// were withheld before any channel was consulted.
+	for i := 0; i < store.ChannelBrokenThreshold; i++ {
+		if err := db.RecordMonitoringChannelTargeted(ctx, []string{c.ID}, now); err != nil {
+			t.Fatalf("record targeted: %v", err)
+		}
+	}
+
+	got, err := db.GetMonitoringChannel(ctx, c.ID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got.TargetedSinceSuccess != store.ChannelBrokenThreshold {
+		t.Fatalf("targeted_since_success = %d, want %d — premise of the test",
+			got.TargetedSinceSuccess, store.ChannelBrokenThreshold)
+	}
+	if got.HealthState() != store.ChannelHealthHealthy {
+		t.Fatalf("health = %q for a route that delivered 30s ago and was then "+
+			"merely throttled — plain suppression is not a health problem, and "+
+			"a permanent amber gets read as no signal at all", got.HealthState())
+	}
+	// Same row, two hours on with the debt never cleared, IS broken.
+	if !got.BrokenAt(now.Add(store.ChannelStaleAfter + time.Minute)) {
+		t.Fatal("still not broken after the staleness window — a route owed " +
+			"messages it never delivers must eventually surface")
+	}
+}

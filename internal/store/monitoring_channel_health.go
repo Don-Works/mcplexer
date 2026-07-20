@@ -141,7 +141,18 @@ func (c MonitoringChannel) HealthStateAt(now time.Time) string {
 	switch {
 	case refused || (inDebt && stale):
 		return ChannelHealthBroken
-	case c.ConsecutiveFailures > 0 || c.TargetedSinceSuccess > 0:
+	// Degraded requires EVIDENCE OF TROUBLE, not merely unpaid debt. A route
+	// that delivered a minute ago and is now waiting on the hourly budget has
+	// nothing wrong with it, and the workspace cap is spent routinely — so
+	// treating plain suppression as degradation would leave healthy channels
+	// showing a warning most of the time. A dashboard that always shows amber
+	// gets read as "always amber", which is the same erosion of trust that
+	// makes a broken route invisible.
+	//
+	// So: an actual refusal counts, and so does debt on a route that has never
+	// delivered at all (unproven AND already owed something is worth a look).
+	// Debt on a route with a recent success does not.
+	case c.ConsecutiveFailures > 0 || (c.TargetedSinceSuccess > 0 && c.LastSuccessAt == nil):
 		return ChannelHealthDegraded
 	case c.LastSuccessAt != nil:
 		return ChannelHealthHealthy

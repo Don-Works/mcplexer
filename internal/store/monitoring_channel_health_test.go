@@ -52,12 +52,12 @@ func TestHealthState(t *testing.T) {
 			// six notifications reported broken because the next three were
 			// capped. Flagging working routes is worse than the original
 			// silence: the operator switches the flag off.
-			name: "healthy route caught in a suppression burst is NOT broken",
+			name: "healthy route caught in a suppression burst stays healthy",
 			channel: store.MonitoringChannel{
 				TargetedSinceSuccess: 3,
 				LastSuccessAt:        ptrTime(now.Add(-30 * time.Second)),
 			},
-			want: store.ChannelHealthDegraded, broken: false,
+			want: store.ChannelHealthHealthy, broken: false,
 		},
 		{
 			// Direct refusal needs no waiting: if the route was actually tried
