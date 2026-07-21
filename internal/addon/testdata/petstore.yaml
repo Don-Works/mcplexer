@@ -1,0 +1,95 @@
+# Canonical Swagger Petstore — minimal OpenAPI 3.0 example.
+# Source: https://github.com/OAI/OpenAPI-Specification (simplified)
+openapi: 3.0.3
+info:
+  title: Swagger Petstore
+  description: A sample API that uses a petstore as an example to demonstrate features in the OpenAPI 3.0 specification.
+  version: 1.0.0
+servers:
+  - url: https://petstore.swagger.io/v2
+components:
+  securitySchemes:
+    api_key:
+      type: apiKey
+      name: api_key
+      in: header
+paths:
+  /pet:
+    post:
+      operationId: addPet
+      summary: Add a new pet to the store
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                status:
+                  type: string
+                tag:
+                  type: string
+      responses:
+        '200':
+          description: ok
+    put:
+      operationId: updatePet
+      summary: Update an existing pet
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [id, name]
+              properties:
+                id:
+                  type: integer
+                name:
+                  type: string
+      responses:
+        '200':
+          description: ok
+  /pet/findByStatus:
+    get:
+      operationId: findPetsByStatus
+      summary: Finds pets by status
+      parameters:
+        - name: status
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: ok
+  /pet/{petId}:
+    get:
+      operationId: getPetById
+      summary: Find pet by ID
+      parameters:
+        - name: petId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: ok
+    delete:
+      operationId: deletePet
+      summary: Delete a pet
+      parameters:
+        - name: petId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: ok
+security:
+  - api_key: []

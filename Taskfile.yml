@@ -1,0 +1,271 @@
+version: '3'
+
+vars:
+  GIT_VERSION:
+    sh: git describe --tags --dirty --always --abbrev=12 2>/dev/null || echo dev
+  GIT_COMMIT:
+    sh: git rev-parse --short=12 HEAD 2>/dev/null || echo unknown
+  GO_LDFLAGS: -X main.buildVersion={{.GIT_VERSION}} -X main.buildCommit={{.GIT_COMMIT}} -X github.com/don-works/mcplexer/internal/gateway.buildVersion={{.GIT_VERSION}}
+
+tasks:
+  default:
+    desc: List all available tasks
+    cmds:
+      - task --list-all
+    silent: true
+
+  preflight:
+    desc: Check Go 1.25+ and Node 20+ are installed
+    cmds:
+      - |
+        # --- Go version check ---
+        if ! command -v go &>/dev/null; then
+          echo "ERROR: Go is not installed."
+          echo ""
+          echo "Install Go 1.25+ from: https://go.dev/dl/"
+          exit 1
+        fi
+        GO_VER=$(go version | awk '{print $3}' | sed 's/go//')
+        GO_MAJOR=$(echo "$GO_VER" | cut -d. -f1)
+        GO_MINOR=$(echo "$GO_VER" | cut -d. -f2)
+        if [ "$GO_MAJOR" -lt 1 ] || { [ "$GO_MAJOR" -eq 1 ] && [ "$GO_MINOR" -lt 25 ]; }; then
+          echo "ERROR: Go $GO_VER found, but Go 1.25+ is required."
+          echo ""
+          echo "Upgrade from: https://go.dev/dl/"
+          exit 1
+        fi
+
+        # --- Node version check ---
+        if ! command -v node &>/dev/null; then
+          echo "ERROR: Node.js is not installed."
+          echo ""
+          echo "Install Node 22 LTS from: https://nodejs.org/"
+          exit 1
+        fi
+        NODE_VER=$(node --version | sed 's/v//')
+        NODE_MAJOR=$(echo "$NODE_VER" | cut -d. -f1)
+        NODE_MINOR=$(echo "$NODE_VER" | cut -d. -f2)
+        NODE_OK=0
+        if [ "$NODE_MAJOR" -eq 20 ] && [ "$NODE_MINOR" -ge 19 ]; then
+          NODE_OK=1
+        elif [ "$NODE_MAJOR" -eq 22 ] && [ "$NODE_MINOR" -ge 12 ]; then
+          NODE_OK=1
+        elif [ "$NODE_MAJOR" -ge 24 ]; then
+          NODE_OK=1
+        fi
+        if [ "$NODE_OK" -ne 1 ]; then
+          echo "ERROR: Node $NODE_VER found, but mcplexer web tooling requires Node 20.19+, 22.12+, or 24+."
+          echo ""
+          echo "Use Node 22 LTS, for example: nvm install && nvm use"
+          exit 1
+        fi
+        echo "preflight: Go $GO_VER, Node $NODE_VER — OK"
+
+  public-hygiene:
+    desc: Scan public files for credentials and private identifiers without printing values
+    cmds:
+      - bash scripts/check-public-hygiene.sh
+
+  build:
+    desc: Build the slim binary without libp2p
+    cmds:
+      - task: web-build
+      - task: go-build
+
+  build-p2p:
+    desc: Build the p2p-enabled binary
+    cmds:
+      - task: web-build
+      - task: go-build-p2p
+
+  build-all:
+    desc: Build slim and p2p-enabled binaries
+    cmds:
+      - task: web-build
+      - task: go-build
+      - task: go-build-p2p
+
+  release-artifacts:
+    desc: Build installable GitHub Release archives for macOS, Linux, and Windows
+    cmds:
+      - bash scripts/build-release.sh
+
+  install:
+    desc: Build, install, run setup, harden data dir, and sync agent rules
+    deps: [preflight, build-p2p]
+    cmds:
+      - |
+        echo "==> Syncing daemon binary to ~/.mcplexer/bin (atomic)..."
+        mkdir -p "$HOME/.mcplexer/bin"
+        cp bin/mcplexer-p2p "$HOME/.mcplexer/bin/.mcplexer.new"
+        chmod +x "$HOME/.mcplexer/bin/.mcplexer.new"
+        mv "$HOME/.mcplexer/bin/.mcplexer.new" "$HOME/.mcplexer/bin/mcplexer"
+        echo "==> Running setup (launchd + MCP client config)..."
+        "$HOME/.mcplexer/bin/mcplexer" setup
+        echo "==> Hardening data dir file modes..."
+        bash scripts/harden-data-dir.sh
+        echo "==> Syncing agent rules into ~/.claude/CLAUDE.md..."
+        "$HOME/.mcplexer/bin/mcplexer" rules sync || echo "  (skipped; agent rules will sync on next setup)"
+        echo ""
+        echo "MCPlexer is running at http://localhost:3333"
+        echo "In Chrome / Edge / Arc, install MCPlexer as a desktop app from there."
+
+  upgrade:
+    desc: Hardened daemon swap with drain-wait, readiness verify, and rollback
+    deps: [build-p2p]
+    cmds:
+      - bash scripts/upgrade.sh {{.UPGRADE_FLAGS | default ""}}
+
+  test-upgrade-smoke:
+    desc: Dry-run upgrade script smoke test (no daemon changes)
+    cmds:
+      - 'bash scripts/upgrade.sh --dry-run --binary bin/mcplexer-p2p 2>/dev/null || echo "(smoke: dry-run with no installed daemon — expected)"'
+
+  install-cli:
+    desc: Build the slim binary and run setup
+    cmds:
+      - task: build
+      - ./bin/mcplexer setup
+
+  web-build:
+    desc: Install web dependencies and build the web bundle
+    cmds:
+      - cd web && npm ci && npm run build
+
+  go-build:
+    desc: Build the slim Go binary
+    cmds:
+      - go build -ldflags "{{.GO_LDFLAGS}}" -o bin/mcplexer ./cmd/mcplexer
+      - |
+        if [ "$(uname -s)" = "Darwin" ]; then
+          sh scripts/codesign-darwin.sh bin/mcplexer com.donworks.mcplexer
+        fi
+
+  go-build-p2p:
+    desc: Build the libp2p-enabled Go binary
+    cmds:
+      - go build -tags p2p -ldflags "{{.GO_LDFLAGS}}" -o bin/mcplexer-p2p ./cmd/mcplexer
+      - |
+        if [ "$(uname -s)" = "Darwin" ]; then
+          sh scripts/codesign-darwin.sh bin/mcplexer-p2p com.donworks.mcplexer
+        fi
+
+  run:
+    desc: Build and restart the local daemon
+    cmds:
+      - task: build
+      - cmd: ./bin/mcplexer daemon stop 2>/dev/null
+        ignore_error: true
+      - ./bin/mcplexer daemon start
+
+  dev:
+    desc: Run the server in HTTP mode on :3333
+    cmds:
+      - go run ./cmd/mcplexer serve --mode=http --addr=:3333
+
+  start:
+    desc: Start the daemon
+    cmds:
+      - ./bin/mcplexer daemon start
+
+  stop:
+    desc: Stop the daemon
+    cmds:
+      - ./bin/mcplexer daemon stop
+
+  setup:
+    desc: Run setup
+    cmds:
+      - ./bin/mcplexer setup
+
+  status:
+    desc: Show status
+    cmds:
+      - ./bin/mcplexer status
+
+  test:
+    desc: Run Go tests including p2p-tagged tests
+    deps: [public-hygiene]
+    cmds:
+      - go test ./...
+      - go test -tags p2p ./internal/p2p/...
+
+  test-integration:
+    desc: Run the multi-node Docker integration harness
+    cmds:
+      - bash test/integration/run.sh
+
+  test-integration-up:
+    desc: Start the integration harness containers
+    cmds:
+      - docker compose -f test/integration/docker-compose.yml up --build -d
+
+  test-integration-down:
+    desc: Stop and remove integration harness containers
+    cmds:
+      - docker compose -f test/integration/docker-compose.yml down -v --remove-orphans
+
+  test-integration-overnight:
+    desc: Repeat the bulletproof integration suite
+    cmds:
+      - bash test/integration/run_overnight.sh ${RUNS_N:-10}
+
+  lint:
+    desc: Run go vet and golangci-lint with the p2p build tag
+    cmds:
+      - go vet -tags p2p ./...
+      - golangci-lint run --build-tags p2p
+
+  secret:
+    desc: "Put a secret. Usage: task secret SCOPE=<scope-id> KEY=<key> VALUE=<value>"
+    requires:
+      vars: [SCOPE, KEY, VALUE]
+    cmds:
+      - ./bin/mcplexer secret put {{.SCOPE}} {{.KEY}} {{.VALUE}}
+
+  rules-sync:
+    desc: Re-run the marker-bounded mcplexer block install into ~/.claude/CLAUDE.md
+    cmds:
+      - task: build
+      - ./bin/mcplexer rules sync
+
+  clean:
+    desc: Remove build artifacts
+    cmds:
+      - rm -rf bin/ web/dist/ internal/web/dist/
+
+  uninstall:
+    desc: Stop the daemon and remove installed binaries
+    cmds:
+      - cmd: ./bin/mcplexer daemon stop 2>/dev/null
+        ignore_error: true
+      - cmd: ./bin/mcplexer daemon uninstall 2>/dev/null
+        ignore_error: true
+      - rm -f /usr/local/bin/mcplexer
+      - rm -rf "$HOME/.mcplexer/bin/"
+      - echo "MCPlexer daemon uninstalled."
+      - echo "If you installed the PWA in Chrome, remove it from chrome://apps."
+
+  worktrees-gc:
+    desc: Dry-run orphan agent worktree cleanup
+    cmds:
+      - bash scripts/worktrees-gc.sh
+
+  worktrees-gc-yes:
+    desc: Remove orphan agent worktrees
+    cmds:
+      - bash scripts/worktrees-gc.sh --yes
+
+  check-deadcode:
+    desc: Guard against re-introduction of removed dead packages and exports
+    cmds:
+      - sh scripts/check-deadcode.sh
+
+  go-build-platforms:
+    desc: Cross-compile Go binaries for common platforms
+    cmds:
+      - task: web-build
+      - GOOS=darwin GOARCH=arm64 go build -o bin/darwin/arm64/mcplexer ./cmd/mcplexer
+      - GOOS=darwin GOARCH=amd64 go build -o bin/darwin/amd64/mcplexer ./cmd/mcplexer
+      - GOOS=linux GOARCH=amd64 go build -o bin/linux/amd64/mcplexer ./cmd/mcplexer
+      - GOOS=linux GOARCH=arm64 go build -o bin/linux/arm64/mcplexer ./cmd/mcplexer

@@ -1,0 +1,19 @@
+<!-- MCPLEXER:HARNESS-SYNC:BEGIN v1 (mimo) -->
+
+Use the 5 top-level tools (mcpx__search_tools + mcpx__execute_code for batch, secret__prompt/list_refs, mcpx__retrieve for compression markers).
+
+For the full contract, fetch mcpx.skill_get({name:"using-mcplexer"}) directly. Use mcpx.skill_search only for unknown/deeper playbooks: mcplexer-features / mcplexer-tasks / agent-mesh / token-preserving-delegation.
+
+Start mcpx__search_tools in summary or exact-tool mode; avoid broad detail:"full" searches.
+
+Code index: ask the index BEFORE reading the repo. Inside mcpx__execute_code, index.context({query, budget_tokens}) returns a ranked, token-budgeted pack with source snippets; index.search({query, limit}) finds implementation/behavior in citation-ready source chunks; index.symbols finds definitions (camelCase word-split); index.map_failure maps a pasted failure. Lexical search always works; semantic search is optional, explicit, and local-only.
+
+Browser/browser-control tasks: assume brw may be installed. Search brw/browser tools first and prefer the brw namespace when available; for non-trivial browser workflows fetch an installed browser skill (for example generic-browser-operator, playwright-browser, or cmux-browser) with mcpx.skill_search/get.
+
+The using-mcplexer skill (this bootstrap) is the source of truth for the contract.
+
+## Memory — prefer the gateway store
+
+mcplexer memory (memory.save / memory.recall inside mcpx__execute_code) is cross-harness, cross-machine, and survives every session; harness-native memory files are siloed per client. Recall when past sessions may have settled a question; save decisions with rationale, preferences, and project facts not derivable from the repo. Knowledge that should outlive this client belongs in the gateway store, not in harness-local memory files. The digest at ~/.mcplexer/memory-exports/ is a read-only snapshot — the live memory tools are canonical.
+
+<!-- MCPLEXER:HARNESS-SYNC:END -->

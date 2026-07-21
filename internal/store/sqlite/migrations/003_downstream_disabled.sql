@@ -1,0 +1,1 @@
+ALTER TABLE downstream_servers ADD COLUMN disabled INTEGER NOT NULL DEFAULT 0;

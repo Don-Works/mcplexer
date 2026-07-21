@@ -1,0 +1,11 @@
+// Package broken has a deliberate syntax error so the extractor's
+// degrade-to-file-entry path can be tested.
+package broken
+
+func Valid() string {
+	return "ok"
+}
+
+func Broken( {
+	// missing close paren above — parser must still yield the package name
+}

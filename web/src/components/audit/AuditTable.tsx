@@ -1,0 +1,177 @@
+import { ArrowDown, ArrowUp, Radio } from 'lucide-react'
+import {
+  Table,
+  TableBody,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table'
+import type { AuditFilter, AuditRecord, AuditSort } from '@/api/types'
+import { AuditRow, type AuditColumns } from '@/components/audit/AuditRow'
+import { cn } from '@/lib/utils'
+
+// Which AuditSort pair a header toggles between. Only time + latency are
+// server-sortable; the other headers render as plain (non-interactive) labels.
+type SortField = 'time' | 'latency'
+
+function sortFor(field: SortField, current: AuditSort | undefined): AuditSort {
+  // Toggle desc <-> asc for the active field; default to desc when switching.
+  if (field === 'time') return current === 'time_desc' ? 'time_asc' : 'time_desc'
+  return current === 'latency_desc' ? 'latency_asc' : 'latency_desc'
+}
+
+function arrowFor(field: SortField, sort: AuditSort | undefined) {
+  if (field === 'time' && (sort === 'time_desc' || sort === 'time_asc')) {
+    return sort === 'time_desc' ? ArrowDown : ArrowUp
+  }
+  if (field === 'latency' && (sort === 'latency_desc' || sort === 'latency_asc')) {
+    return sort === 'latency_desc' ? ArrowDown : ArrowUp
+  }
+  return null
+}
+
+function SortHead({
+  field,
+  label,
+  align,
+  sort,
+  onSort,
+}: {
+  field: SortField
+  label: string
+  align?: 'right'
+  sort?: AuditSort
+  onSort?: (sort: AuditSort) => void
+}) {
+  const Arrow = arrowFor(field, sort)
+  if (!onSort) {
+    return <span className={cn('inline-flex items-center gap-1', align === 'right' && 'justify-end')}>{label}</span>
+  }
+  return (
+    <button
+      type="button"
+      onClick={() => onSort(sortFor(field, sort))}
+      className={cn(
+        'inline-flex items-center gap-1 transition-colors hover:text-foreground',
+        Arrow ? 'text-foreground' : 'text-muted-foreground',
+      )}
+    >
+      {label}
+      {Arrow && <Arrow className="h-3 w-3 text-primary" />}
+    </button>
+  )
+}
+
+/**
+ * AuditTable — the Mission Control list shell. Owns the responsive table
+ * widths + sortable header (time / latency) + the empty state, and maps each record to
+ * an AuditRow. Selection, density, column visibility, and the live region are
+ * all caller-controlled so scoped feeds can reuse the exact same body with a
+ * trimmed column set.
+ *
+ * - `liveCount` marks the first N rows as freshly-streamed (entrance anim).
+ * - `onSort` makes the time/latency headers interactive; omit for a static
+ *   header (scoped feeds).
+ * - `wsName` / `asName` resolve ids to labels.
+ */
+export function AuditTable({
+  records,
+  selectedId,
+  sort,
+  columns,
+  dense,
+  liveCount = 0,
+  loading,
+  emptyTitle,
+  emptyHint,
+  wsName,
+  asName,
+  onSelect,
+  onSort,
+  onFilter,
+}: {
+  records: AuditRecord[]
+  selectedId?: string | null
+  sort?: AuditSort
+  columns?: AuditColumns
+  dense?: boolean
+  liveCount?: number
+  loading?: boolean
+  emptyTitle?: string
+  emptyHint?: string
+  wsName?: (id: string) => string
+  asName?: (id: string) => string
+  onSelect: (record: AuditRecord) => void
+  onSort?: (sort: AuditSort) => void
+  onFilter?: (patch: Partial<AuditFilter>) => void
+}) {
+  const col: Required<AuditColumns> = {
+    timestamp: true,
+    tool: true,
+    workspace: true,
+    session: true,
+    client: true,
+    status: true,
+    reason: true,
+    cache: true,
+    group: true,
+    latency: true,
+    ...columns,
+  }
+  const empty = records.length === 0 && !loading
+
+  return (
+    <>
+      <Table className="min-w-[37rem] table-fixed md:min-w-[52rem] 2xl:min-w-[86rem]">
+        <TableHeader>
+          <TableRow className="border-border/50 hover:bg-transparent">
+            {col.timestamp && (
+              <TableHead className="w-[7rem]">
+                <SortHead field="time" label="Timestamp" sort={sort} onSort={onSort} />
+              </TableHead>
+            )}
+            {col.tool && <TableHead className="w-[18rem]">Tool</TableHead>}
+            {col.workspace && <TableHead className="hidden w-[10rem] md:table-cell">Workspace</TableHead>}
+            {col.session && <TableHead className="hidden w-[8rem] 2xl:table-cell">Session</TableHead>}
+            {col.client && <TableHead className="hidden w-[9rem] 2xl:table-cell">Client</TableHead>}
+            {col.status && <TableHead className="w-[6rem]">Status</TableHead>}
+            {col.reason && <TableHead>Reason</TableHead>}
+            {col.cache && <TableHead className="hidden w-[5rem] 2xl:table-cell">Cache</TableHead>}
+            {col.group && <TableHead className="hidden w-[8rem] 2xl:table-cell">Group</TableHead>}
+            {col.latency && (
+              <TableHead className="hidden w-[5.5rem] pl-4 text-right sm:table-cell">
+                <SortHead field="latency" label="Latency" align="right" sort={sort} onSort={onSort} />
+              </TableHead>
+            )}
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {!empty &&
+            records.map((record, idx) => (
+            <AuditRow
+              key={record.id}
+              record={record}
+              columns={columns}
+              dense={dense}
+              selected={selectedId === record.id}
+              isLive={idx < liveCount && idx === 0}
+              wsName={wsName}
+              asName={asName}
+              onSelect={onSelect}
+              onFilter={onFilter}
+            />
+          ))}
+        </TableBody>
+      </Table>
+      {empty && (
+        <div className="flex h-32 flex-col items-center justify-center border-t border-border/50 px-4 text-center text-muted-foreground">
+          <Radio className="mb-2 h-8 w-8 text-muted-foreground/50" />
+          <p className="text-sm">{emptyTitle ?? 'Waiting for events...'}</p>
+          <p className="max-w-full truncate text-xs text-muted-foreground/60">
+            {emptyHint ?? 'New audit records will appear here in real-time'}
+          </p>
+        </div>
+      )}
+    </>
+  )
+}

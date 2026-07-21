@@ -1,0 +1,102 @@
+# Binaries
+bin/
+dist/
+.release-work/
+/mcplexer
+*.exe
+
+# Go
+vendor/
+
+# Environment
+.env
+.env.*
+!.env.example
+!.env.sample
+!.env.template
+!.env.*.example
+!.env.*.sample
+!.env.*.template
+*.db
+data/
+!web/src/data/
+
+# Private key and certificate bundles. Clearly named public examples remain
+# available for documentation and deterministic test fixtures.
+*.pem
+*.p12
+*.pfx
+!*.example.pem
+!*.sample.pem
+!*.fixture.pem
+!*.example.p12
+!*.sample.p12
+!*.fixture.p12
+!*.example.pfx
+!*.sample.pfx
+!*.fixture.pfx
+
+# Web UI
+web/node_modules/
+web/dist/
+internal/web/dist/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Age keys
+*.age
+*.key
+
+# MCPlexer runtime state / data dir: DB, secrets, api-key, logs, p2p, backups.
+# NEVER commit: contains plaintext api-key and at-rest secrets that the
+# *.key / *.db / *.age rules above DO NOT all cover, e.g. the extensionless api-key.
+.mcplexer/
+
+# Next.js
+.next/
+
+# Site
+site/node_modules/
+site/.next/
+site/out/
+
+# Generated collateral / skill artefacts
+output/
+web/config/
+
+# Internal planning / collateral config
+.planning/
+/config/
+
+# Local test artefacts
+*.mcskill
+/mcplexer-test
+/mcplexer-*
+
+# Local agent/runtime state
+.worktrees/
+.claude/
+.mimocode/
+.codex/
+.opencode/
+.gemini/
+.impeccable/
+.playwright-mcp/
+.task/
+.public-hygiene-patterns
+
+# User-specific addon specs (not part of the public repo)
+addons/*.yaml
+
+# User-specific config / scratch files
+mcplexer.yaml
+todo.md
+*.mcskill

@@ -1,0 +1,3 @@
+ALTER TABLE worker_runs ADD COLUMN result_branch TEXT NOT NULL DEFAULT '';
+ALTER TABLE worker_runs ADD COLUMN result_commit TEXT NOT NULL DEFAULT '';
+ALTER TABLE worker_runs ADD COLUMN result_changed INTEGER NOT NULL DEFAULT 0;

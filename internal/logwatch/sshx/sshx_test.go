@@ -1,0 +1,240 @@
+package sshx
+
+import (
+	"crypto/ed25519"
+	"crypto/rand"
+	"errors"
+	"strings"
+	"testing"
+	"time"
+
+	"golang.org/x/crypto/ssh"
+
+	"github.com/don-works/mcplexer/internal/store"
+)
+
+// TestDockerLogsCommand_Shape pins the exact wire command — the fixed
+// read-only template from ADR 0007.
+func TestDockerLogsCommand_Shape(t *testing.T) {
+	since := time.Date(2026, 7, 8, 14, 0, 0, 123456789, time.UTC)
+	cmd, err := DockerLogsCommand("intervals-api", since)
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	want := "docker logs --timestamps --since '2026-07-08T14:00:00.123456789Z' 'intervals-api'"
+	if cmd != want {
+		t.Fatalf("command mismatch:\n got %q\nwant %q", cmd, want)
+	}
+
+	cmd, err = DockerLogsCommand("api", time.Time{})
+	if err != nil {
+		t.Fatalf("build no-since: %v", err)
+	}
+	if cmd != "docker logs --timestamps 'api'" {
+		t.Fatalf("no-since command: %q", cmd)
+	}
+}
+
+func TestDockerObservationCommands_AreBoundedReadOnlyShapes(t *testing.T) {
+	state, err := DockerStateCommand("api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantState := "docker inspect --type container --format '{{.Id}}|{{.RestartCount}}|{{.State.StartedAt}}' 'api'"
+	if state != wantState {
+		t.Fatalf("state command:\n got %q\nwant %q", state, wantState)
+	}
+	since := time.Date(2026, 7, 16, 10, 0, 0, 0, time.UTC)
+	until := since.Add(2 * time.Minute)
+	events, err := DockerRestartEventsCommand("api", since, until)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantEvents := "docker events --since '2026-07-16T10:00:00Z' --until '2026-07-16T10:02:00Z' --filter 'type=container' --filter container='api' --filter 'event=restart' --format '{{.TimeNano}}|{{.Action}}|{{.Actor.ID}}'"
+	if events != wantEvents {
+		t.Fatalf("events command:\n got %q\nwant %q", events, wantEvents)
+	}
+	if got := DockerPortInventoryCommand(); got != "docker ps --no-trunc --format '{{.ID}}|{{.Names}}|{{.Ports}}'" {
+		t.Fatalf("port inventory command: %q", got)
+	}
+	if _, err := DockerRestartEventsCommand("api", until, since); err == nil {
+		t.Fatal("reversed event range must fail")
+	}
+	for _, bad := range []string{"--all", "api;id", "api name"} {
+		if _, err := DockerStateCommand(bad); err == nil {
+			t.Errorf("state selector %q was accepted", bad)
+		}
+		if _, err := DockerRestartEventsCommand(bad, since, until); err == nil {
+			t.Errorf("event selector %q was accepted", bad)
+		}
+	}
+}
+
+// TestDockerLogsCommand_InjectionRejected is the security gate: every
+// shell-metacharacter selector must fail BEFORE any wire activity.
+func TestDockerLogsCommand_InjectionRejected(t *testing.T) {
+	for _, sel := range []string{
+		"", "api; rm -rf /", "api'", `api"`, "api$(id)", "api`id`",
+		"api|cat", "api&&x", "a b", "api\n", "api\\x", "-f", // leading dash is caught by charset? no — '-' allowed...
+	} {
+		if sel == "-f" {
+			continue // '-' alone is charset-legal; flag-injection is covered below
+		}
+		if _, err := DockerLogsCommand(sel, time.Time{}); err == nil {
+			t.Errorf("selector %q: expected rejection", sel)
+		}
+	}
+}
+
+// TestDockerLogsCommand_FlagInjection documents that a selector like
+// "--follow" cannot become a flag: it is single-quoted and docker
+// treats it as a (nonexistent) container name, and the charset admits
+// no quote-escapes to break out.
+func TestDockerLogsCommand_FlagInjection(t *testing.T) {
+	cmd, err := DockerLogsCommand("--follow", time.Time{})
+	if err != nil {
+		return // rejection is also acceptable
+	}
+	if !strings.HasSuffix(cmd, "'--follow'") {
+		t.Fatalf("flag-shaped selector must be quoted: %q", cmd)
+	}
+}
+
+func testPublicKey(t *testing.T) ssh.PublicKey {
+	t.Helper()
+	pub, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("gen key: %v", err)
+	}
+	sshPub, err := ssh.NewPublicKey(pub)
+	if err != nil {
+		t.Fatalf("wrap key: %v", err)
+	}
+	return sshPub
+}
+
+// TestHostKeyPinning covers all three TOFU states: record on first
+// sight, pass on match, hard-fail on mismatch.
+func TestHostKeyPinning(t *testing.T) {
+	key := testPublicKey(t)
+	fp := ssh.FingerprintSHA256(key)
+
+	var recorded string
+	cb := pinnedHostKeyCallback("", func(f string) { recorded = f })
+	if err := cb("h1", nil, key); err != nil {
+		t.Fatalf("TOFU dial should pass: %v", err)
+	}
+	if recorded != fp {
+		t.Fatalf("TOFU should record %s, got %s", fp, recorded)
+	}
+
+	if err := pinnedHostKeyCallback(fp, nil)("h1", nil, key); err != nil {
+		t.Fatalf("matching pin should pass: %v", err)
+	}
+
+	other := testPublicKey(t)
+	err := pinnedHostKeyCallback(ssh.FingerprintSHA256(other), nil)("h1", nil, key)
+	var mismatch *HostKeyMismatchError
+	if !errors.As(err, &mismatch) {
+		t.Fatalf("expected HostKeyMismatchError, got %v", err)
+	}
+}
+
+// TestCommandForSource_Kinds pins each fixed read-only template.
+func TestCommandForSource_Kinds(t *testing.T) {
+	since := time.Date(2026, 7, 8, 14, 0, 0, 0, time.UTC)
+	cases := []struct {
+		kind, selector, want string
+	}{
+		{"docker", "api", "docker logs --timestamps --since '2026-07-08T14:00:00Z' 'api'"},
+		{"compose", "acme", "docker compose -p 'acme' logs --no-color --timestamps --no-log-prefix --since '2026-07-08T14:00:00Z'"},
+		{"swarm", "acme-production_backend", "docker service logs --raw --timestamps --since '2026-07-08T14:00:00Z' 'acme-production_backend'"},
+		{"journald", "nginx.service", "journalctl -u 'nginx.service' -q -o short-iso-precise --no-pager --utc --show-cursor --since '2026-07-08 14:00:00'"},
+	}
+	for _, c := range cases {
+		src := &store.LogSource{Kind: c.kind, Selector: c.selector}
+		got, err := CommandForSource(src, since, "")
+		if err != nil {
+			t.Fatalf("%s: %v", c.kind, err)
+		}
+		if got != c.want {
+			t.Errorf("%s:\n got %q\nwant %q", c.kind, got, c.want)
+		}
+	}
+
+	// file kind has no read-only template yet.
+	if _, err := CommandForSource(&store.LogSource{Kind: "file", Selector: "/var/log/app.log"}, since, ""); err == nil {
+		t.Fatal("file kind must have no command template")
+	}
+	// injection stays rejected across all kinds — shell metachars AND a
+	// leading dash (argument injection: "--follow" reaching the flag parser).
+	for _, k := range []string{"docker", "compose", "swarm", "journald"} {
+		for _, bad := range []string{"x; rm -rf /", "--follow", "-n"} {
+			if _, err := CommandForSource(&store.LogSource{Kind: k, Selector: bad}, since, ""); err == nil {
+				t.Errorf("%s: selector %q must be rejected", k, bad)
+			}
+		}
+	}
+}
+
+// TestJournaldCommand_AfterCursor pins the steady-state window. A journald
+// source with a stored cursor must pull with the EXCLUSIVE --after-cursor and
+// must not carry a --since: the inclusive second-truncated window is what
+// re-returns the tail and manufactures a discontinuity on every pull.
+func TestJournaldCommand_AfterCursor(t *testing.T) {
+	since := time.Date(2026, 7, 8, 14, 0, 0, 0, time.UTC)
+	cursor := "s=3dbe7ea510f141f0934706313c9f1527;i=6458;b=c3319f37ee6a4725bd901b36e3a4d490;m=60dee2961;t=656c270b5d9a3;x=6460b3d367f90bdb"
+
+	got, err := JournaldCommand("ssh.service", since, cursor)
+	if err != nil {
+		t.Fatalf("cursor command: %v", err)
+	}
+	want := "journalctl -u 'ssh.service' -q -o short-iso-precise --no-pager --utc --show-cursor --after-cursor '" + cursor + "'"
+	if got != want {
+		t.Errorf("with cursor:\n got %q\nwant %q", got, want)
+	}
+	if strings.Contains(got, "--since") {
+		t.Error("--after-cursor window must not also pass --since; the inclusive window is the bug being fixed")
+	}
+
+	// Every run asks for the cursor, including the bootstrap — otherwise the
+	// source can never leave the lossy --since window.
+	boot, err := JournaldCommand("ssh.service", since, "")
+	if err != nil {
+		t.Fatalf("bootstrap command: %v", err)
+	}
+	if !strings.Contains(boot, "--show-cursor") {
+		t.Error("bootstrap pull must request --show-cursor to acquire the first cursor")
+	}
+	if !strings.Contains(boot, "--since") {
+		t.Error("bootstrap pull has no cursor yet and must fall back to --since")
+	}
+}
+
+// TestJournaldCommand_CursorInjection keeps the ADR's no-injection guarantee
+// over the one token that comes back from the REMOTE host rather than local
+// config. ';' and '=' must be admitted (they are in every real cursor and are
+// inert inside single quotes); a quote, whitespace, or a metacharacter that
+// could escape them must not be.
+func TestJournaldCommand_CursorInjection(t *testing.T) {
+	for _, bad := range []string{
+		"s=1;i=2' ; rm -rf / ; echo '",
+		"s=1;i=2'",
+		"s=1 i=2",
+		"s=1;i=2$(id)",
+		"s=1;i=2`id`",
+		"s=1;i=2\nrm -rf /",
+		"s=1;i=2|tee /tmp/x",
+		"--follow",
+		strings.Repeat("a", maxCursorLen+1),
+	} {
+		if _, err := JournaldCommand("ssh.service", time.Time{}, bad); err == nil {
+			t.Errorf("cursor %q must be rejected", bad)
+		}
+	}
+	// A real cursor must still pass.
+	ok := "s=3dbe7ea510f141f0934706313c9f1527;i=6458;b=c3319f37ee6a4725bd901b36e3a4d490;m=60dee2961;t=656c270b5d9a3;x=6460b3d367f90bdb"
+	if _, err := JournaldCommand("ssh.service", time.Time{}, ok); err != nil {
+		t.Errorf("real journald cursor must be accepted: %v", err)
+	}
+}

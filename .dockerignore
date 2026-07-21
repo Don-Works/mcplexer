@@ -1,0 +1,16 @@
+bin/
+dist/
+.release-work/
+test/integration/_logs/
+data/
+*.db
+*.age
+*.key
+.env
+.git
+.idea
+.vscode
+.DS_Store
+web/node_modules/
+web/dist/
+internal/web/dist/

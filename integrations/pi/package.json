@@ -1,0 +1,47 @@
+{
+  "name": "@mcplexer/pi-extension",
+  "version": "0.0.1",
+  "description": "Pi (pi.dev / Earendil) extension bridging the agent to mcplexer's slim 4-tool gateway surface — discovery + code-mode + secrets, no MCP token bloat.",
+  "type": "module",
+  "license": "AGPL-3.0-or-later",
+  "keywords": [
+    "pi-package",
+    "mcplexer",
+    "mcp",
+    "pi",
+    "earendil"
+  ],
+  "homepage": "https://github.com/don-works/mcplexer/tree/main/integrations/pi",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/don-works/mcplexer.git",
+    "directory": "integrations/pi"
+  },
+  "bin": {
+    "mcpx-shim": "./bin/mcpx-shim.mjs"
+  },
+  "pi": {
+    "extensions": [
+      "./extensions"
+    ],
+    "skills": [
+      "./skills"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-ai": "*"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test extensions/router/router.test.mjs"
+  },
+  "files": [
+    "extensions",
+    "skills",
+    "bin",
+    "README.md"
+  ]
+}

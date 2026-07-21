@@ -1,0 +1,117 @@
+package index
+
+import (
+	"context"
+	"errors"
+	"io"
+	"log/slog"
+	"testing"
+	"time"
+
+	"github.com/don-works/mcplexer/internal/store"
+)
+
+// fakeCodeIndexStore is a minimal store.CodeIndexStore that reports the
+// workspace was never built. It proves the stage-0 contracts compile and
+// wire together end to end without a real DB.
+type fakeCodeIndexStore struct{}
+
+func (fakeCodeIndexStore) UpsertCodeIndexedFiles(ctx context.Context, workspaceID string, files []store.IndexedFile) error {
+	return nil
+}
+
+func (fakeCodeIndexStore) DeleteCodeIndexFiles(ctx context.Context, workspaceID string, paths []string) error {
+	return nil
+}
+
+func (fakeCodeIndexStore) ListCodeIndexFileStats(ctx context.Context, workspaceID string) ([]store.CodeIndexFileStat, error) {
+	return nil, nil
+}
+
+func (fakeCodeIndexStore) GetCodeIndexFile(ctx context.Context, workspaceID, path string) (*store.CodeIndexFile, error) {
+	return nil, store.ErrNotFound
+}
+
+func (fakeCodeIndexStore) ListCodeIndexSymbolsByPath(ctx context.Context, workspaceID, path string) ([]store.CodeIndexSymbol, error) {
+	return nil, nil
+}
+
+func (fakeCodeIndexStore) SearchCodeIndexSymbols(ctx context.Context, q store.CodeIndexSymbolQuery) ([]store.CodeIndexSymbolHit, error) {
+	return nil, nil
+}
+
+func (fakeCodeIndexStore) SearchCodeIndexFiles(ctx context.Context, workspaceID, query string, limit int) ([]store.CodeIndexFileHit, error) {
+	return nil, nil
+}
+
+func (fakeCodeIndexStore) SearchCodeIndexChunks(context.Context, store.CodeIndexChunkQuery) ([]store.CodeIndexChunkHit, error) {
+	return nil, nil
+}
+func (fakeCodeIndexStore) VectorSearchCodeIndexChunks(context.Context, string, string, int, []float32, int) ([]store.CodeIndexChunkHit, error) {
+	return nil, nil
+}
+func (fakeCodeIndexStore) ListCodeIndexChunksNeedingEmbedding(context.Context, string, string, int, int) ([]store.CodeIndexEmbedTarget, error) {
+	return nil, nil
+}
+func (fakeCodeIndexStore) CountCodeIndexEmbeddingProgress(context.Context, string, string, int) (int, int, error) {
+	return 0, 0, nil
+}
+func (fakeCodeIndexStore) UpsertCodeIndexChunkEmbeddings(context.Context, string, string, int, []store.CodeIndexChunkEmbedding) error {
+	return nil
+}
+
+func (fakeCodeIndexStore) ListCodeIndexEdges(ctx context.Context, f store.CodeIndexEdgeFilter) ([]store.CodeIndexEdgeHit, error) {
+	return nil, nil
+}
+
+func (fakeCodeIndexStore) PutCodeIndexBuild(ctx context.Context, b *store.CodeIndexBuild) error {
+	return nil
+}
+
+func (fakeCodeIndexStore) GetCodeIndexBuild(ctx context.Context, workspaceID string) (*store.CodeIndexBuild, error) {
+	return nil, store.ErrNotFound
+}
+
+func (fakeCodeIndexStore) CountCodeIndexSymbols(ctx context.Context, workspaceID string) (int, error) {
+	return 0, nil
+}
+
+func (fakeCodeIndexStore) CountCodeIndexChunks(context.Context, string) (int, error) { return 0, nil }
+
+// Compile-time proof the fake satisfies the frozen interface.
+var _ store.CodeIndexStore = fakeCodeIndexStore{}
+
+// TestServiceStatusNotBuilt is the P7 smoke test: Status on a never-built
+// workspace returns the ErrNotBuilt sentinel.
+func TestServiceStatusNotBuilt(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	svc := NewService(fakeCodeIndexStore{}, logger)
+
+	_, err := svc.Status(context.Background(), "ws1", t.TempDir())
+	if !errors.Is(err, ErrNotBuilt) {
+		t.Fatalf("Status on never-built workspace: got %v, want ErrNotBuilt", err)
+	}
+}
+
+func TestEnsureBuiltRetriesIncompleteBuild(t *testing.T) {
+	svc, ms := testService(t)
+	root := newWorkspace(t)
+	indexID := indexIDForRoot(root)
+	if err := ms.PutCodeIndexBuild(context.Background(), &store.CodeIndexBuild{
+		WorkspaceID: indexID, RootPath: root, BuiltAt: time.Now(), Complete: false,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Symbols(context.Background(), SymbolsRequest{
+		WorkspaceID: "logical", Root: root, Query: "Alpha",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	build, err := ms.GetCodeIndexBuild(context.Background(), indexID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !build.Complete || build.FileCount != 2 {
+		t.Fatalf("incomplete build was not repaired: %+v", build)
+	}
+}

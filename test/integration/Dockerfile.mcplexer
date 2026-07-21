@@ -1,0 +1,72 @@
+# syntax=docker/dockerfile:1.6
+#
+# Multi-node integration harness image. Bundles the web UI (go:embed) and a
+# p2p-enabled daemon binary, then runs `mcplexer serve --mode=http` in the
+# foreground so the container's lifecycle == the daemon's lifecycle.
+
+# ---- Stage 1: web build --------------------------------------------------
+FROM node:20-bookworm-slim AS web
+
+WORKDIR /src
+
+# Copy lockfile + manifest first so npm ci layers cache cleanly.
+COPY web/package.json web/package-lock.json ./web/
+RUN cd web && npm ci --no-audit --no-fund
+
+# Copy the rest of the web tree and produce internal/web/dist (vite outputs
+# there per vite.config.ts → outDir).
+COPY web ./web
+COPY internal/web ./internal/web
+RUN cd web && npm run build
+
+# ---- Stage 2: Go build (p2p tag) -----------------------------------------
+FROM golang:1.25-bookworm AS go
+
+WORKDIR /src
+
+# Pre-cache modules.
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Copy sources + the freshly built web/dist from stage 1.
+COPY . .
+COPY --from=web /src/internal/web/dist ./internal/web/dist
+
+# Build the p2p-enabled binary. CGO is off (modernc.org/sqlite is pure Go).
+ENV CGO_ENABLED=0
+RUN go build -tags p2p -trimpath -o /out/mcplexer ./cmd/mcplexer
+
+# ---- Stage 3: runtime ----------------------------------------------------
+FROM debian:bookworm-slim AS runtime
+
+# curl is needed for the healthcheck; ca-certificates lets any outbound
+# https call (e.g. to model endpoints) validate. Both stay tiny on slim.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates curl openssh-client \
+ && rm -rf /var/lib/apt/lists/*
+
+COPY --from=go /out/mcplexer /usr/local/bin/mcplexer
+COPY test/integration/entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
+
+# Data dir is mounted from a docker volume so logs + db persist across
+# container restarts within a single test run.
+ENV MCPLEXER_MODE=http \
+    MCPLEXER_HTTP_ADDR=0.0.0.0:3333 \
+    MCPLEXER_SOCKET_PATH=/data/mcplexer.sock \
+    MCPLEXER_DB_DSN=/data/mcplexer.db \
+    MCPLEXER_CONFIG=/data/mcplexer.yaml \
+    MCPLEXER_API_TOKEN_PATH=/data/api-key \
+    MCPLEXER_LOG_LEVEL=info \
+    MCPLEXER_P2P_ENABLED=1 \
+    MCPLEXER_P2P_IDENTITY=/data/p2p/identity.key \
+    MCPLEXER_MESH_ENABLED=1 \
+    MCPLEXER_TRUSTED_HOSTS=node-a,node-b,node-c,localhost
+
+EXPOSE 3333
+
+# /data is the only mutable path. Created in the entrypoint so the volume
+# always wins over any image baked-in mode bits.
+VOLUME ["/data"]
+
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

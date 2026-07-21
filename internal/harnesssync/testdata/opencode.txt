@@ -1,0 +1,20 @@
+<!-- MCPLEXER:HARNESS-SYNC:BEGIN v1 (opencode) -->
+
+using-mcplexer skill (v1) installed.
+
+Full skill body: ~/.config/opencode/skills/using-mcplexer/SKILL.md (materialized from registry v1).
+
+Use the 5 top-level tools: mcpx__search_tools + mcpx__execute_code (batch everything), secret__prompt / secret__list_refs, mcpx__retrieve for compression markers.
+Fetch deeper playbooks via the skill registry on demand.
+
+Code index: ask it BEFORE reading the repo — index.context({query, budget_tokens}) returns a ranked pack with snippets; index.search({query, limit}) finds citation-ready implementation source; index.symbols finds definitions; index.map_failure maps failures. Lexical search is always available; semantics are explicit and local-only.
+
+Browser work: search for brw/browser tools and prefer brw when installed; fetch an installed browser skill such as generic-browser-operator, playwright-browser, or cmux-browser for non-trivial workflows.
+
+## Memory — prefer the gateway store
+
+mcplexer memory (memory.save / memory.recall inside mcpx__execute_code) is cross-harness, cross-machine, and survives every session; harness-local memory files are siloed per client.
+Recall when past sessions may have settled a question; save decisions with rationale, preferences, and project facts not derivable from the repo.
+Knowledge that should outlive this client belongs in the gateway store.
+
+<!-- MCPLEXER:HARNESS-SYNC:END -->

@@ -1,0 +1,75 @@
+package routing
+
+import (
+	"context"
+
+	"github.com/don-works/mcplexer/internal/store"
+)
+
+// CodeIndexStore stubs for mockRouteStore. Added when migration 127's stage-0
+// contract put store.CodeIndexStore into the store.Store composite. The
+// routing engine never touches the code index, so these are inert no-ops.
+
+func (m *mockRouteStore) UpsertCodeIndexedFiles(_ context.Context, _ string, _ []store.IndexedFile) error {
+	return nil
+}
+
+func (m *mockRouteStore) DeleteCodeIndexFiles(_ context.Context, _ string, _ []string) error {
+	return nil
+}
+
+func (m *mockRouteStore) ListCodeIndexFileStats(_ context.Context, _ string) ([]store.CodeIndexFileStat, error) {
+	return nil, nil
+}
+
+func (m *mockRouteStore) GetCodeIndexFile(_ context.Context, _, _ string) (*store.CodeIndexFile, error) {
+	return nil, store.ErrNotFound
+}
+
+func (m *mockRouteStore) ListCodeIndexSymbolsByPath(_ context.Context, _, _ string) ([]store.CodeIndexSymbol, error) {
+	return nil, nil
+}
+
+func (m *mockRouteStore) SearchCodeIndexSymbols(_ context.Context, _ store.CodeIndexSymbolQuery) ([]store.CodeIndexSymbolHit, error) {
+	return nil, nil
+}
+
+func (m *mockRouteStore) SearchCodeIndexFiles(_ context.Context, _, _ string, _ int) ([]store.CodeIndexFileHit, error) {
+	return nil, nil
+}
+
+func (m *mockRouteStore) SearchCodeIndexChunks(_ context.Context, _ store.CodeIndexChunkQuery) ([]store.CodeIndexChunkHit, error) {
+	return nil, nil
+}
+func (m *mockRouteStore) VectorSearchCodeIndexChunks(_ context.Context, _, _ string, _ int, _ []float32, _ int) ([]store.CodeIndexChunkHit, error) {
+	return nil, nil
+}
+func (m *mockRouteStore) ListCodeIndexChunksNeedingEmbedding(_ context.Context, _, _ string, _, _ int) ([]store.CodeIndexEmbedTarget, error) {
+	return nil, nil
+}
+func (m *mockRouteStore) CountCodeIndexEmbeddingProgress(_ context.Context, _, _ string, _ int) (int, int, error) {
+	return 0, 0, nil
+}
+func (m *mockRouteStore) UpsertCodeIndexChunkEmbeddings(_ context.Context, _, _ string, _ int, _ []store.CodeIndexChunkEmbedding) error {
+	return nil
+}
+
+func (m *mockRouteStore) ListCodeIndexEdges(_ context.Context, _ store.CodeIndexEdgeFilter) ([]store.CodeIndexEdgeHit, error) {
+	return nil, nil
+}
+
+func (m *mockRouteStore) PutCodeIndexBuild(_ context.Context, _ *store.CodeIndexBuild) error {
+	return nil
+}
+
+func (m *mockRouteStore) GetCodeIndexBuild(_ context.Context, _ string) (*store.CodeIndexBuild, error) {
+	return nil, store.ErrNotFound
+}
+
+func (m *mockRouteStore) CountCodeIndexSymbols(_ context.Context, _ string) (int, error) {
+	return 0, nil
+}
+
+func (m *mockRouteStore) CountCodeIndexChunks(_ context.Context, _ string) (int, error) {
+	return 0, nil
+}
