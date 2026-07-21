@@ -94,6 +94,17 @@ function parseCitations(text) {
     "lines?\\s+" + WRAP + "(\\d+)" + WRAP + "(?:\\s*[-–]\\s*\\d+)?\\s+(?:of|in|from|at)\\s+" + WRAP + FILE,
     "gi");
   while ((m = rePhrase.exec(text)) !== null) add(m[2], m[1]);
+  // Third shape: file BEFORE the line — "path/file.go -> line 12", "file.go,
+  // line 12", "file.go at line 12", "file.go: line 12", and grep-style
+  // "file.go → line 12". Weak/local models routinely emit this order, which
+  // neither pattern above catches — so a wrong-line answer sails through as if
+  // no citation were present, defeating the whole gate. Observed live: qwen
+  // wrote "internal/workers/runner/hooks.go → line 12" for a symbol at 40. The
+  // gap between file and "line" is bounded (no newline, no digit, <=24 chars)
+  // so a filename cannot bind to an unrelated line number elsewhere in the text.
+  var reFileLine = new RegExp(
+    FILE + "[^\\n\\d]{0,24}?" + WRAP + "lines?\\s+" + WRAP + "(\\d+)", "gi");
+  while ((m = reFileLine.exec(text)) !== null) add(m[1], m[2]);
   return out;
 }
 
