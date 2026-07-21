@@ -9,6 +9,7 @@ import (
 	"github.com/don-works/mcplexer/internal/models"
 	"github.com/don-works/mcplexer/internal/store"
 	"github.com/don-works/mcplexer/internal/store/sqlite"
+	"github.com/don-works/mcplexer/internal/workers/delegscope"
 	"github.com/don-works/mcplexer/internal/workers/runner"
 )
 
@@ -136,6 +137,58 @@ func TestUnscopedCLIWorkerStillRuns(t *testing.T) {
 	}
 	if run.Status != runner.StatusSuccess {
 		t.Fatalf("run status = %q, want %q (error: %s)", run.Status, runner.StatusSuccess, run.Error)
+	}
+}
+
+// TestCLIWorkerWithDefaultDelegationAllowlistRuns is the end-to-end regression
+// for the CLI delegation break. The delegation admin layer stamps the system
+// default allowlist onto every delegated worker, so a real CLI delegation
+// carries a non-empty tool_allowlist_json. That must run: the default is a
+// baseline, not an operator scope the guard should refuse. Exercised across all
+// CLI providers through the full prepareRun path that failed live.
+func TestCLIWorkerWithDefaultDelegationAllowlistRuns(t *testing.T) {
+	for _, provider := range []string{
+		models.ProviderClaudeCLI, models.ProviderOpenCodeCLI, models.ProviderGrokCLI,
+		models.ProviderMiMoCLI, models.ProviderGeminiCLI, models.ProviderCodexCLI,
+		models.ProviderPiCLI,
+	} {
+		for _, def := range []struct {
+			label string
+			json  string
+		}{
+			{"execute default", delegscope.DefaultToolsJSON},
+			{"review default", delegscope.DefaultReviewToolsJSON},
+		} {
+			t.Run(provider+"/"+def.label, func(t *testing.T) {
+				db, worker := cliScopeWorker(t, provider)
+				worker.ToolAllowlistJSON = def.json
+				if err := db.UpdateWorker(context.Background(), worker); err != nil {
+					t.Fatal(err)
+				}
+				adapter := &fakeAdapter{responses: []models.SendResponse{
+					{Text: "done", StopReason: models.StopEndTurn},
+				}}
+				r := runner.New(runner.Deps{
+					Store:      db,
+					Dispatcher: &fakeDispatcher{},
+					Secrets:    &fakeSecrets{},
+					Adapter: func(models.Config) (models.ModelAdapter, error) {
+						return adapter, nil
+					},
+				})
+				runID, err := r.Run(context.Background(), worker.ID)
+				if err != nil {
+					t.Fatalf("CLI worker with default delegation allowlist refused: %v", err)
+				}
+				run, err := db.GetWorkerRun(context.Background(), runID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if run.Status != runner.StatusSuccess {
+					t.Fatalf("run status = %q, want %q (error: %s)", run.Status, runner.StatusSuccess, run.Error)
+				}
+			})
+		}
 	}
 }
 

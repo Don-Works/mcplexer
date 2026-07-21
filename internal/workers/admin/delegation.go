@@ -16,6 +16,7 @@ import (
 	"github.com/don-works/mcplexer/internal/models"
 	"github.com/don-works/mcplexer/internal/store"
 	"github.com/don-works/mcplexer/internal/toolgate"
+	"github.com/don-works/mcplexer/internal/workers/delegscope"
 	"github.com/don-works/mcplexer/internal/workers/runner"
 )
 
@@ -49,13 +50,15 @@ const (
 	delegationMetaKey                    = "_mcplexer_delegation"
 	defaultDelegationMaxWallClockSeconds = 60 * 60
 	defaultDelegationMaxToolCalls        = 80
-	defaultDelegationTools               = `["mcpx__execute_code","mcpx__search_tools","mcpx__skill_search","mcpx__skill_get","mcpx__workspace_read_file","mcpx__workspace_list_directory","mcpx__workspace_write_file","mcpx__workspace_edit_file","mesh__send","mesh__receive","mesh__list_peers","mesh__list_agents","memory__save","memory__recall","memory__list","task__create","task__get","task__list","task__update","task__append_note"]`
-	// defaultDelegationToolsReview is the hardened surface for worker_mode=review.
-	// It omits mutating operations (task create/update, memory save) so a review
-	// worker cannot make state changes unless the operator explicitly supplies a
-	// broader allowlist (and the handoff authorizes it). This is the "role filter"
-	// defaulting path: review role gets a narrower tool allowlist by construction.
-	defaultDelegationToolsReview = `["mcpx__execute_code","mcpx__search_tools","mcpx__skill_search","mcpx__skill_get","mcpx__workspace_read_file","mcpx__workspace_list_directory","mesh__send","mesh__receive","mesh__list_peers","mesh__list_agents","memory__recall","memory__list","task__get","task__list","task__append_note"]`
+	// defaultDelegationTools / defaultDelegationToolsReview are sourced from the
+	// leaf delegscope package so the runner's CLI scope guard can recognise them
+	// as the SYSTEM default (not an operator-authored scope) from a single
+	// source of truth. defaultDelegationToolsReview is the hardened review
+	// surface: it omits mutating operations (task create/update, memory save) so
+	// a review worker cannot make state changes unless the operator supplies a
+	// broader allowlist. See internal/workers/delegscope.
+	defaultDelegationTools       = delegscope.DefaultToolsJSON
+	defaultDelegationToolsReview = delegscope.DefaultReviewToolsJSON
 )
 
 // DelegationInput is the product-facing wrapper for creating one or more
@@ -1124,28 +1127,12 @@ func (s *Service) dispatchDelegationRun(parent context.Context, workerID string,
 // recordDelegationDispatchFailure stamps dispatch_failed=true +
 // dispatch_error onto the worker's delegation metadata. Best-effort:
 // failures are logged, never propagated (the dispatch error itself is
-// already logged and there's no caller left to return to).
+// already logged and there's no caller left to return to). The stamping
+// itself is shared with the orphan reaper (SweepOrphanedDispatches) via
+// stampDispatchFailure so both paths produce the identical terminal shape.
 func (s *Service) recordDelegationDispatchFailure(ctx context.Context, workerID string, dispatchErr error) {
-	w, err := s.store.GetWorker(ctx, workerID)
-	if err != nil {
-		slog.Warn("delegation: record dispatch failure: get worker",
-			"worker_id", workerID, "error", err)
-		return
-	}
-	meta, ok := parseDelegationMetadata(w.ParametersJSON)
-	if !ok {
-		return
-	}
-	meta.DispatchFailed = true
-	meta.DispatchError = dispatchErr.Error()
-	params, err := updateDelegationMetadataJSON(w.ParametersJSON, meta)
-	if err != nil {
-		slog.Warn("delegation: record dispatch failure: marshal metadata",
-			"worker_id", workerID, "error", err)
-		return
-	}
-	if _, err := s.Update(ctx, UpdateInput{ID: workerID, ParametersJSON: &params}); err != nil {
-		slog.Warn("delegation: record dispatch failure: update worker",
+	if err := s.stampDispatchFailure(ctx, workerID, dispatchErr); err != nil {
+		slog.Warn("delegation: record dispatch failure",
 			"worker_id", workerID, "error", err)
 	}
 }

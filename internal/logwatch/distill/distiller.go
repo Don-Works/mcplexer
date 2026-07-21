@@ -84,7 +84,11 @@ type Notification struct {
 type Distiller struct {
 	store    Store
 	notifier Notifier
-	now      func() time.Time
+	// incidents is optional: when wired (WithIncidents), every fired anomaly is
+	// converged onto a canonical incident + task so its notification carries a
+	// linkable TaskID. Nil restores the pre-incident behaviour (unlinked alerts).
+	incidents IncidentEnsurer
+	now       func() time.Time
 }
 
 // NewDistiller wires the sink. notifier may be nil (anomalies are
@@ -207,9 +211,12 @@ func (d *Distiller) fireAnomaly(
 		TemplateID:     agg.tpl.ID,
 		IncidentID:     agg.incidentID,
 	}
+	ref := d.linkAnomalyIncident(ctx, &n, src, agg)
 	if err := d.notifier.Notify(ctx, n); err != nil {
 		slog.Warn("distill: notify", "source", src.Name, "error", err)
+		return
 	}
+	d.markIncidentNotified(ctx, ref, n.Severity)
 }
 
 // evaluateRateSpike compares the source's current error/critical rate
@@ -258,7 +265,9 @@ func (d *Distiller) evaluateRateSpike(ctx context.Context, src *store.LogSource,
 	case !isSpike && active:
 		if err := d.store.SetLogSourceErrorSpikeActive(ctx, src.ID, false); err != nil {
 			slog.Warn("distill: rate spike re-arm", "source", src.Name, "error", err)
+			return
 		}
+		d.closeRateSpikeIncident(ctx, src)
 	}
 }
 
@@ -274,7 +283,7 @@ func (d *Distiller) fireRateSpike(
 	ctx context.Context, src *store.LogSource, host *store.RemoteHost, episodeAt time.Time,
 	current int64, currentRate, baselineRate float64,
 ) error {
-	spikeKey := "ratespike:" + src.ID
+	spikeKey := rateSpikeClassKey(src.ID)
 	episodeID := fmt.Sprintf("%s:%x", spikeKey, episodeAt.UnixNano())
 	if d.notifier == nil {
 		slog.Info("distill: rate spike (no dispatcher wired)",
@@ -295,8 +304,10 @@ func (d *Distiller) fireRateSpike(
 		TemplateID:     spikeKey,
 		IncidentID:     episodeID,
 	}
+	ref := d.linkRateSpikeIncident(ctx, &n, src)
 	if err := d.notifier.Notify(ctx, n); err != nil {
 		return err
 	}
+	d.markIncidentNotified(ctx, ref, n.Severity)
 	return nil
 }

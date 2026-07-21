@@ -89,7 +89,7 @@ func (d *DB) ListMonitoringIncidentsDueForRenotify(
 // the work per tick without starving anyone: a notified incident has its
 // last_notified_at stamped to now and rotates to the back of the queue.
 func monitoringRenotifyQuery() string {
-	return `SELECT ` + monitoringIncidentCols + `
+	return `SELECT ` + monitoringIncidentReadCols + `
 		FROM monitoring_incidents
 		WHERE workspace_id = ?
 		  AND last_seen >= ?

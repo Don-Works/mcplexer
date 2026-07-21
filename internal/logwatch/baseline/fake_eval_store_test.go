@@ -17,16 +17,32 @@ import (
 // converges on ONE incident per class key, and recovery clears the latch.
 type fakeEvalStore struct {
 	rule      *store.MonitoringExpectedSignal
+	source    *store.LogSource
 	observed  store.ExpectedSignalObservation
 	health    store.SourceCollectionHealth
 	incidents map[string]*store.MonitoringIncident
 
 	records    []store.ExpectedSignalRecord
 	observeErr error
+	sourceErr  error
 }
 
 func newFakeEvalStore(rule *store.MonitoringExpectedSignal) *fakeEvalStore {
-	return &fakeEvalStore{rule: rule, incidents: map[string]*store.MonitoringIncident{}}
+	return &fakeEvalStore{
+		rule:      rule,
+		source:    &store.LogSource{ID: rule.SourceID, Name: "orders-api", Selector: "unit=orders"},
+		incidents: map[string]*store.MonitoringIncident{},
+	}
+}
+
+func (f *fakeEvalStore) GetLogSource(_ context.Context, id string) (*store.LogSource, error) {
+	if f.sourceErr != nil {
+		return nil, f.sourceErr
+	}
+	if f.source != nil && f.source.ID == id {
+		return f.source, nil
+	}
+	return nil, store.ErrNotFound
 }
 
 func (f *fakeEvalStore) ListEnabledMonitoringExpectedSignals(
@@ -110,14 +126,18 @@ func (f *fakeEvalStore) DeleteMonitoringExpectedSignal(context.Context, string) 
 // election does — so a per-tick task explosion shows up as a test failure.
 type fakeTasks struct {
 	byClass map[string]string
+	titles  map[string]string
+	bodies  map[string]string
 	creates int
 	closed  []string
 }
 
-func newFakeTasks() *fakeTasks { return &fakeTasks{byClass: map[string]string{}} }
+func newFakeTasks() *fakeTasks {
+	return &fakeTasks{byClass: map[string]string{}, titles: map[string]string{}, bodies: map[string]string{}}
+}
 
 func (f *fakeTasks) Ensure(
-	_ context.Context, _, classKey, _, _, _ string,
+	_ context.Context, _, classKey, title, body, _ string,
 ) (string, error) {
 	if id, ok := f.byClass[classKey]; ok {
 		return id, nil
@@ -125,6 +145,8 @@ func (f *fakeTasks) Ensure(
 	f.creates++
 	id := "task-" + classKey
 	f.byClass[classKey] = id
+	f.titles[classKey] = title
+	f.bodies[classKey] = body
 	return id, nil
 }
 

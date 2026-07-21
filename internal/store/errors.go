@@ -121,4 +121,13 @@ var (
 	// a concurrent stale-read or a MITM presenting a different key. The pin is
 	// NOT overwritten; the caller must fail the pull and alert.
 	ErrRemoteHostPinConflict = errors.New("remote host key pin conflict")
+	// ErrMonitoringSilenceUnbounded is returned when a silence is requested
+	// without a positive, bounded duration. A silence that cannot expire is a
+	// permanent mute by another name and is forbidden — dismiss is the terminal
+	// verb, silence is only ever a timed pause.
+	ErrMonitoringSilenceUnbounded = errors.New("monitoring silence duration must be positive and bounded")
+	// ErrMonitoringActionActorRequired is returned when an incident action omits
+	// the actor. Every suppression must be attributable, so the actor is not
+	// optional.
+	ErrMonitoringActionActorRequired = errors.New("monitoring incident action requires an actor")
 )

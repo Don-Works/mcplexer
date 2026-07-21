@@ -83,8 +83,59 @@ type monitoringNotificationDecision struct {
 }
 
 // monitoringNotificationDue is pure — now is passed in rather than read from
-// the clock, so the policy is deterministic and identical wherever it runs.
+// the clock, so the policy is deterministic and identical wherever it runs. It
+// is the persistence policy (monitoringNotificationDueRaw) gated by the
+// operator's ack/silence pause: a pause mutes the routine "still broken" nag but
+// never a genuine escalation, because a pause only holds while the effective
+// severity has not risen above the level the operator acted at.
 func monitoringNotificationDue(
+	i *store.MonitoringIncident, newIncident bool, now time.Time,
+) monitoringNotificationDecision {
+	d := monitoringNotificationDueRaw(i, newIncident, now)
+	if d.Notify && monitoringActionSuppressed(i, now, d.EffectiveSeverity) {
+		// The escalation reasons are never reached here: a classifier or age
+		// escalation raises the effective severity above the pause floor, which
+		// is exactly the condition monitoringActionSuppressed returns false on.
+		// So this only ever swallows new/unnotified/persistent — the nag — and
+		// the "worse than when I acked" case still notifies.
+		return monitoringNotificationDecision{EffectiveSeverity: d.EffectiveSeverity}
+	}
+	return d
+}
+
+// monitoringActionSuppressed reports whether an operator acknowledge or silence
+// is muting re-notification for this incident at now. A pause is EFFECTIVE only
+// while the effective severity has not risen above the floor recorded when the
+// action was taken (acked_severity / silenced_severity); an escalation past that
+// floor pierces both. Silence is additionally bounded by silenced_until and
+// lapses on its own at expiry, after which a still-active incident re-notifies.
+//
+// Severity and age are both monotonic non-decreasing, so effective severity only
+// ever climbs: once a pause is pierced it stays pierced until the operator acts
+// again, which is what "ack does not survive an escalation" means in practice.
+func monitoringActionSuppressed(i *store.MonitoringIncident, now time.Time, effective string) bool {
+	if i == nil {
+		return false
+	}
+	if monitoringSilenceActive(i, now) && !severityHigher(effective, i.SilencedSeverity) {
+		return true
+	}
+	if i.AckedAt != nil && !severityHigher(effective, i.AckedSeverity) {
+		return true
+	}
+	return false
+}
+
+// monitoringSilenceActive reports whether a bounded silence is still within its
+// window at now. A nil or already-expired silenced_until is not active.
+func monitoringSilenceActive(i *store.MonitoringIncident, now time.Time) bool {
+	return i != nil && i.SilencedUntil != nil && now.Before(*i.SilencedUntil)
+}
+
+// monitoringNotificationDueRaw is the persistence policy with no operator pause
+// applied — the pre-action behaviour, kept whole so the pause is a single gate
+// in the wrapper rather than a condition threaded through every branch.
+func monitoringNotificationDueRaw(
 	i *store.MonitoringIncident, newIncident bool, now time.Time,
 ) monitoringNotificationDecision {
 	if i == nil {

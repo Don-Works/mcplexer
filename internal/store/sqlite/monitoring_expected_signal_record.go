@@ -153,6 +153,17 @@ func raiseExpectedSignalIncident(
 	if err != nil {
 		return err
 	}
+	// Suppression break-out, mirroring RecordMonitoringTriage. A raising
+	// evaluation on a still-suppressed absence incident means the signal is
+	// absent AGAIN, so a benign dismiss/resolution is reversed here rather than
+	// swallowing the recurrence — otherwise a dismissed absence class would be
+	// muted forever, because the expected-signal path (unlike the template path)
+	// is never re-driven through triage to break it.
+	if !newIncident && incident.Disposition == store.MonitoringDispositionBenign {
+		if err := breakMonitoringSuppressionQ(q, ctx, incident.ID, observedAt); err != nil {
+			return err
+		}
+	}
 	occurrence, newOccurrence, err := upsertExpectedSignalOccurrence(q, ctx, rule, in, incident.ID, observedAt)
 	if err != nil {
 		return err

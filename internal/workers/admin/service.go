@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/don-works/mcplexer/internal/models"
 	"github.com/don-works/mcplexer/internal/scheduler"
 	"github.com/don-works/mcplexer/internal/store"
 	"github.com/don-works/mcplexer/internal/workers/runner"
@@ -72,15 +73,22 @@ func (realClock) Now() time.Time { return time.Now().UTC() }
 
 // Service is the worker admin facade. Construct via New.
 type Service struct {
-	store         store.WorkerStore
-	meshStore      store.MeshStore  // optional — set via SetMeshStore for delegation review auto-ack
-	fileClaimStore FileClaimStore   // optional — set via SetFileClaimStore for delegation file-claim coordination
-	memory         MemoryRecaller   // optional — set via SetMemoryRecaller for auto context injection
-	workspaces    WorkspaceLister // optional — needed only when ListInput.WorkspaceID is empty
-	authScopes    store.AuthScopeStore
-	modelProfiles store.ModelProfileStore
-	runner        Runner // optional — nil = stub RunNow
-	clock         Clock
+	store          store.WorkerStore
+	meshStore      store.MeshStore // optional — set via SetMeshStore for delegation review auto-ack
+	fileClaimStore FileClaimStore  // optional — set via SetFileClaimStore for delegation file-claim coordination
+	memory         MemoryRecaller  // optional — set via SetMemoryRecaller for auto context injection
+	workspaces     WorkspaceLister // optional — needed only when ListInput.WorkspaceID is empty
+	authScopes     store.AuthScopeStore
+	modelProfiles  store.ModelProfileStore
+	// modelCatalog is the live, cadence-refreshed model catalog. Optional —
+	// wired via SetModelCatalog. When present, preflight validates CLI model
+	// ids against what each provider ACTUALLY offers now (live-probed, or
+	// static KnownModels where a provider has no live source) instead of the
+	// static-only profile union. When nil, preflight keeps its legacy
+	// profile-KnownModels behaviour.
+	modelCatalog models.CatalogReader
+	runner       Runner // optional — nil = stub RunNow
+	clock        Clock
 	// validateScheduleSpec is injected so tests can avoid pulling the
 	// scheduler package via a stub. In production it points at
 	// scheduler.NextRun-derived validation.
@@ -149,6 +157,13 @@ func (s *Service) SetAuditor(a Auditor) {
 
 func (s *Service) SetMeshStore(ms store.MeshStore) {
 	s.meshStore = ms
+}
+
+// SetModelCatalog wires the live model catalog reader so delegation preflight
+// validates CLI model ids against the currently-available set. Nil-safe: when
+// unset, preflight falls back to the static profile-KnownModels union.
+func (s *Service) SetModelCatalog(r models.CatalogReader) {
+	s.modelCatalog = r
 }
 
 // WorkspaceLister lets the admin service walk every workspace when the

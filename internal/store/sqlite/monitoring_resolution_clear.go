@@ -177,6 +177,6 @@ func breakMonitoringSuppressionQ(q queryable, ctx context.Context, incidentID st
 func getMonitoringIncidentByTaskQ(
 	q queryable, ctx context.Context, workspaceID, taskID string,
 ) (*store.MonitoringIncident, error) {
-	return scanMonitoringIncident(q.QueryRowContext(ctx, `SELECT `+monitoringIncidentCols+`
+	return scanMonitoringIncident(q.QueryRowContext(ctx, `SELECT `+monitoringIncidentReadCols+`
 		FROM monitoring_incidents WHERE workspace_id = ? AND task_id = ?`, workspaceID, taskID))
 }

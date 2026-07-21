@@ -28,7 +28,7 @@ func (d *DB) ListMonitoringIncidents(
 		return nil, errors.New("ListMonitoringIncidents: workspace_id required")
 	}
 	now := time.Now().UTC()
-	query := `SELECT ` + monitoringIncidentCols + `
+	query := `SELECT ` + monitoringIncidentReadCols + `
 		FROM monitoring_incidents WHERE workspace_id = ?`
 	args := []any{f.WorkspaceID}
 	if f.Disposition != "" {
@@ -75,7 +75,7 @@ func (d *DB) GetMonitoringIncident(
 	if workspaceID == "" || id == "" {
 		return nil, store.ErrMonitoringIncidentNotFound
 	}
-	row := d.q.QueryRowContext(ctx, `SELECT `+monitoringIncidentCols+`
+	row := d.q.QueryRowContext(ctx, `SELECT `+monitoringIncidentReadCols+`
 		FROM monitoring_incidents WHERE id = ? AND workspace_id = ?`, id, workspaceID)
 	incident, err := scanMonitoringIncident(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -121,12 +121,24 @@ func monitoringIncidentView(
 	i *store.MonitoringIncident, now time.Time,
 ) *store.MonitoringIncidentView {
 	kind, ref := store.ClassifyIncidentClassKey(i.ClassKey)
+	// Compute the in-force suppression flags off the SAME predicates the
+	// notification policy (monitoringActionSuppressed) and the suppressed-list
+	// endpoint use, so every surface agrees on what is actually muted. AckActive
+	// and SilenceActive fold escalation-piercing (and, for silence, expiry) in;
+	// Suppressed is their union — the value the dispatcher's gate keys on.
+	effective := monitoringEffectiveSeverity(i, now)
+	ackActive := i.AckedAt != nil && !severityHigher(effective, i.AckedSeverity)
+	silenceActive := monitoringSilenceActive(i, now) &&
+		!severityHigher(effective, i.SilencedSeverity)
 	view := &store.MonitoringIncidentView{
 		MonitoringIncident: i,
-		EffectiveSeverity:  monitoringEffectiveSeverity(i, now),
+		EffectiveSeverity:  effective,
 		ClassKind:          kind,
 		ClassRef:           ref,
 		Active:             monitoringIncidentActive(i, now),
+		AckActive:          ackActive,
+		SilenceActive:      silenceActive,
+		Suppressed:         ackActive || silenceActive,
 	}
 	if kind == store.IncidentClassAbsence || kind == store.IncidentClassCollection {
 		view.ExpectedSignalID = ref

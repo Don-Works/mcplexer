@@ -28,6 +28,7 @@ import (
 	"github.com/don-works/mcplexer/internal/logwatch/distill"
 	"github.com/don-works/mcplexer/internal/memory"
 	"github.com/don-works/mcplexer/internal/mesh"
+	"github.com/don-works/mcplexer/internal/models"
 	"github.com/don-works/mcplexer/internal/notify"
 	"github.com/don-works/mcplexer/internal/oauth"
 	"github.com/don-works/mcplexer/internal/opencode"
@@ -194,6 +195,12 @@ type RouterDeps struct {
 	// be bare hostnames (no scheme/port); they are matched case-insensitively
 	// against the Origin's hostname.
 	TrustedHosts []string
+
+	// ModelCatalog is the live, cadence-refreshed model catalog. Optional:
+	// when wired, GET /api/v1/models exposes per-provider models + source
+	// (live vs static) + last-refreshed + auth state. When nil the route is
+	// not registered and the UI hides the surface.
+	ModelCatalog models.CatalogReader
 }
 
 // NewRouter creates an http.Handler with all API routes and SPA fallback.
@@ -687,6 +694,15 @@ func NewRouter(deps RouterDeps) http.Handler {
 	mux.HandleFunc("PUT /api/v1/model-profiles/{id}", mph.Update)
 	mux.HandleFunc("DELETE /api/v1/model-profiles/{id}", mph.Delete)
 
+	// Live model catalog — what each enabled provider ACTUALLY offers now,
+	// with source (live-probed vs static fallback), auth state, and a
+	// last-refreshed timestamp so freshness is observable. Registered only
+	// when the catalog is wired.
+	if deps.ModelCatalog != nil {
+		mh := &modelsHandler{catalog: deps.ModelCatalog}
+		mux.HandleFunc("GET /api/v1/models", mh.list)
+	}
+
 	// OpenCode (Layer 3) — managed subprocess and live model catalogue.
 	if deps.OpenCode != nil {
 		oc := &OpenCodeHandlers{Manager: deps.OpenCode}
@@ -751,6 +767,24 @@ func NewRouter(deps RouterDeps) http.Handler {
 	}
 	mux.HandleFunc("GET /api/v1/monitoring/incidents", monI.list)
 	mux.HandleFunc("GET /api/v1/monitoring/incidents/{id}", monI.get)
+
+	// Operator actions on a live incident (migration 150): acknowledge, silence
+	// (bounded, auto-expiring), dismiss, and the "what is muted right now" read.
+	// Same additive type assertion as the reads above — a store without the
+	// action methods serves 501 rather than blocking the router.
+	monIA := &monitoringIncidentActionHandler{}
+	if as, ok := deps.Store.(store.MonitoringIncidentActionStore); ok {
+		monIA.store = as
+	}
+	if rs, ok := deps.Store.(store.MonitoringResolutionStore); ok {
+		monIA.resolution = rs
+	}
+	mux.HandleFunc("POST /api/v1/monitoring/incidents/{id}/ack", monIA.ack)
+	mux.HandleFunc("POST /api/v1/monitoring/incidents/{id}/unack", monIA.unack)
+	mux.HandleFunc("POST /api/v1/monitoring/incidents/{id}/silence", monIA.silence)
+	mux.HandleFunc("POST /api/v1/monitoring/incidents/{id}/unsilence", monIA.unsilence)
+	mux.HandleFunc("POST /api/v1/monitoring/incidents/{id}/dismiss", monIA.dismiss)
+	mux.HandleFunc("GET /api/v1/monitoring/suppressions", monIA.suppressions)
 	monS := &monitoringSignalHandler{}
 	if ss, ok := deps.Store.(store.MonitoringExpectedSignalStore); ok {
 		monS.store = ss

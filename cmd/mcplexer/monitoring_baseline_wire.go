@@ -102,8 +102,27 @@ func startBaselineEvaluator(ctx context.Context, db store.Store, tasksSvc *tasks
 // than one per two-minute tick.
 type baselineTaskEnsurer struct{ tasks *tasks.Service }
 
-// Ensure returns the canonical task id for a class, creating it on first sight.
+// Ensure returns the canonical task id for a class, creating it on first sight,
+// then widens it to workspace visibility so the incident replicates to mirrored
+// peers — a system task stays private otherwise and never reaches the peer
+// dashboard. Widening is best-effort: a failure must not fail the tick.
 func (e *baselineTaskEnsurer) Ensure(
+	ctx context.Context, workspaceID, classKey, title, body, severity string,
+) (string, error) {
+	taskID, err := e.electCanonicalTask(ctx, workspaceID, classKey, title, body, severity)
+	if err != nil || taskID == "" {
+		return taskID, err
+	}
+	if pubErr := e.tasks.PublishSystemTask(ctx, taskID); pubErr != nil {
+		slog.Warn("monitoring: absence task not widened for replication",
+			"task", taskID, "class", classKey, "error", pubErr)
+	}
+	return taskID, nil
+}
+
+// electCanonicalTask reuses (or mints, or adopts on a uniqueness race) the one
+// canonical task for a class.
+func (e *baselineTaskEnsurer) electCanonicalTask(
 	ctx context.Context, workspaceID, classKey, title, body, severity string,
 ) (string, error) {
 	if existing, err := e.byClass(ctx, workspaceID, classKey); err != nil {

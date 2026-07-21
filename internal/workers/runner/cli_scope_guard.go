@@ -7,6 +7,7 @@ import (
 
 	"github.com/don-works/mcplexer/internal/models"
 	"github.com/don-works/mcplexer/internal/store"
+	"github.com/don-works/mcplexer/internal/workers/delegscope"
 )
 
 // ErrCLIScopeUnenforceable is returned when a CLI-provider worker carries
@@ -50,12 +51,21 @@ var ErrCLIScopeUnenforceable = errors.New("cli worker scope is unenforceable")
 // unscoped child under a scoped worker's configuration. Refusing is narrow —
 // it fires only when an operator explicitly asked for a scope — and it is the
 // same shape as the isolation refusal it sits beside.
+//
+// "Explicitly asked for a scope" excludes the system default. The delegation
+// admin layer stamps delegscope.DefaultToolsJSON (or the review default) onto
+// EVERY delegated worker whose caller supplies no allowlist, so the column is
+// non-empty for the common case. That broad 20-tool baseline is a convenience
+// default, not an operator security boundary — refusing it would break every
+// default CLI delegation (the regression this guard caused). An operator who
+// hand-authors a narrower or different allowlist does not match a default and
+// is still refused, because THAT scope is a real boundary the CLI child evades.
 func cliScopeUnenforceable(worker *store.Worker) error {
 	if worker == nil || !models.IsCLIProvider(worker.ModelProvider) {
 		return nil
 	}
 	var requested []string
-	if workerAllowlistScopeSet(worker.ToolAllowlistJSON) {
+	if workerAllowlistOperatorScopeSet(worker.ToolAllowlistJSON) {
 		requested = append(requested, "tool_allowlist_json")
 	}
 	if workerCapabilityScopeSet(worker.CapabilityProfileJSON) {
@@ -75,8 +85,20 @@ func cliScopeUnenforceable(worker *store.Worker) error {
 	)
 }
 
-// workerAllowlistScopeSet reports whether tool_allowlist_json carries an
-// operator-authored allowlist.
+// workerAllowlistOperatorScopeSet reports whether tool_allowlist_json carries
+// an OPERATOR-authored allowlist: a non-empty list (workerAllowlistScopeSet)
+// that is NOT one of the delegation system defaults (delegscope). This is the
+// condition the CLI scope guard fires on — a hand-authored scope the CLI child
+// evades — as distinct from the broad default the admin layer stamps on every
+// delegated worker, which is a baseline rather than a security boundary.
+func workerAllowlistOperatorScopeSet(raw string) bool {
+	return workerAllowlistScopeSet(raw) && !delegscope.IsDefaultAllowlist(raw)
+}
+
+// workerAllowlistScopeSet reports whether tool_allowlist_json carries a
+// non-empty allowlist. It answers "is there any list here", not "did an
+// operator author it" — the operator-vs-default distinction is layered on by
+// workerAllowlistOperatorScopeSet.
 //
 // "[]" is deliberately NOT treated as a request even though the enforcement
 // side reads it as deny-everything: store/sqlite applyWorkerDefaults backfills

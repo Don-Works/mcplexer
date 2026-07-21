@@ -16,6 +16,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/don-works/mcplexer/internal/logwatch/distill"
@@ -39,6 +40,10 @@ type EvalStore interface {
 	store.MonitoringExpectedSignalStore
 	GetMonitoringIncidentByClass(
 		ctx context.Context, workspaceID, classKey string) (*store.MonitoringIncident, error)
+	// GetLogSource resolves a rule's SourceID to the source's display label so
+	// an alert can say WHERE the signal stopped by name, not by opaque id. It is
+	// best-effort: a lookup miss falls back to the raw id (see sourceLabel).
+	GetLogSource(ctx context.Context, id string) (*store.LogSource, error)
 }
 
 // TaskEnsurer elects the canonical task an incident hangs off. Implemented in
@@ -136,6 +141,17 @@ func (e *Evaluator) evaluateRule(ctx context.Context, rule *store.MonitoringExpe
 	decision := store.EvaluateExpectedSignal(store.ExpectedSignalInput{
 		Rule: *rule, Observed: observed, Health: health, Now: now, Location: loc,
 	})
+	// Re-render the human-facing text with the source's DISPLAY name, which the
+	// pure evaluator cannot resolve — this is what turns "expected signal
+	// 'auto/9d8cc9032ba3' has stopped" into a title an operator can act on. Only
+	// the title/detail text changes; the outcome, class key and severity that
+	// decide WHICH incident fires are left exactly as evaluated.
+	sourceLabel := ""
+	if decision.Raise {
+		sourceLabel = e.sourceLabel(ctx, rule)
+		alert := store.NewExpectedSignalAlert(*rule, decision, observed, health, sourceLabel)
+		decision.Title, decision.Detail = alert.Title(), alert.Body()
+	}
 	taskID, err := e.ensureTask(ctx, rule, decision)
 	if err != nil {
 		return err
@@ -146,7 +162,25 @@ func (e *Evaluator) evaluateRule(ctx context.Context, rule *store.MonitoringExpe
 	if err != nil {
 		return err
 	}
-	return e.announce(ctx, rule, decision, result, now)
+	return e.announce(ctx, rule, decision, result, now, sourceLabel)
+}
+
+// sourceLabel resolves a rule's SourceID to a human display label — the
+// source's name, or its selector, or the raw id when the source cannot be read.
+// Best-effort by contract: a lookup failure must never stop an alert, so it
+// degrades to the id rather than erroring.
+func (e *Evaluator) sourceLabel(ctx context.Context, rule *store.MonitoringExpectedSignal) string {
+	src, err := e.store.GetLogSource(ctx, rule.SourceID)
+	if err != nil || src == nil {
+		return rule.SourceID
+	}
+	if name := strings.TrimSpace(src.Name); name != "" {
+		return name
+	}
+	if selector := strings.TrimSpace(src.Selector); selector != "" {
+		return selector
+	}
+	return rule.SourceID
 }
 
 // ensureTask elects the canonical task, but only when the decision raises.
@@ -161,10 +195,13 @@ func (e *Evaluator) ensureTask(
 	return e.tasks.Ensure(ctx, rule.WorkspaceID, d.ClassKey, d.Title, d.Detail, d.Severity)
 }
 
-// announce dispatches notifications for raises and recoveries.
+// announce dispatches notifications for raises and recoveries. sourceLabel is
+// the resolved display name from evaluateRule, carried through so the
+// notification's Source line matches the title without a second lookup.
 func (e *Evaluator) announce(
 	ctx context.Context, rule *store.MonitoringExpectedSignal,
-	d store.ExpectedSignalDecision, result *store.ExpectedSignalResult, now time.Time,
+	d store.ExpectedSignalDecision, result *store.ExpectedSignalResult,
+	now time.Time, sourceLabel string,
 ) error {
 	if result == nil {
 		return nil
@@ -182,9 +219,11 @@ func (e *Evaluator) announce(
 	if !store.ValidSeverity(severity) {
 		severity = d.Severity
 	}
+	// Title and Body are the human-facing text rendered in evaluateRule; Detail
+	// is the full body so the alert, the task and the incident all read the same.
 	return e.notifier.Notify(ctx, distill.Notification{
 		WorkspaceID: rule.WorkspaceID, Severity: severity,
-		Title: d.Title, Body: absenceBody(rule, d, now),
+		Title: d.Title, Body: d.Detail, SourceName: sourceLabel,
 		TaskID: result.Incident.TaskID, IncidentID: result.Incident.ID,
 		NewIncident: result.NewIncident,
 	})
@@ -200,13 +239,17 @@ func (e *Evaluator) announce(
 func (e *Evaluator) announceRecovery(
 	ctx context.Context, rule *store.MonitoringExpectedSignal, now time.Time,
 ) error {
-	note := "Expected signal " + rule.Name + " is arriving again as of " +
-		now.UTC().Format(time.RFC3339) + "."
+	label := e.sourceLabel(ctx, rule)
+	alert := store.ExpectedSignalAlert{
+		Match: rule.MatchSubstring, Source: label, RuleName: rule.Name, Now: now.UTC(),
+	}
+	note := alert.RecoveryBody()
 	incidentID, taskID := e.resolveRecoveredIncident(ctx, rule)
 	err := e.notifier.Notify(ctx, distill.Notification{
 		WorkspaceID: rule.WorkspaceID, Severity: store.SeverityInfo,
-		Title:      "Recovered: expected signal " + rule.Name + " is arriving again",
+		Title:      alert.RecoveryTitle(),
 		Body:       note,
+		SourceName: label,
 		TaskID:     taskID,
 		IncidentID: incidentID,
 	})
@@ -239,25 +282,7 @@ func (e *Evaluator) resolveRecoveredIncident(
 	return "", ""
 }
 
-// absenceBody renders the operator-facing explanation. Assembled from rule
-// columns and the decision only, so it is identical for the same state and
-// clock on every machine — and it always names the learned cadence, because
-// "this normally runs every 10 minutes" is what makes the alert actionable.
-func absenceBody(
-	rule *store.MonitoringExpectedSignal, d store.ExpectedSignalDecision, now time.Time,
-) string {
-	body := d.Detail + "\n\nRule: " + rule.Name + " (learned automatically)\n" +
-		"Window: " + rule.Window().String() + "\n" +
-		"Evaluated: " + now.Format(time.RFC3339) + "\n"
-	if rule.MatchSubstring != "" {
-		body += "Matching: " + rule.MatchSubstring + "\n"
-	}
-	if rule.LastSignalAt != nil {
-		body += "Last confirmed signal: " + rule.LastSignalAt.UTC().Format(time.RFC3339) + "\n"
-	}
-	if d.Outcome == store.OutcomeSignalCollection {
-		body += "\nThis is a COLLECTION problem, not proof the signal stopped. " +
-			"Fix visibility first.\n"
-	}
-	return body
-}
+// The operator-facing body is now rendered by store.ExpectedSignalAlert (see
+// evaluateRule and announceRecovery), so the alert, the canonical task and the
+// stored incident all carry identical, human-readable text — and the auto/
+// rule name is a footer identifier rather than the headline.

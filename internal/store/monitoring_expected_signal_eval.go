@@ -154,14 +154,10 @@ func evaluateSchedule(
 func evaluateAbsence(in ExpectedSignalInput, base ExpectedSignalDecision) ExpectedSignalDecision {
 	rule, obs, health := in.Rule, in.Observed, in.Health
 	if !health.Enabled {
-		return collectionDecision(rule, base, ReasonSourceDisabled,
-			"the log source is disabled, so this expected signal cannot be verified at all")
+		return collectionDecision(rule, obs, health, base, ReasonSourceDisabled)
 	}
 	if health.ConsecutiveFailures >= rule.MaxConsecutiveFailures {
-		return collectionDecision(rule, base, ReasonPullFailing, fmt.Sprintf(
-			"log collection has failed %d consecutive times; the expected signal cannot be verified. "+
-				"Fix collection first — this is NOT evidence that the signal stopped.",
-			health.ConsecutiveFailures))
+		return collectionDecision(rule, obs, health, base, ReasonPullFailing)
 	}
 	// Bootstrap guard: a rule that has never seen its signal has not proven it
 	// can see it. Firing here would alert on every fresh install and on every
@@ -179,23 +175,29 @@ func evaluateAbsence(in ExpectedSignalInput, base ExpectedSignalDecision) Expect
 		return base
 	}
 	if rule.RequireSourceLiveness && obs.TotalLines == 0 {
-		return collectionDecision(rule, base, ReasonSourceSilent,
-			"the source produced no lines of any kind in this window. "+
-				"That is indistinguishable from lost visibility, so no absence is claimed — check the collector and the container first.")
+		return collectionDecision(rule, obs, health, base, ReasonSourceSilent)
 	}
 	return absenceDecision(rule, obs, base)
 }
 
+// collectionDecision and absenceDecision build the human-facing Title/Detail
+// through the shared ExpectedSignalAlert renderer, so the title leads with the
+// matched text and source rather than the learner's auto/<hash> rule name. The
+// pure evaluator can only pass the rule's raw source id; the daemon re-renders
+// with the source's display label before persisting (see the baseline
+// evaluator). Neither the outcome, class key nor severity is touched — only the
+// operator-facing text.
 func collectionDecision(
-	rule MonitoringExpectedSignal, base ExpectedSignalDecision, reason, detail string,
+	rule MonitoringExpectedSignal, obs ExpectedSignalObservation,
+	health SourceCollectionHealth, base ExpectedSignalDecision, reason string,
 ) ExpectedSignalDecision {
 	base.Outcome = OutcomeSignalCollection
 	base.Raise = true
 	base.ClassKey = rule.CollectionClassKey()
 	base.Severity = rule.Severity
 	base.Reason = reason
-	base.Title = fmt.Sprintf("cannot verify expected signal %q", rule.Name)
-	base.Detail = detail
+	alert := NewExpectedSignalAlert(rule, base, obs, health, rule.SourceID)
+	base.Title, base.Detail = alert.Title(), alert.Body()
 	return base
 }
 
@@ -210,17 +212,8 @@ func absenceDecision(
 	if obs.MatchCount > 0 {
 		base.Reason = ReasonBelowMinCount
 	}
-	base.Title = fmt.Sprintf("expected signal %q has stopped", rule.Name)
-	last := "never (within retained history)"
-	if obs.LastMatchAt != nil {
-		last = obs.LastMatchAt.UTC().Format(time.RFC3339)
-	} else if rule.LastSignalAt != nil {
-		last = rule.LastSignalAt.UTC().Format(time.RFC3339)
-	}
-	base.Detail = fmt.Sprintf(
-		"expected at least %d matching line(s) in the last %s but saw %d. "+
-			"Collection is healthy (%d lines from this source in the window), so this is a real absence. Last match: %s.",
-		rule.MinCount, rule.Window(), obs.MatchCount, obs.TotalLines, last)
+	alert := NewExpectedSignalAlert(rule, base, obs, SourceCollectionHealth{}, rule.SourceID)
+	base.Title, base.Detail = alert.Title(), alert.Body()
 	return base
 }
 

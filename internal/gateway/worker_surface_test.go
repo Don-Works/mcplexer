@@ -43,9 +43,11 @@ func TestWorkerToolSurface_TwoTools(t *testing.T) {
 // TestWorkerPreamble_Stable locks down the preamble's load-bearing
 // invariants: it advertises the two-tool surface, names mcpx__search_tools
 // and mcpx__execute_code by their exact builtin names so a model reading
-// the preamble can immediately call them, and mentions the memory
-// namespace as the persistence story. Wording can drift but these
-// promises must hold — the worker's first turn depends on them.
+// the preamble can immediately call them, mentions the memory namespace as
+// the persistence story, and — the coordination promises the parent relies
+// on — tells the worker to hold its scope and to escalate a genuine block
+// rather than loop. Wording can drift but these promises must hold — the
+// worker's first turn (and the parent's trust in the result) depends on them.
 func TestWorkerPreamble_Stable(t *testing.T) {
 	got := WorkerPreamble()
 	for _, must := range []string{
@@ -55,6 +57,8 @@ func TestWorkerPreamble_Stable(t *testing.T) {
 		"mcplexer",
 		"`brw`/browser tools first",
 		"browser skill",
+		"scope",   // scope discipline: work to the brief, don't gold-plate
+		"blocked", // ambiguity escape hatch: proceed on assumption, escalate only when blocked
 	} {
 		if !strings.Contains(got, must) {
 			t.Errorf("preamble missing required token %q\n--- preamble ---\n%s", must, got)
@@ -78,8 +82,9 @@ func TestWorkerPreambleCLI_AccurateAndShorter(t *testing.T) {
 			t.Errorf("CLI preamble repeats the API-only claim %q\n--- preamble ---\n%s", mustNot, cli)
 		}
 	}
-	// What remains has to still orient the worker.
-	for _, must := range []string{"mcplexer", "memory"} {
+	// What remains has to still orient the worker: it keeps its own native
+	// tools, holds its scope, and escalates a genuine block instead of looping.
+	for _, must := range []string{"mcplexer", "memory", "native tools", "scope", "blocked"} {
 		if !strings.Contains(cli, must) {
 			t.Errorf("CLI preamble missing required token %q\n--- preamble ---\n%s", must, cli)
 		}

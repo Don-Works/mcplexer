@@ -210,8 +210,21 @@ type MonitoringIncident struct {
 	LastSeen             time.Time  `json:"last_seen"`
 	LastNotifiedAt       *time.Time `json:"last_notified_at,omitempty"`
 	LastNotifiedSeverity string     `json:"last_notified_severity,omitempty"`
-	CreatedAt            time.Time  `json:"created_at"`
-	UpdatedAt            time.Time  `json:"updated_at"`
+	// Operator action state (migration 150). Acknowledge and silence are a
+	// bounded, reversible pause of the re-notification nag; both record who and
+	// when, and both carry the EFFECTIVE severity at action time so a later
+	// escalation past that floor pierces the pause. AckedAt/SilencedAt nil means
+	// the corresponding action is not in force. SilencedUntil is the hard expiry
+	// the notification policy reads every tick — a silence can never be permanent.
+	AckedAt          *time.Time `json:"acked_at,omitempty"`
+	AckedBy          string     `json:"acked_by,omitempty"`
+	AckedSeverity    string     `json:"acked_severity,omitempty"`
+	SilencedAt       *time.Time `json:"silenced_at,omitempty"`
+	SilencedUntil    *time.Time `json:"silenced_until,omitempty"`
+	SilencedBy       string     `json:"silenced_by,omitempty"`
+	SilencedSeverity string     `json:"silenced_severity,omitempty"`
+	CreatedAt        time.Time  `json:"created_at"`
+	UpdatedAt        time.Time  `json:"updated_at"`
 }
 
 // MonitoringOccurrence is one bounded episode of an incident. Episodes use a

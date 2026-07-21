@@ -34,6 +34,7 @@ import { useConnectionHealth } from '@/components/connections/use-connection-hea
 import { type TimeRange } from './chart-components'
 import { VitalsStrip, type VitalItem } from './vitals-strip'
 import { AttentionCard } from './attention-card'
+import { IncidentsPanel } from './incidents-panel'
 import { RightNowStream } from './right-now-stream'
 import { RecentActivityGrid } from './recent-activity-grid'
 import { TrendsSection } from './trends-section'
@@ -190,6 +191,8 @@ export function DashboardPage() {
           unreviewedDelegations,
         }}
       />
+
+      <IncidentsPanel />
 
       <RightNowStream
         audit={recentCalls.slice(0, 30)}

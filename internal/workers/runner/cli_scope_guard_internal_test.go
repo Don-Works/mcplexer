@@ -1,13 +1,23 @@
 package runner
 
 import (
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
 
 	"github.com/don-works/mcplexer/internal/models"
 	"github.com/don-works/mcplexer/internal/store"
+	"github.com/don-works/mcplexer/internal/workers/delegscope"
 )
+
+// allCLIProviders is the provider set models.IsCLIProvider recognises, used by
+// the default-exemption tests to prove EVERY CLI provider runs on the default.
+var allCLIProviders = []string{
+	models.ProviderClaudeCLI, models.ProviderOpenCodeCLI, models.ProviderGrokCLI,
+	models.ProviderMiMoCLI, models.ProviderGeminiCLI, models.ProviderCodexCLI,
+	models.ProviderPiCLI,
+}
 
 func TestCLIScopeUnenforceable(t *testing.T) {
 	tests := []struct {
@@ -159,6 +169,103 @@ func TestCLIScopeUnenforceableCoversEveryCLIProvider(t *testing.T) {
 			})
 			if !errors.Is(err, ErrCLIScopeUnenforceable) {
 				t.Fatalf("provider %q: err = %v, want ErrCLIScopeUnenforceable", provider, err)
+			}
+		})
+	}
+}
+
+// TestCLIScopeUnenforceableExemptsSystemDefaults is the regression for the CLI
+// delegation break: the delegation admin layer stamps the system default
+// allowlist (delegscope.DefaultToolsJSON / DefaultReviewToolsJSON) onto every
+// delegated worker, so the column is non-empty. Before the fix the guard read
+// that as an operator scope and refused EVERY default CLI delegation before it
+// ran. The default must run; a real operator scope alongside it must still be
+// refused.
+func TestCLIScopeUnenforceableExemptsSystemDefaults(t *testing.T) {
+	for _, provider := range allCLIProviders {
+		for _, def := range []struct {
+			label string
+			json  string
+		}{
+			{"execute default", delegscope.DefaultToolsJSON},
+			{"review default", delegscope.DefaultReviewToolsJSON},
+		} {
+			t.Run(provider+"/"+def.label, func(t *testing.T) {
+				if err := cliScopeUnenforceable(&store.Worker{
+					ModelProvider:     provider,
+					ToolAllowlistJSON: def.json,
+				}); err != nil {
+					t.Fatalf("default allowlist refused for CLI provider %q: %v", provider, err)
+				}
+			})
+		}
+	}
+
+	// A default allowlist does not launder an explicit capability profile:
+	// capability_profile_json is operator-authored (no system default backfills
+	// it) and its gate still cannot reach the CLI child, so the run is refused
+	// on the capability column while the default allowlist is NOT named.
+	t.Run("default allowlist plus explicit capability still refused", func(t *testing.T) {
+		err := cliScopeUnenforceable(&store.Worker{
+			ModelProvider:         models.ProviderClaudeCLI,
+			ToolAllowlistJSON:     delegscope.DefaultToolsJSON,
+			CapabilityProfileJSON: `{"preset":"researcher"}`,
+		})
+		if !errors.Is(err, ErrCLIScopeUnenforceable) {
+			t.Fatalf("err = %v, want ErrCLIScopeUnenforceable", err)
+		}
+		if strings.Contains(err.Error(), "tool_allowlist_json") {
+			t.Errorf("default allowlist wrongly named as a scope: %v", err)
+		}
+		if !strings.Contains(err.Error(), "capability_profile_json") {
+			t.Errorf("capability column not named: %v", err)
+		}
+	})
+
+	// A near-default allowlist (the default minus one tool) is a genuine
+	// operator narrowing and must still be refused, naming the allowlist column.
+	t.Run("near-default operator allowlist still refused", func(t *testing.T) {
+		var names []string
+		if err := json.Unmarshal([]byte(delegscope.DefaultToolsJSON), &names); err != nil {
+			t.Fatal(err)
+		}
+		narrowed, err := json.Marshal(names[:len(names)-1])
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := cliScopeUnenforceable(&store.Worker{
+			ModelProvider:     models.ProviderGrokCLI,
+			ToolAllowlistJSON: string(narrowed),
+		})
+		if !errors.Is(got, ErrCLIScopeUnenforceable) {
+			t.Fatalf("narrowed allowlist not refused: %v", got)
+		}
+		if !strings.Contains(got.Error(), "tool_allowlist_json") {
+			t.Errorf("allowlist column not named: %v", got)
+		}
+	})
+}
+
+// TestWorkerAllowlistOperatorScopeSet pins the operator-vs-default distinction
+// the guard fires on, independent of provider.
+func TestWorkerAllowlistOperatorScopeSet(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want bool
+	}{
+		{name: "empty", raw: "", want: false},
+		{name: "null", raw: "null", want: false},
+		{name: "sqlite default []", raw: "[]", want: false},
+		{name: "execute system default", raw: delegscope.DefaultToolsJSON, want: false},
+		{name: "review system default", raw: delegscope.DefaultReviewToolsJSON, want: false},
+		{name: "operator restrictive list", raw: `["task__create"]`, want: true},
+		{name: "operator superset of default", raw: `["mcpx__execute_code","x__extra"]`, want: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := workerAllowlistOperatorScopeSet(tc.raw); got != tc.want {
+				t.Errorf("workerAllowlistOperatorScopeSet(%q) = %v, want %v", tc.raw, got, tc.want)
 			}
 		})
 	}

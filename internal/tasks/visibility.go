@@ -70,6 +70,44 @@ func (s *Service) SetVisibility(
 	})
 }
 
+// PublishSystemTask widens a SYSTEM-created task to workspace visibility so it
+// replicates to mirrored peers. It deliberately bypasses the agent publication
+// ceiling and the widening-approval gate that SetVisibility enforces: a
+// monitoring incident task is minted by the daemon, not an agent, and must reach
+// the peer dashboard without a human approving each one. A freshly created task
+// is forced private (see sqlite task.go), and the replication send-path denies a
+// private task to every non-owner principal — so a system task that is never
+// widened silently never mirrors.
+//
+// It is a no-op (never an error) when collaboration is off, the workspace has no
+// ACTIVE share (there is no peer to replicate to), or the task is already
+// non-private (idempotent under the incident ensurer's convergence). It consults
+// no model.
+func (s *Service) PublishSystemTask(ctx context.Context, taskID string) error {
+	if s == nil || s.collaborationStore == nil {
+		return nil
+	}
+	access, err := s.collaborationStore.GetTaskAccess(ctx, taskID)
+	if err != nil {
+		return err
+	}
+	// Guard: widen only where there is a peer to replicate to. A non-collab
+	// workspace has no active share; widening there changes visibility semantics
+	// for no benefit.
+	if access.ShareID == "" || access.Visibility != store.TaskVisibilityPrivate {
+		return nil
+	}
+	owner, err := s.localCollaborationOwner(ctx)
+	if err != nil {
+		return err
+	}
+	_, err = s.collaborationStore.SetTaskVisibility(ctx, store.TaskVisibilityChange{
+		TaskID: taskID, Visibility: store.TaskVisibilityWorkspace,
+		ActorPrincipalID: owner.ID, At: time.Now().UTC(),
+	})
+	return err
+}
+
 func (s *Service) localCollaborationOwner(ctx context.Context) (*store.Principal, error) {
 	principals, err := s.collaborationStore.ListPrincipals(ctx)
 	if err != nil {

@@ -14,10 +14,21 @@ import (
 	"github.com/oklog/ulid/v2"
 )
 
+// monitoringIncidentCols is the INSERT column list (migration 143). The
+// operator-action columns (migration 150) carry SQL defaults, so inserts that
+// omit them are correct; keeping them out of this constant leaves the two
+// existing INSERT sites untouched.
 const monitoringIncidentCols = `id, workspace_id, class_key, task_id,
     disposition, severity, title, occurrence_count, event_count,
     first_seen, last_seen, last_notified_at, last_notified_severity,
     created_at, updated_at`
+
+// monitoringIncidentActionCols are the migration-150 operator-action columns.
+// monitoringIncidentReadCols is what every SELECT/scan reads: the base row plus
+// the action state the notification policy and the suppression read path need.
+const monitoringIncidentActionCols = `acked_at, acked_by, acked_severity,
+    silenced_at, silenced_until, silenced_by, silenced_severity`
+const monitoringIncidentReadCols = monitoringIncidentCols + `, ` + monitoringIncidentActionCols
 
 const monitoringOccurrenceCols = `id, incident_id, occurrence_key, source_id,
     template_ids_json, severity, event_count, first_seen, last_seen,
@@ -28,7 +39,7 @@ const monitoringOccurrenceBucket = 15 * time.Minute
 func (d *DB) GetMonitoringIncidentByClass(
 	ctx context.Context, workspaceID, classKey string,
 ) (*store.MonitoringIncident, error) {
-	row := d.q.QueryRowContext(ctx, `SELECT `+monitoringIncidentCols+`
+	row := d.q.QueryRowContext(ctx, `SELECT `+monitoringIncidentReadCols+`
 		FROM monitoring_incidents WHERE workspace_id = ? AND class_key = ?`,
 		workspaceID, classKey)
 	incident, err := scanMonitoringIncident(row)
@@ -53,7 +64,7 @@ func (d *DB) ListMonitoringIncidentsByTemplateIDs(
 	for _, id := range ids {
 		args = append(args, id)
 	}
-	rows, err := d.q.QueryContext(ctx, `SELECT DISTINCT `+prefixedCols("i", monitoringIncidentCols)+`
+	rows, err := d.q.QueryContext(ctx, `SELECT DISTINCT `+prefixedCols("i", monitoringIncidentReadCols)+`
 		FROM monitoring_incidents i
 		JOIN monitoring_incident_templates it ON it.incident_id = i.id
 		WHERE i.workspace_id = ? AND it.template_id IN (`+placeholders(len(ids))+`)
@@ -552,21 +563,21 @@ func requireMonitoringTemplates(
 func getMonitoringIncidentByClassQ(
 	q queryable, ctx context.Context, workspaceID, classKey string,
 ) (*store.MonitoringIncident, error) {
-	return scanMonitoringIncident(q.QueryRowContext(ctx, `SELECT `+monitoringIncidentCols+`
+	return scanMonitoringIncident(q.QueryRowContext(ctx, `SELECT `+monitoringIncidentReadCols+`
 		FROM monitoring_incidents WHERE workspace_id = ? AND class_key = ?`, workspaceID, classKey))
 }
 
 func getMonitoringIncidentByIDQ(
 	q queryable, ctx context.Context, id string,
 ) (*store.MonitoringIncident, error) {
-	return scanMonitoringIncident(q.QueryRowContext(ctx, `SELECT `+monitoringIncidentCols+`
+	return scanMonitoringIncident(q.QueryRowContext(ctx, `SELECT `+monitoringIncidentReadCols+`
 		FROM monitoring_incidents WHERE id = ?`, id))
 }
 
 func getMonitoringIncidentByTemplateQ(
 	q queryable, ctx context.Context, templateID string,
 ) (*store.MonitoringIncident, error) {
-	return scanMonitoringIncident(q.QueryRowContext(ctx, `SELECT `+prefixedCols("i", monitoringIncidentCols)+`
+	return scanMonitoringIncident(q.QueryRowContext(ctx, `SELECT `+prefixedCols("i", monitoringIncidentReadCols)+`
 		FROM monitoring_incidents i
 		JOIN monitoring_incident_templates it ON it.incident_id = i.id
 		WHERE it.template_id = ?`, templateID))
@@ -594,11 +605,13 @@ func insertMonitoringOccurrence(q queryable, ctx context.Context, o *store.Monit
 func scanMonitoringIncident(row interface{ Scan(...any) error }) (*store.MonitoringIncident, error) {
 	var i store.MonitoringIncident
 	var firstSeen, lastSeen, createdAt, updatedAt string
-	var lastNotified sql.NullString
+	var lastNotified, ackedAt, silencedAt, silencedUntil sql.NullString
 	err := row.Scan(&i.ID, &i.WorkspaceID, &i.ClassKey, &i.TaskID,
 		&i.Disposition, &i.Severity, &i.Title, &i.OccurrenceCount, &i.EventCount,
 		&firstSeen, &lastSeen, &lastNotified, &i.LastNotifiedSeverity,
-		&createdAt, &updatedAt)
+		&createdAt, &updatedAt,
+		&ackedAt, &i.AckedBy, &i.AckedSeverity,
+		&silencedAt, &silencedUntil, &i.SilencedBy, &i.SilencedSeverity)
 	if err != nil {
 		return nil, err
 	}
@@ -608,6 +621,9 @@ func scanMonitoringIncident(row interface{ Scan(...any) error }) (*store.Monitor
 		t := parseTime(lastNotified.String)
 		i.LastNotifiedAt = &t
 	}
+	i.AckedAt = nullTimePtr(ackedAt)
+	i.SilencedAt = nullTimePtr(silencedAt)
+	i.SilencedUntil = nullTimePtr(silencedUntil)
 	return &i, nil
 }
 

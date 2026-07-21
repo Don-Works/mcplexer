@@ -91,6 +91,20 @@ type MonitoringIncidentView struct {
 	// inside the policy's active window). Resolution is represented by
 	// LastSeen going stale, so this is the "is it still happening" answer.
 	Active bool `json:"active"`
+	// Suppressed, AckActive and SilenceActive are the read-time twin of the
+	// notification policy's own suppression gate, so "the row says silenced" can
+	// never disagree with "the daemon actually stays quiet". They are IN-FORCE
+	// facts, not merely "was ever set": an ack or silence whose effective
+	// severity has since climbed past the floor it was taken at is pierced and
+	// reads false here, and an expired silence window reads false too. The raw
+	// attribution the UI pairs with them — silenced_until, silenced_by,
+	// acked_at, acked_by — rides along on the embedded incident.
+	//
+	// A client MUST NOT re-derive these from silenced_until > now: that misses
+	// escalation-piercing and would label a re-nagging incident as silenced.
+	Suppressed    bool `json:"suppressed"`
+	AckActive     bool `json:"ack_active"`
+	SilenceActive bool `json:"silence_active"`
 }
 
 // Incident status filter values for MonitoringIncidentFilter.Status.

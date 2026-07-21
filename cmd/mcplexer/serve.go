@@ -41,6 +41,7 @@ import (
 	"github.com/don-works/mcplexer/internal/memory/harnessimport"
 	"github.com/don-works/mcplexer/internal/memsync"
 	"github.com/don-works/mcplexer/internal/mesh"
+	"github.com/don-works/mcplexer/internal/models"
 	"github.com/don-works/mcplexer/internal/notify"
 	"github.com/don-works/mcplexer/internal/oauth"
 	"github.com/don-works/mcplexer/internal/opencode"
@@ -398,6 +399,7 @@ type serverDeps struct {
 	// Workers (M0)
 	workerRunner     *runner.Runner
 	workerAdmin      *workersadmin.Service
+	modelCatalog     *models.Refresher // live, cadence-refreshed model catalog
 	workerRunBus     *runner.RunBus
 	workerDispatcher *toolDispatcher // kept so the gateway-backed builtin caller can be wired post-construction
 	workerGateway    *gateway.Server // dedicated gateway.Server for worker-bound CallTool; session stays uninitialized
@@ -1397,6 +1399,13 @@ func buildServerDeps(ctx context.Context, cfg *Config, db *sqlite.DB, settingsSv
 	// mcplexer__*_worker tools dispatch through it. Schedule-spec
 	// validation reuses the scheduler's parser so cron + interval specs
 	// fail closed at create time, before they hit the DB.
+	// Live model catalog — probes each enabled provider's own model listing
+	// on a cadence so preflight validates against what providers ACTUALLY
+	// offer now, not a static Go list. Constructed here so it can be wired
+	// into both the worker admin service (preflight) and the API router; the
+	// refresh loop itself is started at boot below.
+	d.modelCatalog = newModelCatalogRefresher(db, d.meshMgr)
+
 	workerAdminSvc := workersadmin.New(db, workersadmin.Options{
 		Workspaces:     db,
 		Runner:         d.workerRunner,
@@ -1435,6 +1444,9 @@ func buildServerDeps(ctx context.Context, cfg *Config, db *sqlite.DB, settingsSv
 	// worker_run.* trail.
 	workerAdminSvc.SetAuditor(d.auditor)
 	workerAdminSvc.SetMeshStore(db)
+	// Live model catalog for CLI-provider preflight: reject an unavailable
+	// model id fast (naming what IS available) instead of burning wall-clock.
+	workerAdminSvc.SetModelCatalog(d.modelCatalog)
 	// Feature 5 (coordination): advisory file claims over each
 	// delegation's touches_files — overlap warnings at Delegate time,
 	// release on review/retention-archive, wall-clock-bounded expiry.
@@ -1462,6 +1474,13 @@ func buildServerDeps(ctx context.Context, cfg *Config, db *sqlite.DB, settingsSv
 	} else if n > 0 {
 		slog.Info("resumed orphaned delegation runs after restart", "count", n)
 	}
+
+	// Reap delegation dispatches orphaned between DISPATCH and the run-row
+	// insert (worker died / daemon restarted mid-dispatch). ResumeOrphanedDelegations
+	// above only handles workers that reached status='running'; a dispatch that
+	// never created a run row is invisible to it and would otherwise linger in
+	// 'dispatched' forever. Boot sweep + periodic ticker; grace 0 → service default.
+	startDispatchOrphanReaper(ctx, workerAdminSvc, dispatchOrphanSweepInterval, 0)
 
 	// Optional memory-consolidator bootstrapping. Disabled by default so
 	// workspaces do not grow implicit workers; operators can opt in with
@@ -1711,6 +1730,7 @@ func runServer(ctx context.Context, cfg *Config, db *sqlite.DB, cfgSvc *config.S
 		Sanitizer:              d.sanitizer,
 		SandboxInstall:         d.sandboxInstall,
 		WorkerAdmin:            d.workerAdmin,
+		ModelCatalog:           d.modelCatalog,
 		OpenCode:               d.opencode,
 		BrainGit:               d.brainGit,
 		BrainConfig:            d.brainCfg,
@@ -1764,6 +1784,13 @@ func runServer(ctx context.Context, cfg *Config, db *sqlite.DB, cfgSvc *config.S
 	// failure mode: a hung job emitted nothing, stayed alive, and so was
 	// invisible to every liveness signal and every error-pattern detector.
 	startMonitoringCollector(ctx, db, d.secretsMgr, d.meshMgr, d.tasksSvc)
+
+	// Live model catalog refresh loop — probes each enabled provider's own
+	// model listing on a cadence so the set delegation can route to reflects
+	// what providers ACTUALLY offer now. A catalog nobody refreshes is the
+	// static list it replaced, so the start is asserted by
+	// TestServeBootWiresModelCatalog.
+	startModelCatalogRefresher(ctx, d.modelCatalog)
 
 	err = g.Wait()
 

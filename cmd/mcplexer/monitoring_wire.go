@@ -32,6 +32,7 @@ var (
 	monitoringOnce      sync.Once
 	monitoringQry       *distill.Query
 	monitoringDispatch  *escalate.Dispatcher
+	monitoringDistiller *distill.Distiller
 	monitoringCollector *collect.Manager
 	monitoringColOnce   sync.Once
 	// monitoringRenotifyOnce guards the persistence sweep: exactly one loop
@@ -68,8 +69,8 @@ func buildMonitoring(db store.Store, secretsMgr *secrets.Manager, meshMgr *mesh.
 		}
 		monitoringQry = distill.NewQuery(db)
 		if secretsMgr != nil {
-			distiller := distill.NewDistiller(db, monitoringDispatch)
-			monitoringCollector = collect.NewManager(db, secretsMgr, distiller, nil)
+			monitoringDistiller = distill.NewDistiller(db, monitoringDispatch)
+			monitoringCollector = collect.NewManager(db, secretsMgr, monitoringDistiller, nil)
 		}
 	})
 	// Late-bind the mesh sender. The singleton is sealed by the FIRST
@@ -161,6 +162,14 @@ func startMonitoringCollector(
 	meshMgr *mesh.Manager, tasksSvc *tasks.Service,
 ) {
 	buildMonitoring(db, secretsMgr, meshMgr)
+	// Late-bind the incident ensurer: the distiller is built inside
+	// buildMonitoring (often before the task service exists), but a fired anomaly
+	// is only LINKABLE once it can elect a canonical task. Attaching it here —
+	// before the collector goroutine starts below — gives every anomaly and
+	// rate-spike alert a clickable task instead of a bare template hash.
+	if monitoringDistiller != nil && tasksSvc != nil {
+		monitoringDistiller.WithIncidents(newAnomalyIncidentEnsurer(db, tasksSvc))
+	}
 	// The re-notification sweep is started before the collector's own gate:
 	// it is independent of SSH credentials and must run wherever the
 	// dispatcher does, or an unresolved incident goes quiet again.
