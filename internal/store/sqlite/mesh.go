@@ -219,6 +219,78 @@ func (d *DB) QueryMeshMessages(ctx context.Context, f store.MeshMessageFilter) (
 	return msgs, rows.Err()
 }
 
+// CountMeshMessages returns how many rows match f WITHOUT loading their bodies
+// or sorting — a covering COUNT(*) over idx_mesh_msg_ws_status(workspace_id,
+// status, id). It exists for the hot path: PendingCount runs on EVERY tool
+// response (piggybackMeshNotice), and the prior implementation issued two
+// priority-ORDER-BY'd, content-loading QueryMeshMessages calls (Limit 1 then
+// Limit 100) just to produce a number.
+//
+// It supports exactly the predicate subset the pending-count nag uses —
+// workspace scope, since-cursor, live status, own-session exclusion,
+// kind/actor-kind whitelists+blacklists, and audience/role — so its result
+// matches len(QueryMeshMessages(f)) for any filter built from those fields
+// (regression-guarded in mesh_count_test.go). Callers needing SinceTime,
+// ThreadRoot, Tags, or repo/branch/path scoping must use QueryMeshMessages;
+// those predicates are intentionally NOT applied here.
+//
+// limit > 0 bounds the count (and the scan) at limit rows via an inner LIMIT,
+// yielding min(actual, limit) — this preserves the old two-query PendingCount's
+// saturation at 100. limit <= 0 counts every match.
+func (d *DB) CountMeshMessages(ctx context.Context, f store.MeshMessageFilter, limit int) (int, error) {
+	var where []string
+	var args []any
+
+	if len(f.WorkspaceIDs) > 0 {
+		placeholders := make([]string, len(f.WorkspaceIDs))
+		for i, id := range f.WorkspaceIDs {
+			placeholders[i] = "?"
+			args = append(args, id)
+		}
+		where = append(where, fmt.Sprintf("workspace_id IN (%s)", strings.Join(placeholders, ",")))
+	}
+	if f.SinceID != "" {
+		where = append(where, "id > ?")
+		args = append(args, f.SinceID)
+	}
+	if f.StatusLive {
+		where = append(where, "status = 'live'")
+	}
+	if f.ExcludeSessionID != "" {
+		where = append(where, "session_id != ?")
+		args = append(args, f.ExcludeSessionID)
+	}
+	where, args = appendInFilter(where, args, "kind", f.Kinds, false)
+	where, args = appendInFilter(where, args, "kind", f.ExcludeKinds, true)
+	where, args = appendInFilter(where, args, "actor_kind", f.ActorKinds, false)
+	where, args = appendInFilter(where, args, "actor_kind", f.ExcludeActorKinds, true)
+	if f.Audience != "" || f.AgentRole != "" {
+		audienceClauses := []string{"audience = '*'"}
+		if f.Audience != "" {
+			audienceClauses = append(audienceClauses, "audience = ?")
+			args = append(args, f.Audience)
+		}
+		if f.AgentRole != "" {
+			audienceClauses = append(audienceClauses, "audience = ?")
+			args = append(args, f.AgentRole)
+		}
+		where = append(where, "("+strings.Join(audienceClauses, " OR ")+")")
+	}
+
+	inner := "SELECT 1 FROM mesh_messages"
+	if len(where) > 0 {
+		inner += " WHERE " + strings.Join(where, " AND ")
+	}
+	if limit > 0 {
+		inner += fmt.Sprintf(" LIMIT %d", limit)
+	}
+	var count int
+	if err := d.q.QueryRowContext(ctx, "SELECT COUNT(*) FROM ("+inner+")", args...).Scan(&count); err != nil {
+		return 0, fmt.Errorf("count mesh messages: %w", err)
+	}
+	return count, nil
+}
+
 // appendInFilter appends `col IN (...)` (or NOT IN when negate) to the
 // WHERE clause builder. Empty vals is a no-op so unset filters cost nothing.
 func appendInFilter(where []string, args []any, col string, vals []string, negate bool) ([]string, []any) {

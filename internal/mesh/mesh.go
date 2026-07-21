@@ -763,7 +763,18 @@ func (m *Manager) Receive(ctx context.Context, meta SessionMeta, req ReceiveRequ
 	// id at or below this boundary was just delivered — no un-returned id can
 	// sit below the new cursor, so nothing is skipped. Any truncated (newer)
 	// message keeps a higher id and is re-fetched on the next poll.
-	if filter == "new" && len(msgs) > 0 {
+	//
+	// B1 — but ONLY for a non-narrowed poll. A caller-narrowed filter=new
+	// (kinds/actor-kinds/tags/repo/branch/path) filters the window at the
+	// store, so the delivered batch's max id can sit ABOVE non-matching
+	// messages with lower ids. Advancing the cursor there would push it past
+	// those unmatched-but-unread rows and strand the broader backlog forever
+	// (the documented failure: a kinds:"task_event" poll silently buries every
+	// normal message below the cursor). A narrowed read is therefore a
+	// NON-CONSUMING PEEK — it returns matching rows without moving the cursor;
+	// the caller consumes via the canonical unfiltered poll. See
+	// receiveIsNarrowed.
+	if filter == "new" && len(msgs) > 0 && !receiveIsNarrowed(req) {
 		latest := msgs[0].ID
 		for _, msg := range msgs[1:] {
 			if msg.ID > latest {
@@ -1020,8 +1031,25 @@ func (m *Manager) SetAgentStatus(ctx context.Context, meta SessionMeta, status s
 // kilobytes of state.
 const agentStatusMaxLen = 200
 
+// meshMessageCounter is the OPTIONAL fast-count capability the sqlite store
+// implements (CountMeshMessages): a covering COUNT(*) that loads no message
+// bodies and does no sort. PendingCount uses it when available and falls back
+// to the two-query QueryMeshMessages path otherwise, so a store that doesn't
+// implement it still works. Kept off store.MeshStore deliberately — adding it
+// there would break every full mock of the interface.
+type meshMessageCounter interface {
+	CountMeshMessages(ctx context.Context, f store.MeshMessageFilter, limit int) (int, error)
+}
+
+// pendingCountCap mirrors the saturation ceiling of the historical two-query
+// PendingCount (it re-queried with Limit 100). The piggyback nag only needs
+// "how many, roughly", so bounding the count keeps the hot path cheap.
+const pendingCountCap = 100
+
 // PendingCount returns the number of unread messages for the given agent.
-// Used for piggyback delivery — cheap query, called on every tool response.
+// Used for piggyback delivery — fires on EVERY tool response, so it must stay
+// cheap: with the fast counter it is a single covering COUNT(*), no ORDER BY,
+// no content column.
 func (m *Manager) PendingCount(ctx context.Context, meta SessionMeta) (int, error) {
 	agent, err := m.store.GetMeshAgent(ctx, meta.SessionID)
 	if err != nil {
@@ -1033,7 +1061,9 @@ func (m *Manager) PendingCount(ctx context.Context, meta SessionMeta) (int, erro
 	// global namespace (""), so to_workspace:"*" broadcasts count toward
 	// the nag exactly like Receive would deliver them. kind=task_event is
 	// excluded to mirror the receive default — machine lifecycle echoes
-	// must not inflate the "[mesh: N pending]" piggyback.
+	// must not inflate the "[mesh: N pending]" piggyback. This is exactly the
+	// predicate subset CountMeshMessages supports, so the fast path counts
+	// precisely what a default (unnarrowed) Receive would deliver.
 	filter := store.MeshMessageFilter{
 		WorkspaceIDs:     append(append([]string{}, meta.WorkspaceIDs...), ""),
 		SinceID:          agent.Cursor,
@@ -1042,8 +1072,17 @@ func (m *Manager) PendingCount(ctx context.Context, meta SessionMeta) (int, erro
 		StatusLive:       true,
 		ExcludeSessionID: meta.SessionID, // own sends are not pending reads
 		ExcludeKinds:     []string{KindTaskEvent},
-		Limit:            1, // We only need to know if there are any.
 	}
+
+	// Fast path: a single covering COUNT(*), saturated at pendingCountCap.
+	if counter, ok := m.store.(meshMessageCounter); ok {
+		return counter.CountMeshMessages(ctx, filter, pendingCountCap)
+	}
+
+	// Fallback for stores without the fast counter: probe existence, then
+	// re-query capped to get the count — behaviour-identical to the fast path
+	// (min(actual, pendingCountCap)), just via two full-row queries.
+	filter.Limit = 1
 	msgs, err := m.store.QueryMeshMessages(ctx, filter)
 	if err != nil {
 		return 0, err
@@ -1051,9 +1090,7 @@ func (m *Manager) PendingCount(ctx context.Context, meta SessionMeta) (int, erro
 	if len(msgs) == 0 {
 		return 0, nil
 	}
-
-	// Need exact count — re-query with a wider limit.
-	filter.Limit = 100
+	filter.Limit = pendingCountCap
 	all, err := m.store.QueryMeshMessages(ctx, filter)
 	if err != nil {
 		return 1, nil // We know there's at least 1.

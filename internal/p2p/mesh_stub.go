@@ -59,5 +59,13 @@ func (*MeshTransport) SendBroadcast(_ context.Context, _ *MeshEnvelope) (int, er
 	return 0, ErrP2PNotBuiltIn
 }
 
+// IsConnected returns true (assume reachable) in slim builds. There is no
+// host to prove otherwise, and mesh.dispatchP2P reads this as "don't skip the
+// dial", so a targeted send still falls through to SendToPeer — whose
+// ErrP2PNotBuiltIn is swallowed. Returning true keeps slim-build behaviour
+// identical to before the liveness precheck existed: targeted sends are never
+// enqueued when p2p isn't built in.
+func (*MeshTransport) IsConnected(_ string) bool { return true }
+
 // Close is a no-op in stub mode.
 func (*MeshTransport) Close() error { return nil }

@@ -338,6 +338,50 @@ func displayAgentName(env p2p.MeshEnvelope) string {
 	return "peer:" + truncatePeerID(env.SenderPeerID)
 }
 
+// errPeerOffline marks an outbound-queue row that was parked by the liveness
+// precheck (peer known-disconnected) rather than a failed dial, so the queued
+// row's last_error distinguishes "never dialed, peer was down" from a real
+// dial failure.
+var errPeerOffline = errors.New("peer not connected (liveness precheck; queued without dialing)")
+
+// peerConnectivityProbe is an OPTIONAL capability of a p2pTransport: a cheap,
+// non-dialing "is this peer connected right now?" check. *p2p.MeshTransport
+// implements it; a transport that doesn't is treated as "can't tell", so the
+// dispatch precheck never changes behaviour without a positive offline signal.
+type peerConnectivityProbe interface {
+	IsConnected(peerID string) bool
+}
+
+// peerDisconnected reports whether the transport can POSITIVELY confirm the
+// peer is not currently connected. Returns false ("proceed to dial") whenever
+// the transport can't answer — no probe wired, slim build, or a fake — so the
+// precheck stays inert unless there is a real offline signal to act on.
+func peerDisconnected(t p2pTransport, peerID string) bool {
+	probe, ok := t.(peerConnectivityProbe)
+	if !ok {
+		return false
+	}
+	return !probe.IsConnected(peerID)
+}
+
+// enqueueTargeted parks a targeted envelope in the offline-delivery queue.
+// Precondition: m.outboundQueue != nil. Returns nil once the row is durable
+// (it retries on the peer's next reconnect / the 30s sweep); wraps both errors
+// when the enqueue itself fails so the caller still surfaces a hard failure.
+func (m *Manager) enqueueTargeted(
+	ctx context.Context, toPeer string, msg *store.MeshMessage,
+	env *p2p.MeshEnvelope, cause error,
+) error {
+	audienceSession := ""
+	if msg.Audience != "" && msg.Audience != "*" {
+		audienceSession = msg.Audience
+	}
+	if qErr := m.outboundQueue.Enqueue(ctx, toPeer, audienceSession, env, cause); qErr != nil {
+		return fmt.Errorf("dispatch + enqueue both failed: send=%v queue=%w", cause, qErr)
+	}
+	return nil
+}
+
 // dispatchP2P transmits a MeshMessage via libp2p when the SendRequest
 // indicated cross-machine routing. Returns nil when no p2p send was needed.
 //
@@ -377,6 +421,20 @@ func (m *Manager) dispatchP2P(ctx context.Context, req SendRequest, msg *store.M
 	}
 	if req.ToPeer != "" {
 		env.Recipient = p2p.Recipient{Kind: "peer", Value: req.ToPeer}
+		// Liveness precheck (B2). SendToPeer dials with a 10s timeout, so a
+		// targeted send to an OFFLINE peer blocks the caller's tool-call
+		// goroutine for the full dial before falling through to the durable
+		// outbound queue — a 10s stall that buys nothing, because the message
+		// ends up queued either way. When the transport can cheaply confirm
+		// the peer isn't connected (the same non-dialing gate SendBroadcast
+		// uses) AND a queue is wired to catch it, skip the dial and park
+		// immediately; the row drains on the peer's next reconnect / sweep.
+		// Without the probe or the queue we keep the legacy dial-then-queue
+		// path, so behaviour is unchanged unless we get a positive offline
+		// signal.
+		if m.outboundQueue != nil && peerDisconnected(m.p2p, req.ToPeer) {
+			return m.enqueueTargeted(ctx, req.ToPeer, msg, env, errPeerOffline)
+		}
 		sendErr := m.p2p.SendToPeer(ctx, req.ToPeer, env)
 		if sendErr == nil {
 			return nil
@@ -386,15 +444,7 @@ func (m *Manager) dispatchP2P(ctx context.Context, req SendRequest, msg *store.M
 		}
 		// Try the offline-delivery queue before surfacing the error.
 		if m.outboundQueue != nil {
-			audienceSession := ""
-			if msg.Audience != "" && msg.Audience != "*" {
-				audienceSession = msg.Audience
-			}
-			if qErr := m.outboundQueue.Enqueue(ctx, req.ToPeer, audienceSession, env, sendErr); qErr == nil {
-				return nil
-			} else {
-				return fmt.Errorf("dispatch + enqueue both failed: send=%v queue=%w", sendErr, qErr)
-			}
+			return m.enqueueTargeted(ctx, req.ToPeer, msg, env, sendErr)
 		}
 		return sendErr
 	}

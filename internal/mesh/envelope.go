@@ -1,6 +1,8 @@
 package mesh
 
 import (
+	"time"
+
 	"github.com/don-works/mcplexer/internal/idtrunc"
 )
 
@@ -48,8 +50,14 @@ type ReceiveEnvelopeMsg struct {
 	// ActorKind tags what fired the send: "agent" | "worker" | "user" |
 	// "peer-import" | "system". Lets consumers visually separate (or
 	// filter out, via the actor_kinds receive params) worker chatter.
-	ActorKind    string `json:"actor_kind,omitempty"`
-	From         string `json:"from"`
+	ActorKind string `json:"actor_kind,omitempty"`
+	From      string `json:"from"`
+	// CreatedAt is the absolute send time (RFC3339, UTC). Age is the same
+	// instant rendered relative to now. Agents mapping over messages kept
+	// reading a `.created_at` that did not exist and got empty strings — the
+	// only temporal field used to be the relative `age`. Both are now present:
+	// created_at for sorting/arithmetic, age for a human glance.
+	CreatedAt    string `json:"created_at"`
 	Age          string `json:"age"`
 	Preview      string `json:"preview"`
 	ContentBytes int    `json:"content_bytes"`
@@ -129,6 +137,7 @@ func BuildReceiveEnvelope(r *ReceiveResult, selfSessionID string, opts ReceiveEn
 			Priority:     msg.Priority,
 			ActorKind:    msg.ActorKind,
 			From:         scan(messageSender(&msg)),
+			CreatedAt:    formatEnvelopeTimestamp(msg.CreatedAt),
 			Age:          formatRelativeTime(msg.CreatedAt),
 			Preview:      wrap(preview),
 			ContentBytes: len(msg.Content),
@@ -153,4 +162,15 @@ func receiveEnvelopeHint(taskEventsExcluded bool) string {
 		hint += ". kind=task_event messages are excluded by default — pass kinds:\"task_event\" to opt in"
 	}
 	return hint
+}
+
+// formatEnvelopeTimestamp renders an absolute send time as RFC3339 in UTC.
+// A zero time (legacy/uninitialised rows) renders as the empty string so a
+// consumer can tell "no timestamp" from a real one rather than seeing the
+// Go zero-value year 0001.
+func formatEnvelopeTimestamp(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.UTC().Format(time.RFC3339)
 }

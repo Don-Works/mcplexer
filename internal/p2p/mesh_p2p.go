@@ -166,6 +166,23 @@ func (t *MeshTransport) SendToPeer(ctx context.Context, peerID string, env *Mesh
 	return nil
 }
 
+// IsConnected reports whether peerID currently holds an open libp2p
+// connection, WITHOUT dialing. It is the same non-dialing gate SendBroadcast
+// uses to skip offline peers; mesh.dispatchP2P consults it so a targeted send
+// to an offline peer parks in the durable outbound queue immediately instead
+// of blocking the caller for the full 10s SendToPeer dial timeout. Returns
+// false on an undecodable peer id or when no host is wired.
+func (t *MeshTransport) IsConnected(peerID string) bool {
+	if t == nil || t.host == nil {
+		return false
+	}
+	pid, err := peer.Decode(peerID)
+	if err != nil {
+		return false
+	}
+	return t.host.IsConnected(pid)
+}
+
 // SendBroadcast ships env to every currently-CONNECTED paired peer. Legs run
 // concurrently; per-peer errors are logged but never abort the fan-out.
 // Returns the count successfully sent.

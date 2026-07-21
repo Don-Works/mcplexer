@@ -1074,11 +1074,23 @@ func delegationPrompt(in DelegationInput, meta delegationMetadata) string {
 		b.WriteString(in.Handoff)
 		b.WriteString("\n\n")
 	}
+	// Ambiguity contract: the parent has no live back-channel, so a worker that
+	// hits an un-guessable, load-bearing decision must NOT burn its budget
+	// hunting the answer in code/memory/mesh (measured: ~100s + 6 tool calls
+	// wasted before a worker concluded it had to ask). It states the single
+	// decision in QUESTION with a best-guess default and stops, so the parent
+	// can answer and re-dispatch. Everything the worker CAN do safely on a
+	// reasonable in-scope assumption, it still does — this is the escape hatch
+	// for genuine blockers, not a licence to defer routine judgement calls.
+	b.WriteString("## When you are blocked on a decision\n")
+	b.WriteString("If a single decision you cannot safely assume blocks correct completion, do not spend tool calls searching for it. Set STATUS blocked, state that one decision in QUESTION with your best-guess default, complete any work that does not depend on it, and stop. The parent will answer and re-dispatch.\n\n")
 	b.WriteString("## Required final response format\n")
+	b.WriteString("Start your reply with the STATUS line on its own line — never glued to a preceding sentence.\n")
 	b.WriteString("STATUS: success | blocked | partial\n")
 	b.WriteString("CHANGED: concise file/task summary\n")
 	b.WriteString("TESTED: commands run and result, or why not run\n")
 	b.WriteString("TOKENS_SAVED: what you handled so the parent did not have to\n")
+	b.WriteString("QUESTION: when STATUS is blocked, the one decision you need from the parent plus your proposed default; otherwise none\n")
 	b.WriteString("RISKS: remaining risk or follow-up\n")
 	b.WriteString("HANDOFF: exact next action for the parent model\n")
 	return b.String()

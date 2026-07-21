@@ -16,7 +16,13 @@ const (
 )
 
 var (
-	workerStatusLineRe = regexp.MustCompile(`(?mi)^STATUS:\s*(success|blocked|partial)\b`)
+	// STATUS may sit at a line start OR be glued to the end of a preceding
+	// sentence: local CLI models were observed emitting "…not inventing a
+	// value.STATUS: blocked" with no newline, which a bare ^ anchor missed,
+	// silently dropping the worker's self-reported status. The leading class
+	// admits any non-alphanumeric boundary (period, space) so the glued form
+	// is caught while "myStatus:" / mid-word matches are not.
+	workerStatusLineRe = regexp.MustCompile(`(?mi)(?:^|[^A-Za-z0-9])STATUS:\s*(success|blocked|partial)\b`)
 	commitSHARe        = regexp.MustCompile(`(?i)(?:commit(?:\s+sha)?[:\s]+|sha[:\s]+)([0-9a-f]{7,40})\b`)
 	branchLineRe       = regexp.MustCompile(`(?i)(?:^|\n)\s*(?:branch|BRANCH)[:\s=]+([^\s\n,;]+)`)
 	noDeliverableRe    = regexp.MustCompile(`(?i)(?:no-code|superseded|no\s+commit|returned\s+no-code)`)

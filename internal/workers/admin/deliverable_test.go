@@ -52,6 +52,18 @@ func TestAnnotateDeliverable(t *testing.T) {
 			want: "failed_no_output",
 		},
 		{
+			// Regression: a local CLI model glued the STATUS token onto the
+			// end of a preceding sentence ("…not inventing a value.STATUS:
+			// blocked"). The bare ^ anchor missed it, so the blocked
+			// self-report was dropped and the run mis-read as spend_no_commit.
+			name: "blocked worker report glued to prose",
+			run: store.WorkerRun{
+				Status:     "success",
+				OutputText: "Confirming: no agreed value.STATUS: blocked\nQUESTION: which timeout, and what seconds?\nRISKS: none",
+			},
+			want: "failed_no_output",
+		},
+		{
 			name: "branch only",
 			run: store.WorkerRun{
 				Status:         "success",

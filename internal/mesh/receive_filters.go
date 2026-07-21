@@ -46,6 +46,31 @@ func resolveKindFilters(req ReceiveRequest) (kinds, excludeKinds []string, taskE
 	return kinds, excludeKinds, true
 }
 
+// receiveIsNarrowed reports whether a filter=new request carries any
+// caller-supplied narrowing filter — kind, actor-kind, tag, or
+// repo/branch/path scoping. Such a read is a NON-CONSUMING PEEK: it must not
+// advance the cursor, because QueryMeshMessages filters the window at the
+// store (Kinds/ExcludeKinds/ActorKinds/ExcludeActorKinds/Tags/Repo/Branch/
+// WorkspacePath), so advancing to the delivered batch's max id would push the
+// cursor PAST every non-matching message with a lower id and strand the
+// broader backlog forever (B1: a kinds:"task_event" poll silently buries the
+// entire normal-message backlog below the cursor).
+//
+// The default task_event exclusion is auto-applied when the caller leaves
+// req.Kinds/req.ExcludeKinds empty (see resolveKindFilters), so it is
+// deliberately NOT counted here — the canonical unfiltered poll still consumes
+// and advances the cursor.
+func receiveIsNarrowed(req ReceiveRequest) bool {
+	return req.Tags != "" ||
+		req.Kinds != "" ||
+		req.ExcludeKinds != "" ||
+		req.ActorKinds != "" ||
+		req.ExcludeActorKinds != "" ||
+		req.Repo != "" ||
+		req.Branch != "" ||
+		req.WorkspacePath != ""
+}
+
 // splitCSVList splits a comma-separated list into trimmed non-empty items.
 func splitCSVList(s string) []string {
 	if s == "" {
