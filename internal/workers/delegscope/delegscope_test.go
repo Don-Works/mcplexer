@@ -82,3 +82,30 @@ func TestDefaultsAreDistinctAndParseable(t *testing.T) {
 		t.Errorf("review default (%d tools) is not narrower than execute default (%d tools)", len(review), len(exec))
 	}
 }
+
+// TestDefaultsIncludeReadOnlyIndexTools pins the citation-verification fix: the
+// read-only local index tools must stay in BOTH defaults. Without them a
+// citation-verifying post_execute_script cannot query the code index unless the
+// operator adds the tools — which on a CLI worker reads as an operator scope and
+// is refused as unenforceable, leaving weak/local models with no model-free way
+// to catch a wrong-line citation. Removing them re-opens that Catch-22.
+func TestDefaultsIncludeReadOnlyIndexTools(t *testing.T) {
+	for name, raw := range map[string]string{
+		"execute": DefaultToolsJSON,
+		"review":  DefaultReviewToolsJSON,
+	} {
+		tools, ok := parseToolList(raw)
+		if !ok {
+			t.Fatalf("%s default did not parse", name)
+		}
+		have := map[string]bool{}
+		for _, tool := range tools {
+			have[tool] = true
+		}
+		for _, want := range []string{"index__summary", "index__symbols"} {
+			if !have[want] {
+				t.Errorf("%s default is missing read-only index tool %q — the citation-gate cannot run under the default allowlist without it", name, want)
+			}
+		}
+	}
+}

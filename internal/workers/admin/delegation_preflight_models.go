@@ -62,6 +62,30 @@ func (s *Service) preflightKnownModelIDs(ctx context.Context, candidates []deleg
 	return nil
 }
 
+// candidateCatalogUnavailable returns a non-empty reason when the LIVE catalog
+// definitively reports that a CLI-provider candidate's model id is not offered
+// right now. It is used to DROP such a candidate from the auto-expanded capacity
+// pool, rather than let preflightKnownModelIDs hard-reject the whole delegation
+// on one bad id buried in a ranked pool the caller never chose. The hard-reject
+// stays for explicitly-pinned candidates (single/ranked/side_by_side), where a
+// bad id IS the operator's mistake to surface.
+//
+// Returns "" (keep) for non-CLI providers, when no catalog is wired, or when the
+// catalog has no live entry for the provider — "unknown" is not "unavailable",
+// so a provider the catalog cannot see yet falls through to preflight's static
+// fallback for the survivors.
+func (s *Service) candidateCatalogUnavailable(c delegationResolvedModelCandidate) string {
+	if s.modelCatalog == nil || !models.IsCLIProvider(c.ModelProvider) {
+		return ""
+	}
+	entry, ok := s.modelCatalog.Catalog().Provider(c.ModelProvider)
+	if !ok || len(entry.Models) == 0 || entry.HasModel(c.ModelID) {
+		return ""
+	}
+	return fmt.Sprintf("candidate %q dropped: not in the current catalog for provider %q",
+		c.ModelProvider+"/"+c.ModelID, c.ModelProvider)
+}
+
 // loadDeclaredModelIDs builds provider -> declared KnownModels from the model
 // profile store (the legacy static catalog).
 func (s *Service) loadDeclaredModelIDs(ctx context.Context) (map[string]map[string]struct{}, error) {

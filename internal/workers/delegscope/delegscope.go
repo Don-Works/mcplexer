@@ -28,14 +28,24 @@ import (
 // DefaultToolsJSON is the tool allowlist an execute-mode delegated worker
 // receives when the operator supplies no tool_allowlist_json. It is the SYSTEM
 // default, not an operator-authored scope.
-const DefaultToolsJSON = `["mcpx__execute_code","mcpx__search_tools","mcpx__skill_search","mcpx__skill_get","mcpx__workspace_read_file","mcpx__workspace_list_directory","mcpx__workspace_write_file","mcpx__workspace_edit_file","mesh__send","mesh__receive","mesh__list_peers","mesh__list_agents","memory__save","memory__recall","memory__list","task__create","task__get","task__list","task__update","task__append_note"]`
+//
+// index__summary / index__symbols are in the baseline deliberately. They are
+// read-only, local code-index queries, and their presence is what lets a
+// citation-verifying post_execute_script (which re-derives every file:line
+// claim from the index) run WITHOUT the operator having to add index tools —
+// which on a CLI worker would read as an operator scope and be refused as
+// unenforceable, leaving weak/local models (where line-citation drift is
+// worst) with no model-free way to catch a wrong-line answer.
+const DefaultToolsJSON = `["mcpx__execute_code","mcpx__search_tools","mcpx__skill_search","mcpx__skill_get","mcpx__workspace_read_file","mcpx__workspace_list_directory","mcpx__workspace_write_file","mcpx__workspace_edit_file","index__summary","index__symbols","mesh__send","mesh__receive","mesh__list_peers","mesh__list_agents","memory__save","memory__recall","memory__list","task__create","task__get","task__list","task__update","task__append_note"]`
 
 // DefaultReviewToolsJSON is the hardened default for worker_mode=review. It
 // omits mutating operations (task create/update, memory save) so a review
 // worker cannot make state changes unless the operator explicitly supplies a
 // broader allowlist. Like DefaultToolsJSON it is a system default: the role
 // filter narrows the baseline, it is not an operator-authored security scope.
-const DefaultReviewToolsJSON = `["mcpx__execute_code","mcpx__search_tools","mcpx__skill_search","mcpx__skill_get","mcpx__workspace_read_file","mcpx__workspace_list_directory","mesh__send","mesh__receive","mesh__list_peers","mesh__list_agents","memory__recall","memory__list","task__get","task__list","task__append_note"]`
+// The read-only index tools stay (a review worker benefits most from checking
+// citations against the index).
+const DefaultReviewToolsJSON = `["mcpx__execute_code","mcpx__search_tools","mcpx__skill_search","mcpx__skill_get","mcpx__workspace_read_file","mcpx__workspace_list_directory","index__summary","index__symbols","mesh__send","mesh__receive","mesh__list_peers","mesh__list_agents","memory__recall","memory__list","task__get","task__list","task__append_note"]`
 
 // IsDefaultAllowlist reports whether raw is one of the system default
 // delegation allowlists (execute or review), compared as an order- and

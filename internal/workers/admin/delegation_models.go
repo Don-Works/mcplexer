@@ -144,6 +144,15 @@ func (s *Service) resolveDelegationModelCandidates(
 				}
 				continue
 			}
+			// Drop a candidate the live catalog says is unavailable, rather than
+			// let preflight hard-reject the whole capacity delegation on one bad
+			// id in a pool the caller never explicitly chose.
+			if reason := s.candidateCatalogUnavailable(c); reason != "" {
+				if firstErr == nil {
+					firstErr = errors.New(reason)
+				}
+				continue
+			}
 			available = append(available, c)
 		}
 		if len(available) == 0 {
