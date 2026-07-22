@@ -378,6 +378,12 @@ func (m *Manager) Send(ctx context.Context, meta SessionMeta, req SendRequest) (
 	// Resolve to_agent: look up the named agent in mesh_agents and project
 	// it onto Audience (+ ToPeer for remote agents). Done after to_peer so
 	// an explicit to_peer wins on conflict; we only fill in what's empty.
+	//
+	// toAgentWSSet/toAgentWS carry the resolved LOCAL target's own workspace
+	// down to the wsID switch below, so the message is filed where the target
+	// can actually read it. See the switch's case "" for why.
+	var toAgentWS string
+	var toAgentWSSet bool
 	if req.ToAgent != "" {
 		agent, err := m.ResolveAgentNameInWorkspaces(ctx, req.ToAgent, meta.WorkspaceIDs)
 		if err != nil {
@@ -390,6 +396,12 @@ func (m *Manager) Send(ctx context.Context, meta SessionMeta, req SendRequest) (
 		// audience=session_id and deliver to the matching local session.
 		if remote := agentRemotePeerID(agent); remote != "" && req.ToPeer == "" {
 			req.ToPeer = remote
+		} else if remote == "" {
+			// Local target: remember its registration workspace so the empty
+			// to_workspace path files the row there instead of under the
+			// sender's most-specific workspace (which the target may not read).
+			toAgentWS = agent.WorkspaceID
+			toAgentWSSet = true
 		}
 		// Keep req.Audience in lock-step with the resolved local audience so
 		// dispatchP2P sees the same value the message row is stamped with —
@@ -433,6 +445,22 @@ func (m *Manager) Send(ctx context.Context, meta SessionMeta, req SendRequest) (
 	case "*", "global":
 		wsID = "" // explicit global broadcast — the only path to the shared namespace
 	case "":
+		// A targeted to_agent send addressed to a LOCAL agent files the row in
+		// that agent's own registration workspace, not the sender's. The
+		// sender's readable set spans its whole ancestor chain, so it can
+		// legally resolve an agent registered under an ANCESTOR workspace; but
+		// stamping the row with the sender's most-specific (descendant)
+		// workspace — the default just below — puts it in a workspace the
+		// target does NOT read, and the addressed message is silently dropped
+		// while the sender gets a success receipt. Filing in the target's
+		// workspace does not broadcast: the audience gate (canReadMessage) has
+		// already collapsed to the target's session id, so only the target
+		// reads it. toAgentWS may legitimately be "" (a globally-registered
+		// target), which is exactly where that target reads.
+		if toAgentWSSet {
+			wsID = toAgentWS
+			break
+		}
 		for _, id := range meta.WorkspaceIDs {
 			if id != "" {
 				wsID = id

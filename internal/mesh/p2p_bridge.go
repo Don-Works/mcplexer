@@ -420,6 +420,24 @@ func (m *Manager) dispatchP2P(ctx context.Context, req SendRequest, msg *store.M
 		WorkspaceID:       msg.WorkspaceID, // G1 — let receivers resolve workspace via binding
 	}
 	if req.ToPeer != "" {
+		// KNOWN LIMITATION (over-delivery, not loss): overwriting Recipient
+		// with the peer id discards the resolved audience (session id) set at
+		// :415, so a targeted to_agent send to a REMOTE agent is filed
+		// Audience="*" on the receiver (ingestEnvelope only honours
+		// Kind=="audience"/"role") and read by EVERY agent in the bound
+		// workspace, not just the addressed one.
+		//
+		// This is deliberately not "fixed" by preserving the audience here:
+		// for a peer-origin agent the resolved audience is the sender's PEER
+		// id (upsertRemoteAgent stores SessionID=peer id, since this machine
+		// never learns the target's real session id on the remote), so carrying
+		// it would match ZERO sessions on the receiver and turn over-delivery
+		// into silent loss — strictly worse. Broadcasting to the workspace is
+		// the least-bad option until the agent-directory gossip propagates real
+		// remote session ids (then: keep Recipient={audience, real_session_id}
+		// and route via the separate SendToPeer arg below without overwriting).
+		// The peer id is NOT needed in Recipient for transport — SendToPeer
+		// takes req.ToPeer directly at :438.
 		env.Recipient = p2p.Recipient{Kind: "peer", Value: req.ToPeer}
 		// Liveness precheck (B2). SendToPeer dials with a 10s timeout, so a
 		// targeted send to an OFFLINE peer blocks the caller's tool-call
