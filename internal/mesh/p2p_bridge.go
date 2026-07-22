@@ -392,6 +392,33 @@ func (m *Manager) enqueueTargeted(
 //     wired we keep the historical behaviour (return the error).
 //   - Broadcast (audience=*) failures are NOT queued — broadcasts are
 //     fire-and-forget by contract.
+// deNamespaceRemoteSession extracts a remote agent's real (peer-local) session
+// id from a directory-namespaced audience so it can be placed on the p2p wire.
+//
+// The agent-directory sink stores a peer's agents with
+// SessionID = "peer:<fromPeerID>:<realSession>" (see agentDirectorySink.upsert
+// / namespacedSessionID). When a to_agent send resolves such an agent, that
+// namespaced id becomes msg.Audience. The receiving peer, however, keys its
+// local sessions by the RAW session id, so the wire must carry <realSession>,
+// not the namespaced form (which would match nothing there).
+//
+// Returns "" — signalling the caller to fall back to peer-addressed delivery —
+// when the audience is empty, "*", or not namespaced for toPeer (e.g. a
+// message-ingest fallback agent whose SessionID is just the bare peer id, or a
+// local session id that never went through the directory). The prefix is bound
+// to toPeer so an audience namespaced for a DIFFERENT peer is never mistaken
+// for this peer's session.
+func deNamespaceRemoteSession(audience, toPeer string) string {
+	if audience == "" || audience == "*" || toPeer == "" {
+		return ""
+	}
+	prefix := store.MeshAgentOriginPeerPrefix + toPeer + ":" // "peer:<toPeer>:"
+	if !strings.HasPrefix(audience, prefix) {
+		return ""
+	}
+	return audience[len(prefix):]
+}
+
 func (m *Manager) dispatchP2P(ctx context.Context, req SendRequest, msg *store.MeshMessage) error {
 	if m == nil || m.p2p == nil {
 		return nil
@@ -420,25 +447,26 @@ func (m *Manager) dispatchP2P(ctx context.Context, req SendRequest, msg *store.M
 		WorkspaceID:       msg.WorkspaceID, // G1 — let receivers resolve workspace via binding
 	}
 	if req.ToPeer != "" {
-		// KNOWN LIMITATION (over-delivery, not loss): overwriting Recipient
-		// with the peer id discards the resolved audience (session id) set at
-		// :415, so a targeted to_agent send to a REMOTE agent is filed
-		// Audience="*" on the receiver (ingestEnvelope only honours
-		// Kind=="audience"/"role") and read by EVERY agent in the bound
-		// workspace, not just the addressed one.
+		// Carry the TARGET's real session id in Recipient so the receiver files
+		// the message to the one addressed session instead of broadcasting to
+		// its whole workspace. The transport does NOT need the peer id in
+		// Recipient — SendToPeer takes req.ToPeer directly below — so the old
+		// {Kind:"peer"} overwrite only discarded the audience.
 		//
-		// This is deliberately not "fixed" by preserving the audience here:
-		// for a peer-origin agent the resolved audience is the sender's PEER
-		// id (upsertRemoteAgent stores SessionID=peer id, since this machine
-		// never learns the target's real session id on the remote), so carrying
-		// it would match ZERO sessions on the receiver and turn over-delivery
-		// into silent loss — strictly worse. Broadcasting to the workspace is
-		// the least-bad option until the agent-directory gossip propagates real
-		// remote session ids (then: keep Recipient={audience, real_session_id}
-		// and route via the separate SendToPeer arg below without overwriting).
-		// The peer id is NOT needed in Recipient for transport — SendToPeer
-		// takes req.ToPeer directly at :438.
-		env.Recipient = p2p.Recipient{Kind: "peer", Value: req.ToPeer}
+		// For a to_agent send to a remote agent, msg.Audience is the resolved
+		// agent row's SessionID, which the agent-directory sink namespaces as
+		// "peer:<toPeer>:<realSession>". Strip that namespace so the wire
+		// carries the target's real (peer-local) session id, which the receiver
+		// matches against its local session (ingestEnvelope honours
+		// Kind=="audience"). If the audience is not namespaced for this peer —
+		// e.g. a message-ingest fallback agent with no gossiped session id, or a
+		// plain to_peer broadcast — fall back to peer-addressing so the message
+		// still reaches the workspace rather than matching zero sessions.
+		if realSession := deNamespaceRemoteSession(msg.Audience, req.ToPeer); realSession != "" {
+			env.Recipient = p2p.Recipient{Kind: "audience", Value: realSession}
+		} else {
+			env.Recipient = p2p.Recipient{Kind: "peer", Value: req.ToPeer}
+		}
 		// Liveness precheck (B2). SendToPeer dials with a 10s timeout, so a
 		// targeted send to an OFFLINE peer blocks the caller's tool-call
 		// goroutine for the full dial before falling through to the durable
