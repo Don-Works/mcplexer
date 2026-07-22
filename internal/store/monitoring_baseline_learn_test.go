@@ -51,6 +51,15 @@ func TestEvaluateBaselineCandidateLadder(t *testing.T) {
 		reasonHas string
 	}{
 		{
+			name: "monitor-generated observations never become heartbeats",
+			mutate: func(c *BaselineCandidate) {
+				c.Masked = "logwatch: source discontinuity — container/service restarted"
+				c.MatchSubstring = "logwatch: source discontinuity"
+			},
+			want:      BaselineRejectMonitoringSynthetic,
+			reasonHas: "monitoring observation",
+		},
+		{
 			name: "insufficient history does not promote",
 			mutate: func(c *BaselineCandidate) {
 				c.FirstSeen = baselineTestNow.Add(-40 * time.Hour)

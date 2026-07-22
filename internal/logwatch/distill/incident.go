@@ -74,12 +74,25 @@ func (d *Distiller) WithIncidents(e IncidentEnsurer) *Distiller {
 	return d
 }
 
-// anomalyClassKey is the incident class for a single-template anomaly. It MUST
-// equal the gateway triage path's default single-template class
-// (handler_monitoring_class.go: "template:" + id) so an anomaly-filed incident
-// and a later worker triage of the SAME template converge on one incident and
-// one task rather than filing siblings.
+// anomalyClassKey is the fallback incident class for an anomaly with no stable
+// evidence-derived correlation. It equals the gateway triage path's default
+// single-template class so later worker triage converges on the same incident.
 func anomalyClassKey(templateID string) string { return "template:" + templateID }
+
+// anomalyClassForTemplate applies the same correlation-key normalization as
+// worker triage before the immediate anomaly path creates a task. This is what
+// prevents a burst of scanner paths, paired logging call sites, or error-value
+// variants from filing one generic task per new template during the minutes
+// before the worker can classify them.
+func anomalyClassForTemplate(src *store.LogSource, tpl *store.LogTemplate) string {
+	if tpl == nil {
+		return ""
+	}
+	if key := NormalizeCorrelationKey(correlationKey(src, tpl.SampleLast)); key != "" {
+		return "correlation:" + key
+	}
+	return anomalyClassKey(tpl.ID)
+}
 
 // rateSpikeClassKey is the incident/task class shared by every rate-spike
 // episode on one source, so repeats dedupe onto one task.
@@ -95,7 +108,7 @@ func (d *Distiller) linkAnomalyIncident(
 ) *IncidentRef {
 	return d.linkIncident(ctx, n, IncidentInput{
 		WorkspaceID: src.WorkspaceID,
-		ClassKey:    anomalyClassKey(agg.tpl.ID),
+		ClassKey:    anomalyClassForTemplate(src, agg.tpl),
 		Title:       n.Title,
 		Body:        n.Body,
 		Severity:    agg.tpl.Severity,

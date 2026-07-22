@@ -184,6 +184,25 @@ func TestDistiller_DistinctTemplatesDistinctIncidents(t *testing.T) {
 	}
 }
 
+func TestAnomalyClassForTemplateGroupsPairedLogSites(t *testing.T) {
+	src := &store.LogSource{Name: "webhooks"}
+	first := &store.LogTemplate{
+		ID: "tpl-service", SampleLast: "WARN purchase_order/service.go:93 " +
+			"PO Number Request failed with reason Invalid Employee number",
+	}
+	second := &store.LogTemplate{
+		ID: "tpl-utils", SampleLast: "INFO purchase_order/utils.go:131 " +
+			"PO Number Request failed with reason Job is not allowed materials",
+	}
+	want := "correlation:webhooks purchase order number rejected"
+	if got := anomalyClassForTemplate(src, first); got != want {
+		t.Fatalf("first class = %q; want %q", got, want)
+	}
+	if got := anomalyClassForTemplate(src, second); got != want {
+		t.Fatalf("second class = %q; want %q", got, want)
+	}
+}
+
 // TestDistiller_AnomalyEnsureFailureStillNotifies: a failure to file the
 // incident degrades to an unlinked alert, never a dropped one.
 func TestDistiller_AnomalyEnsureFailureStillNotifies(t *testing.T) {

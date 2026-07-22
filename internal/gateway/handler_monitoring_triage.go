@@ -267,7 +267,7 @@ func (h *handler) ensureMonitoringCanonicalTask(
 ) (*store.Task, bool, error) {
 	if mapped != nil && mapped.TaskID != "" {
 		if task, err := h.tasksSvc.Get(ctx, workspaceID, mapped.TaskID); err == nil {
-			updated, updateErr := h.updateMonitoringTaskMeta(ctx, task, classKey, ids, args.CorrelationKey, args.Severity)
+			updated, updateErr := h.updateMonitoringTaskMeta(ctx, task, classKey, ids, args)
 			return updated, false, updateErr
 		} else if !errors.Is(err, store.ErrNotFound) {
 			return nil, false, fmt.Errorf("read canonical monitoring task: %w", err)
@@ -276,7 +276,7 @@ func (h *handler) ensureMonitoringCanonicalTask(
 	if task, err := h.findMonitoringTaskByClass(ctx, workspaceID, classKey); err != nil {
 		return nil, false, err
 	} else if task != nil {
-		updated, err := h.updateMonitoringTaskMeta(ctx, task, classKey, ids, args.CorrelationKey, args.Severity)
+		updated, err := h.updateMonitoringTaskMeta(ctx, task, classKey, ids, args)
 		return updated, false, err
 	}
 	// Upgrade the oldest legacy template/correlation match before creating a
@@ -285,7 +285,7 @@ func (h *handler) ensureMonitoringCanonicalTask(
 	if legacy, err := h.findLegacyMonitoringTask(ctx, workspaceID, ids, args.CorrelationKey); err != nil {
 		return nil, false, err
 	} else if legacy != nil {
-		updated, err := h.updateMonitoringTaskMeta(ctx, legacy, classKey, ids, args.CorrelationKey, args.Severity)
+		updated, err := h.updateMonitoringTaskMeta(ctx, legacy, classKey, ids, args)
 		return updated, false, err
 	}
 	meta := monitoringTaskMeta("", classKey, ids, args.CorrelationKey)
@@ -313,7 +313,7 @@ func (h *handler) ensureMonitoringCanonicalTask(
 	if task == nil {
 		return nil, false, errors.New("canonical monitoring task won uniqueness race but could not be read")
 	}
-	updated, updateErr := h.updateMonitoringTaskMeta(ctx, task, classKey, ids, args.CorrelationKey, args.Severity)
+	updated, updateErr := h.updateMonitoringTaskMeta(ctx, task, classKey, ids, args)
 	return updated, false, updateErr
 }
 
@@ -361,18 +361,31 @@ func (h *handler) findLegacyMonitoringTask(
 
 func (h *handler) updateMonitoringTaskMeta(
 	ctx context.Context, task *store.Task, classKey string, ids []string,
-	correlationKey, severity string,
+	args monitoringCommitArgs,
 ) (*store.Task, error) {
-	meta := monitoringTaskMeta(task.Meta, classKey, ids, correlationKey)
+	meta := monitoringTaskMeta(task.Meta, classKey, ids, args.CorrelationKey)
 	metaJSON, _ := json.Marshal(meta)
 	metaText := string(metaJSON)
 	patch := tasks.UpdatePatch{
 		Meta: &metaText, UpdatedBySessionID: h.monitoringSessionID(),
 		ActorKind: "worker", WorkspacePath: h.routingClientRoot(ctx),
 	}
-	wantPriority := monitoringTaskPriority(severity)
+	wantPriority := monitoringTaskPriority(args.Severity)
 	if monitoringPriorityRank(wantPriority) > monitoringPriorityRank(task.Priority) {
 		patch.Priority = &wantPriority
+	}
+	// The deterministic anomaly path deliberately files immediately, before a
+	// model is consulted, so its first title/body can only be generic. Once the
+	// worker commits self-contained evidence, upgrade that placeholder in place
+	// instead of leaving the operator with "new error-class template" forever.
+	// Preserve any already-human task verbatim; it may contain operator edits.
+	if genericMonitoringTask(task) {
+		if title := strings.TrimSpace(args.Title); title != "" {
+			patch.Title = &title
+		}
+		if body := strings.TrimSpace(args.Body); body != "" {
+			patch.Description = &body
+		}
 	}
 	// Recurrence after resolution. Reaching here means fresh triage is landing
 	// on the class that this task IS, so a closed task is stale: the problem
@@ -396,10 +409,22 @@ func (h *handler) updateMonitoringTaskMeta(
 		patch.Status, patch.Terminal = &open, &terminal
 		reopened = true
 	}
-	if !reopened && task.Meta == metaText && patch.Priority == nil {
+	if !reopened && task.Meta == metaText && patch.Priority == nil &&
+		patch.Title == nil && patch.Description == nil {
 		return task, nil
 	}
 	return h.tasksSvc.Update(ctx, task.WorkspaceID, task.ID, patch)
+}
+
+func genericMonitoringTask(task *store.Task) bool {
+	if task == nil {
+		return false
+	}
+	title := strings.ToLower(strings.TrimSpace(task.Title))
+	return (strings.HasPrefix(title, "new ") &&
+		strings.Contains(title, "-class log template on ")) ||
+		(strings.HasPrefix(title, "observed ") &&
+			strings.Contains(title, "-class monitoring event on "))
 }
 
 func monitoringTaskMeta(raw, classKey string, ids []string, correlationKey string) map[string]any {

@@ -27,6 +27,7 @@ type templateEvidence struct {
 }
 
 var fileLineRe = regexp.MustCompile(`(?:^|[\s"'(])([A-Za-z0-9_./-]+\.(?:go|rs|py|php|js|jsx|ts|tsx|java|cs|rb|kt|swift|c|cc|cpp|h|hpp):\d+)\b`)
+var accessRequestRe = regexp.MustCompile(`(?i)"(GET|HEAD) ([^ ]+) HTTP/`)
 
 func (q *Query) templateEvidence(
 	ctx context.Context, t *store.LogTemplate, src *store.LogSource,
@@ -62,18 +63,50 @@ func correlationKey(src *store.LogSource, sample string) string {
 	if src != nil && src.Name != "" {
 		source = src.Name
 	}
-	if strings.HasPrefix(strings.ToLower(sample), "logwatch: published port exposure") ||
-		strings.HasPrefix(strings.ToLower(sample), "logwatch: port exposure check") {
+	lower := strings.ToLower(sample)
+	if strings.HasPrefix(lower, "logwatch: published port exposure") ||
+		strings.HasPrefix(lower, "logwatch: port exposure check") {
 		if src != nil && src.RemoteHostID != "" {
 			return "host:" + src.RemoteHostID + "|docker-port-exposure"
 		}
 		return source + "|docker-port-exposure"
+	}
+	// Deterministic families that otherwise mint one task per masked value or
+	// per logging call site. These keys describe an operational class, not a
+	// diagnosis; the worker still owns actionable/benign judgement.
+	switch {
+	case strings.HasPrefix(lower, "logwatch: source discontinuity"):
+		return source + "|source-discontinuity"
+	case strings.HasPrefix(lower, "logwatch: docker container replacement"):
+		return source + "|container-replacement"
+	case suspiciousAccessProbe(sample):
+		return source + "|scanner-probe"
+	case strings.Contains(lower, "po number request failed with reason"):
+		return source + "|purchase-order-number-rejected"
+	case strings.Contains(lower, "08p01") ||
+		strings.Contains(lower, "protocol_violation") ||
+		strings.Contains(lower, "prepared_statement_lost"):
+		return source + "|postgres-protocol"
+	case strings.Contains(lower, "create_workout compilation failed"):
+		return source + "|create-workout-compilation"
+	case strings.Contains(lower, "acme") &&
+		(strings.Contains(lower, "challenge") || strings.Contains(lower, "certificate")):
+		return source + "|acme-certificate"
 	}
 	match := fileLineRe.FindStringSubmatch(sample)
 	if match == nil {
 		return ""
 	}
 	return source + "|" + match[1]
+}
+
+func suspiciousAccessProbe(sample string) bool {
+	match := accessRequestRe.FindStringSubmatch(sample)
+	if len(match) < 3 {
+		return false
+	}
+	path := strings.ToLower(match[2])
+	return strings.Contains(path, ".php") || strings.Contains(path, ".env")
 }
 
 func maskedCardinality(masked string, lines []*store.LogLine) string {

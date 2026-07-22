@@ -220,6 +220,37 @@ func TestLearnFreezesWhileAnIncidentIsOpen(t *testing.T) {
 	}
 }
 
+// A learner from an older release may already have promoted a logwatch-owned
+// diagnostic. Once the safer classifier sees it, the rule must be retired even
+// if its inverted false-positive incident is open.
+func TestLearnDisablesPreviouslyPromotedMonitoringSynthetic(t *testing.T) {
+	f := newFakeLearnerStore()
+	l := newTestLearner(f, cleanCandidate())
+	l.Learn(context.Background())
+	armed := f.created[0]
+	f.rules[armed.ID].ActiveIncidentID = "incident-1"
+
+	synthetic := cleanCandidate()
+	synthetic.Masked = "logwatch: source discontinuity — container/service restarted"
+	synthetic.MatchSubstring = "logwatch: source discontinuity"
+	f.candidates["src-1"] = []store.BaselineCandidate{synthetic}
+	l.Learn(context.Background())
+
+	if len(f.updated) != 1 {
+		t.Fatalf("updated %d rules; want the unsafe rule disabled once", len(f.updated))
+	}
+	if f.rules[armed.ID].Enabled {
+		t.Fatal("previously promoted monitor-owned rule is still enabled")
+	}
+	b := f.baselines["tpl-orders"]
+	if b.Decision != store.BaselineRejectMonitoringSynthetic {
+		t.Fatalf("decision = %q; want %q", b.Decision, store.BaselineRejectMonitoringSynthetic)
+	}
+	if b.RuleID != armed.ID {
+		t.Fatalf("baseline rule pointer = %q; want %q for auditability", b.RuleID, armed.ID)
+	}
+}
+
 // TestLearnAcceptsALegitimateReschedule is the other side of the drift
 // tension, and it has to hold or the two tests above would be satisfied by a
 // learner that simply never adapts. A team moving the job from ten minutes to

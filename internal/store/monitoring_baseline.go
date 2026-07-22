@@ -202,6 +202,11 @@ const (
 	// there was nothing to do, not how often the job completed, so it is the
 	// wrong observable and is refused outright. See ConditionalTerminalPhrase.
 	BaselineRejectConditionalTerminal BaselineDecision = "conditional_terminal"
+	// BaselineRejectMonitoringSynthetic — the template is an observation
+	// emitted by logwatch itself (the stable "logwatch:" namespace), not an
+	// application or job completion signal. Learning its cadence would invert
+	// collector diagnostics into absence incidents when the diagnostic stops.
+	BaselineRejectMonitoringSynthetic BaselineDecision = "monitoring_synthetic"
 	// BaselineRejectNoMatcher — no substring specific enough to identify the
 	// signal in raw lines could be derived.
 	BaselineRejectNoMatcher BaselineDecision = "no_matcher"

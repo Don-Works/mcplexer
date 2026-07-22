@@ -94,6 +94,53 @@ func TestCorrelationKey_PortExposureUsesHost(t *testing.T) {
 	}
 }
 
+func TestCorrelationKey_DeduplicatesOperationalFamilies(t *testing.T) {
+	src := &store.LogSource{Name: "webhooks"}
+	tests := []struct {
+		name   string
+		sample string
+		want   string
+	}{
+		{
+			name:   "scanner php probe",
+			sample: `203.0.113.8 - - [22/Jul/2026] "GET /vendor/phpunit/phpunit/src/Util/PHP/eval-stdin.php HTTP/1.1" 200 476`,
+			want:   "webhooks|scanner-probe",
+		},
+		{
+			name:   "scanner env probe",
+			sample: `203.0.113.8 - - [22/Jul/2026] "HEAD /.env HTTP/1.1" 200 476`,
+			want:   "webhooks|scanner-probe",
+		},
+		{
+			name:   "purchase order rejection from either call site",
+			sample: "WARN purchase_order/service.go:93 PO Number Request failed with reason Invalid Employee number",
+			want:   "webhooks|purchase-order-number-rejected",
+		},
+		{
+			name:   "postgres protocol variant",
+			sample: "ERROR SQLSTATE 08P01 protocol_violation prepared_statement_lost",
+			want:   "webhooks|postgres-protocol",
+		},
+		{
+			name:   "workout compiler variant",
+			sample: "ERROR create_workout compilation failed: section_steps_missing",
+			want:   "webhooks|create-workout-compilation",
+		},
+		{
+			name:   "monitor source discontinuity",
+			sample: "logwatch: source discontinuity — container/service restarted, recreated, or logs rotated",
+			want:   "webhooks|source-discontinuity",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := correlationKey(src, tt.sample); got != tt.want {
+				t.Fatalf("correlationKey = %q; want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestDigest_RendersLifetimeCardinalityCorrelationAndSamples(t *testing.T) {
 	now := time.Date(2026, 7, 8, 15, 0, 0, 0, time.UTC)
 	tpl := &store.LogTemplate{

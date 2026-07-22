@@ -13,6 +13,7 @@ package store
 
 import (
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -172,6 +173,17 @@ func baselineSampleNoun(stats BaselineStats) string {
 func baselineDisqualify(
 	c BaselineCandidate, stats BaselineStats, span time.Duration,
 ) (BaselineDecision, string, bool) {
+	// logwatch:* rows describe the monitor, not the monitored application. A
+	// particularly damaging real case learned the regular cadence of
+	// "logwatch: source discontinuity" and then raised a critical incident
+	// because that warning stopped. Text identity settles this before any
+	// collection or cadence statistic is consulted.
+	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(c.Masked)), "logwatch:") {
+		return BaselineRejectMonitoringSynthetic,
+			"this is a logwatch-generated monitoring observation, not an application or job " +
+				"completion signal; learning its cadence would turn the diagnostic stopping into " +
+				"a false absence incident", true
+	}
 	if !c.Health.Enabled {
 		return BaselineRejectCollectionUnhealthy,
 			"the log source is disabled; what it shows now is not evidence of normal", true

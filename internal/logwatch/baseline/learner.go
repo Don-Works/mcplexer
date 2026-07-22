@@ -210,6 +210,18 @@ func (l *Learner) apply(
 			"window_seconds", existing.WindowSeconds, "previous_window_seconds", previous,
 			"reason", decision.Reason)
 		return existing.ID, nil
+	case store.BaselineActionDisable:
+		if existing == nil || !existing.Enabled {
+			return ruleID, nil
+		}
+		existing.Enabled = false
+		if err := l.store.UpdateMonitoringExpectedSignal(ctx, existing); err != nil {
+			return ruleID, err
+		}
+		slog.Info("baseline: disabled unsafe synthetic monitoring rule",
+			"rule", existing.Name, "template", c.TemplateID,
+			"reason", decision.Reason)
+		return existing.ID, nil
 	default:
 		return ruleID, nil
 	}

@@ -64,6 +64,69 @@ func TestRewordedCorrelationKeysShareOneTask(t *testing.T) {
 	}
 }
 
+func TestWorkerTriageUpgradesGenericAnomalyTask(t *testing.T) {
+	h, db, _ := newMonitoringOwnershipHandler(t)
+	ctx := runner.WithWorkerRunCtx(context.Background(), runner.WorkerRunCtx{
+		RunID: "run-enrich", WorkerID: "log-watch", WorkspaceID: "ws-A",
+	})
+	classKey := "correlation:source discontinuity restarts"
+	generic, err := h.tasksSvc.Create(ctx, tasks.CreateOptions{
+		WorkspaceID: "ws-A",
+		Title:       "new error-class log template on api-A",
+		Description: "A previously unseen error-class template was observed.",
+		Tags:        []string{"logwatch"},
+		Meta:        `{"logwatch_class":"` + classKey + `","logwatch_template_ids":["tpl-A"]}`,
+		ActorKind:   "system",
+	})
+	if err != nil {
+		t.Fatalf("create generic anomaly task: %v", err)
+	}
+
+	result := commitTriageResult(t, ctx, h,
+		resolutionCommitArgs(t, "source discontinuity (6 restarts)", store.SeverityWarn))
+	if result["task_id"] != generic.ID {
+		t.Fatalf("triage created %v instead of upgrading %s", result["task_id"], generic.ID)
+	}
+	got, err := db.GetTask(ctx, generic.ID)
+	if err != nil {
+		t.Fatalf("read upgraded task: %v", err)
+	}
+	if got.Title != "Container restarting repeatedly" {
+		t.Fatalf("title = %q; want worker's human title", got.Title)
+	}
+	if got.Description == generic.Description || got.Description == "" {
+		t.Fatalf("description was not upgraded: %q", got.Description)
+	}
+}
+
+func TestWorkerTriagePreservesHumanTaskCopy(t *testing.T) {
+	h, db, _ := newMonitoringOwnershipHandler(t)
+	ctx := runner.WithWorkerRunCtx(context.Background(), runner.WorkerRunCtx{
+		RunID: "run-preserve", WorkerID: "log-watch", WorkspaceID: "ws-A",
+	})
+	const title = "Operator-authored investigation title"
+	const description = "Keep these operator notes exactly as written."
+	existing, err := h.tasksSvc.Create(ctx, tasks.CreateOptions{
+		WorkspaceID: "ws-A", Title: title, Description: description,
+		Tags: []string{"logwatch"},
+		Meta: `{"logwatch_class":"correlation:source discontinuity restarts",` +
+			`"logwatch_template_ids":["tpl-A"]}`,
+		ActorKind: "user",
+	})
+	if err != nil {
+		t.Fatalf("create human task: %v", err)
+	}
+	commitTriageResult(t, ctx, h,
+		resolutionCommitArgs(t, "source discontinuity (6 restarts)", store.SeverityWarn))
+	got, err := db.GetTask(ctx, existing.ID)
+	if err != nil {
+		t.Fatalf("read preserved task: %v", err)
+	}
+	if got.Title != title || got.Description != description {
+		t.Fatalf("human copy changed to title=%q description=%q", got.Title, got.Description)
+	}
+}
+
 // Concurrent triage of the same class must produce ONE task. The partial
 // unique index on tasks(workspace_id, meta.$.logwatch_class) elects a winner
 // and the loser recovers on ErrAlreadyExists rather than creating a sibling.

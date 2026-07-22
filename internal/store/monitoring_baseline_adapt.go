@@ -47,6 +47,11 @@ const (
 	BaselineActionKeep BaselineAction = "keep"
 	// BaselineActionSkip — nothing to do; no rule and no promotion.
 	BaselineActionSkip BaselineAction = "skip"
+	// BaselineActionDisable — a learner-owned rule is structurally unsafe and
+	// must stop evaluating. This is intentionally narrower than an ordinary
+	// rejection: only monitoring_synthetic uses it, so silence or weak evidence
+	// can never disarm a legitimate application rule.
+	BaselineActionDisable BaselineAction = "disable"
 )
 
 // BaselineReconciliation is the adaptation decision for one candidate.
@@ -75,6 +80,23 @@ func ReconcileBaseline(
 			Action:        BaselineActionCreate,
 			WindowSeconds: int64(v.Window / time.Second),
 			Reason:        v.Reason,
+		}
+	}
+	// A logwatch-generated diagnostic can never be a valid application
+	// heartbeat. Retire a previously promoted learner-owned rule even if its
+	// false incident is currently open; the ordinary incident freeze protects
+	// legitimate signals from relearning and must not preserve a known-invalid
+	// synthetic rule.
+	if v.Decision == BaselineRejectMonitoringSynthetic {
+		if !existing.Enabled {
+			return BaselineReconciliation{
+				Action: BaselineActionKeep, WindowSeconds: existing.WindowSeconds,
+				Reason: "synthetic monitoring rule is already disabled",
+			}
+		}
+		return BaselineReconciliation{
+			Action: BaselineActionDisable, WindowSeconds: existing.WindowSeconds,
+			Reason: v.Reason,
 		}
 	}
 	// Layer 2: an open incident freezes the baseline. If this rule is

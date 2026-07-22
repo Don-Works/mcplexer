@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/don-works/mcplexer/internal/logwatch/distill"
 	"github.com/don-works/mcplexer/internal/store"
 )
 
@@ -68,34 +69,5 @@ func (h *handler) monitoringClassForTemplates(
 // that normalises to nothing (a pure counter) falls through to the
 // template-derived class rather than colliding every empty key into one.
 func normalizeMonitoringCorrelationKey(raw string) string {
-	var (
-		out    []string
-		token  strings.Builder
-		hasNum bool
-	)
-	// flush ends the current token, keeping it only if it carries no digit.
-	flush := func() {
-		if token.Len() > 0 && !hasNum {
-			out = append(out, token.String())
-		}
-		token.Reset()
-		hasNum = false
-	}
-	for _, r := range strings.ToLower(strings.TrimSpace(raw)) {
-		switch {
-		case r >= 'a' && r <= 'z':
-			token.WriteRune(r)
-		case r >= '0' && r <= '9':
-			token.WriteRune(r)
-			hasNum = true
-		default:
-			flush()
-		}
-	}
-	flush()
-	normalized := strings.Join(out, " ")
-	if len(normalized) > 200 {
-		normalized = normalized[:200]
-	}
-	return normalized
+	return distill.NormalizeCorrelationKey(raw)
 }

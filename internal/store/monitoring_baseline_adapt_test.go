@@ -132,6 +132,16 @@ func TestReconcileBaseline(t *testing.T) {
 			wantAction: BaselineActionSkip,
 		},
 		{
+			name:     "monitor synthetic rejection disables a learned rule",
+			existing: liveRule(3600),
+			verdict: BaselineVerdict{
+				Decision: BaselineRejectMonitoringSynthetic,
+				Reason:   "monitor output cannot be an application heartbeat",
+			},
+			wantAction: BaselineActionDisable,
+			wantWindow: 3600,
+		},
+		{
 			name:       "small drift is not worth a write",
 			existing:   liveRule(3600),
 			verdict:    promoted(63 * time.Minute),
@@ -187,6 +197,19 @@ func TestReconcileBaselineFreezesDuringIncident(t *testing.T) {
 	}
 	if got.WindowSeconds != 3600 {
 		t.Errorf("window = %ds; the live window must survive untouched", got.WindowSeconds)
+	}
+}
+
+func TestReconcileBaselineDisablesSyntheticRuleDuringIncident(t *testing.T) {
+	rule := liveRule(3600)
+	rule.ActiveIncidentID = "incident-1"
+
+	got := ReconcileBaseline(rule, BaselineVerdict{
+		Decision: BaselineRejectMonitoringSynthetic,
+		Reason:   "monitor output cannot be an application heartbeat",
+	})
+	if got.Action != BaselineActionDisable || got.Frozen {
+		t.Fatalf("action = %q frozen = %v; want disable without freeze", got.Action, got.Frozen)
 	}
 }
 
