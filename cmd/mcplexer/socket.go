@@ -184,6 +184,9 @@ func handleSocketConn(
 		gw.SetAddonCreator(addonCreator)
 	}
 	wireMonitoringGateway(gw, s, secretsMgr, meshMgr)
+	// Agent-facing usage summary — socket clients are normal agent
+	// sessions and must reach mcpx__usage_summary without the admin gate.
+	gw.SetUsageSummary(sharedUsageService(s, secretsMgr))
 
 	// Per-session subscription so that when any downstream's tool surface
 	// changes (discover, internal registration, downstream-emitted

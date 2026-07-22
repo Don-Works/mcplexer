@@ -117,8 +117,6 @@ func (s *Service) DelegateBatch(ctx context.Context, in BatchDelegationInput) (B
 	return BatchDelegationOutput{BatchID: batchID, Items: items, Warnings: warnings}, nil
 }
 
-
-
 // crossItemOverlapWarnings reports touches_files that appear in more than
 // one item of the same batch. The per-item store overlap check cannot see
 // this: item i's claim is not yet written when item j is checked, so a

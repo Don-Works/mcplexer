@@ -32,6 +32,7 @@ import (
 	"github.com/don-works/mcplexer/internal/store"
 	"github.com/don-works/mcplexer/internal/tasks"
 	"github.com/don-works/mcplexer/internal/telegram"
+	"github.com/don-works/mcplexer/internal/usage"
 	workersadmin "github.com/don-works/mcplexer/internal/workers/admin"
 )
 
@@ -100,6 +101,7 @@ type handler struct {
 	workerAdmin    *workersadmin.Service     // nil = worker delegation disabled
 	monitoringQry  *distill.Query            // nil = monitoring digests disabled
 	monitoringNtf  distill.Notifier          // nil = monitoring notify disabled
+	usageSvc       *usage.Service            // nil = usage summary tool disabled
 	conciergeSvc   *concierge.Service        // nil = concierge surface disabled
 	brainEditor    *brain.Editor             // nil = brain subsystem disabled
 	codeIndex      *index.Service            // nil = code index subsystem disabled
@@ -209,6 +211,22 @@ func (s *Server) SetMonitoring(q *distill.Query, n distill.Notifier) {
 		return
 	}
 	s.handler.setMonitoring(q, n)
+}
+
+// setUsageSummary wires the AI-subscription usage service post-construction so
+// the agent-facing mcpx__usage_summary read tool can report allowance/observed
+// numbers. Nil leaves the tool disabled. Same rationale as setMonitoring: the
+// usage service is assembled later in daemon boot.
+func (h *handler) setUsageSummary(svc *usage.Service) {
+	h.usageSvc = svc
+}
+
+// SetUsageSummary exposes setUsageSummary on the Server for the daemon.
+func (s *Server) SetUsageSummary(svc *usage.Service) {
+	if s == nil || s.handler == nil {
+		return
+	}
+	s.handler.setUsageSummary(svc)
 }
 
 // setConciergeSvc wires the concierge service post-construction. Same

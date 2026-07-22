@@ -802,6 +802,9 @@ func (h *handler) codeModeBuiltinTools() []Tool {
 	if h.monitoringQry != nil {
 		tools = append(tools, monitoringNamespaceToolDefinitions()...)
 	}
+	if h.usageSvc != nil {
+		tools = append(tools, usageSummaryToolDefinition())
+	}
 	if h.brainEditor != nil {
 		tools = append(tools, brainToolDefinitions()...)
 	}

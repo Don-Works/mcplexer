@@ -916,6 +916,9 @@ func (h *handler) builtinToolsExceptCodeExecute(ctx context.Context) []Tool {
 	if h.workerAdmin != nil {
 		tools = append(tools, delegationToolDefinitions()...)
 	}
+	if h.usageSvc != nil {
+		tools = append(tools, usageSummaryToolDefinition())
+	}
 	if h.conciergeSvc != nil {
 		tools = append(tools, conciergeToolDefinitions()...)
 	}

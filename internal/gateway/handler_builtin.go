@@ -46,6 +46,9 @@ func (h *handler) handleBuiltinCall(
 	case "mcpx__whoami":
 		return h.handleWhoami(ctx)
 
+	case "mcpx__usage_summary":
+		return h.handleUsageSummary(ctx, req.Arguments)
+
 	case "mcpx__delegate_worker":
 		return h.handleDelegateWorker(ctx, req.Arguments)
 

@@ -48,12 +48,12 @@ func TestDelegationPlanSizeMatchesPlan(t *testing.T) {
 		par  int
 		want int
 	}{
-		{"", 1, 3},                                  // default: candidates * 1
-		{"", 2, 6},                                  // default: candidates * 2
-		{delegationModelSelectionRandom, 5, 5},      // random: parallelism only
-		{delegationModelSelectionCapacity, 4, 4},    // capacity: parallelism only
-		{delegationModelSelectionSideBySide, 2, 6},  // side_by_side: candidates * 2
-		{"", 0, 3},                                  // parallelism defaults to 1
+		{"", 1, 3},                                 // default: candidates * 1
+		{"", 2, 6},                                 // default: candidates * 2
+		{delegationModelSelectionRandom, 5, 5},     // random: parallelism only
+		{delegationModelSelectionCapacity, 4, 4},   // capacity: parallelism only
+		{delegationModelSelectionSideBySide, 2, 6}, // side_by_side: candidates * 2
+		{"", 0, 3},                                 // parallelism defaults to 1
 	}
 	for _, tc := range cases {
 		in := DelegationInput{ModelSelectionMode: tc.mode, Parallelism: tc.par, resolvedModelCandidates: cands}

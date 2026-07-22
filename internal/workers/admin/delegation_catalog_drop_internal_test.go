@@ -56,3 +56,30 @@ func TestCandidateCatalogUnavailable(t *testing.T) {
 		t.Fatalf("no-catalog service must keep every candidate, got %q", r)
 	}
 }
+
+// TestProviderUnauthenticated pins F2: capacity routing must recognise a
+// provider the live catalog reports unauthenticated so it can sink it below
+// authenticated candidates. An ok/absent/no-catalog provider is not penalised.
+func TestProviderUnauthenticated(t *testing.T) {
+	now := time.Date(2026, 7, 22, 9, 0, 0, 0, time.UTC)
+	s := &Service{}
+	s.SetModelCatalog(catalogStub{cat: models.Catalog{
+		RefreshedAt: now,
+		Providers: []models.ProviderCatalog{
+			{Provider: "grok_cli", Models: []string{"grok-4.5"}, AuthState: models.ModelAuthUnauthenticated, LastRefreshed: now},
+			{Provider: "pi_cli", Models: []string{"qwen-local"}, AuthState: models.ModelAuthOK, LastRefreshed: now},
+		},
+	}})
+	if !s.providerUnauthenticated("grok_cli") {
+		t.Error("grok_cli is unauthenticated in the catalog but was not flagged")
+	}
+	if s.providerUnauthenticated("pi_cli") {
+		t.Error("pi_cli is authenticated (ok) but was flagged unauthenticated")
+	}
+	if s.providerUnauthenticated("mimo_cli") {
+		t.Error("mimo_cli is absent from the catalog; must not be flagged (unknown != unauthenticated)")
+	}
+	if (&Service{}).providerUnauthenticated("grok_cli") {
+		t.Error("no catalog wired must never flag a provider unauthenticated")
+	}
+}

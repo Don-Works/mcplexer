@@ -86,6 +86,21 @@ func (s *Service) candidateCatalogUnavailable(c delegationResolvedModelCandidate
 		c.ModelProvider+"/"+c.ModelID, c.ModelProvider)
 }
 
+// providerUnauthenticated reports whether the live catalog says this provider
+// is currently unauthenticated. Its models cannot actually be reached, so
+// capacity routing must sink it below any authenticated candidate rather than
+// rank it #1 and waste a dispatch on a doomed provider (the auth-alert has
+// already told the operator to log in). It is DEPRIORITISED, not dropped: auth
+// can be transient and the catalog can be stale, so it stays a last resort when
+// nothing authenticated is available.
+func (s *Service) providerUnauthenticated(provider string) bool {
+	if s.modelCatalog == nil {
+		return false
+	}
+	entry, ok := s.modelCatalog.Catalog().Provider(provider)
+	return ok && entry.AuthState == models.ModelAuthUnauthenticated
+}
+
 // loadDeclaredModelIDs builds provider -> declared KnownModels from the model
 // profile store (the legacy static catalog).
 func (s *Service) loadDeclaredModelIDs(ctx context.Context) (map[string]map[string]struct{}, error) {

@@ -104,7 +104,15 @@ type DelegationInput struct {
 	// output. Validated + executed identically to a hand-built worker's.
 	PreExecuteScript  string `json:"pre_execute_script,omitempty"`
 	PostExecuteScript string `json:"post_execute_script,omitempty"`
-	ReviewRequired    *bool  `json:"review_required,omitempty"`
+	// VerifyCitations injects the vetted citation gate as this delegation's
+	// post_execute_script (see applyCitationVerification): every file:line
+	// claim in the worker's output is re-derived from the code index and the
+	// run is REJECTED (status=blocked) if a citation is contradicted.
+	// Deterministic and model-free. Rejected when combined with a
+	// caller-supplied post_execute_script, or when the effective tool surface
+	// scopes out the read-only index tools the gate needs.
+	VerifyCitations bool  `json:"verify_citations,omitempty"`
+	ReviewRequired  *bool `json:"review_required,omitempty"`
 	// WorkerIsolation defaults to "worktree". "none" is an explicit trusted
 	// escape, including the required mode for CLI-backed delegates.
 	WorkerIsolation string `json:"worker_isolation,omitempty"`
@@ -786,6 +794,12 @@ func (s *Service) normalizeDelegationInput(ctx context.Context, in *DelegationIn
 		return err
 	}
 	if err := requireIsolatedExecuteFileSurface(in); err != nil {
+		return err
+	}
+	// Inject the citation gate LAST: it validates the gate's index tools
+	// against the now-resolved allowlist + capability profile, and must run
+	// after both so it sees the effective surface the worker will execute with.
+	if err := applyCitationVerification(in); err != nil {
 		return err
 	}
 	return nil

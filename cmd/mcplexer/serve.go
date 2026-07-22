@@ -1568,6 +1568,10 @@ func buildServerDeps(ctx context.Context, cfg *Config, db *sqlite.DB, settingsSv
 			d.workerGateway.SetAddonCreator(d.addonCreator)
 		}
 		wireMonitoringGateway(d.workerGateway, db, d.secretsMgr, d.meshMgr)
+		// Opt-in for workers: the tool is wired so an explicitly-granted
+		// worker can read it, but it is NOT in the delegscope default
+		// allowlist, so default workers never see it.
+		d.workerGateway.SetUsageSummary(d.usageSvc)
 		if d.telegramMgr != nil {
 			registerMonitoringBridgeSenders(d.telegramMgr, d.workerGateway)
 		} else {
@@ -1845,7 +1849,8 @@ func runStdio(ctx context.Context, cfg *Config, db *sqlite.DB, settingsSvc *conf
 	stdioBackupSvc := backup.New(filepath.Dir(cfg.DBDSN), cfg.DBDSN, mcplexerVersion)
 	stdioInternalBackend := control.NewInternalBackend(db, stdioBackupSvc)
 	stdioInternalBackend.SetEncryptor(stdioEnc)
-	stdioInternalBackend.SetUsageService(buildUsageService(db, secretsMgr))
+	stdioUsageSvc := buildUsageService(db, secretsMgr)
+	stdioInternalBackend.SetUsageService(stdioUsageSvc)
 	stdioInternalBackend.SetRouteInvalidator(engine.InvalidateAllRoutes)
 	// Workers admin tools live on the same InternalBackend; stdio mode
 	// has no runner so RunNow falls back to the stub placeholder path
@@ -1947,6 +1952,10 @@ func runStdio(ctx context.Context, cfg *Config, db *sqlite.DB, settingsSvc *conf
 		gw.SetAddonCreator(addonCreator)
 	}
 	wireMonitoringGateway(gw, db, secretsMgr, meshMgr)
+	// Agent-facing usage summary — the stdio gateway is the surface a
+	// delegating model connects to, so it must reach mcpx__usage_summary
+	// without the admin CWD-gate.
+	gw.SetUsageSummary(stdioUsageSvc)
 
 	unsub := manager.SubscribeToolsChanged(gw.InvalidateAndNotifyToolsChanged)
 	defer unsub()

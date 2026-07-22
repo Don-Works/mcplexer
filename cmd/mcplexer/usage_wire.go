@@ -1,6 +1,7 @@
 package main
 
 import (
+	"sync"
 	"time"
 
 	"github.com/don-works/mcplexer/internal/netguard"
@@ -11,6 +12,23 @@ import (
 	"github.com/don-works/mcplexer/internal/usage/collectors"
 	"github.com/don-works/mcplexer/internal/usage/grokstats"
 )
+
+var (
+	sharedUsageOnce sync.Once
+	sharedUsageSvc  *usage.Service
+)
+
+// sharedUsageService returns a process-wide usage service, building it once.
+// Per-connection gateway sites (the socket handler) use it so mcpx__usage_summary
+// is available without rebuilding collectors on every accept. The read tool only
+// touches the DB-backed snapshot cache, so this instance sees whatever the
+// dashboard/admin path assembled through any other usage.Service instance.
+func sharedUsageService(ledger store.UsageStore, secretReader *secrets.Manager) *usage.Service {
+	sharedUsageOnce.Do(func() {
+		sharedUsageSvc = buildUsageService(ledger, secretReader)
+	})
+	return sharedUsageSvc
+}
 
 func buildUsageService(
 	ledger store.UsageStore,

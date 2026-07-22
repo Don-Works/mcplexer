@@ -31,6 +31,13 @@ const (
 	// bonus is small. Used to surface a "new / promising" marker on the
 	// capacity row while a candidate is still in the explore phase.
 	explorationSettledRuns = 8
+	// unauthenticatedRoutingPenalty sinks a provider the catalog reports
+	// unauthenticated below every authenticated candidate in capacity ranking.
+	// Sized to dominate the base-score spread (~50-70) so an authenticated
+	// option always wins, but smaller than the -100 operational-quarantine
+	// penalty so a logged-out provider still outranks a demonstrably broken one
+	// and stays a last resort.
+	unauthenticatedRoutingPenalty = 40.0
 	// explorationFailureCutoff is the anti-thrash guard. Once a candidate
 	// has accumulated this many operational (adapter/launch) failures with
 	// no successful run, the exploration bonus is suppressed entirely so a
@@ -393,9 +400,20 @@ func (s *Service) rankCapacityDelegationCandidates(
 		return nil, err
 	}
 	out := append([]delegationResolvedModelCandidate(nil), candidates...)
+	// score folds the base capacity score with an auth-state penalty: a
+	// provider the catalog reports unauthenticated is sunk below every
+	// authenticated candidate (but stays above a quarantined one, and remains a
+	// last resort) so "let mcplexer pick" never routes to a logged-out provider
+	// while an authenticated option exists.
+	score := func(c delegationResolvedModelCandidate) float64 {
+		v := capacityScoreForCandidate(c, byKey[c.ModelProvider+"/"+c.ModelID], taskKind)
+		if s.providerUnauthenticated(c.ModelProvider) {
+			v -= unauthenticatedRoutingPenalty
+		}
+		return v
+	}
 	sort.SliceStable(out, func(i, j int) bool {
-		left := capacityScoreForCandidate(out[i], byKey[out[i].ModelProvider+"/"+out[i].ModelID], taskKind)
-		right := capacityScoreForCandidate(out[j], byKey[out[j].ModelProvider+"/"+out[j].ModelID], taskKind)
+		left, right := score(out[i]), score(out[j])
 		if left != right {
 			return left > right
 		}
