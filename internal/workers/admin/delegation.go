@@ -528,6 +528,16 @@ func (s *Service) Delegate(ctx context.Context, in DelegationInput) (DelegationO
 		slog.WarnContext(ctx, "delegation: frontier-class worker discouraged",
 			"delegation_objective", in.Objective, "advisory", msg)
 	}
+	// Break-even: a single execute delegation whose own frontier-savings
+	// estimate is below the fixed setup overhead is likely net-negative.
+	// Non-blocking — the caller may still have a good reason (isolation,
+	// review, a conservative estimate) — but hand them the math.
+	for _, msg := range microDelegationAdvisory(in) {
+		slog.InfoContext(ctx, "delegation: below break-even estimate",
+			"delegation_objective", in.Objective,
+			"baseline_tokens_estimate", in.BaselineTokensEstimate, "advisory", msg)
+		warnings = append(warnings, msg)
+	}
 	// Over-budget repo_brief/handoff was clipped in normalizeDelegationInput.
 	// Report it: a parent that silently loses half its handoff has no way to
 	// tell whether the worker under-performed or was under-briefed.
@@ -651,6 +661,48 @@ func (s *Service) Delegate(ctx context.Context, in DelegationInput) (DelegationO
 //
 // review-mode delegations are exempt: a frontier model as a read-only
 // critic/judge is exactly the sanctioned exceptional use.
+// microDelegationBreakEvenTokens is the frontier-token estimate below which a
+// single, non-review delegation typically costs more to set up than it saves.
+// The overhead is real and mostly fixed: the parent spends tokens writing the
+// handoff and reading the result, the worker prompt carries injected memory +
+// recent mesh context, and finalize records an audit trail and a mesh finding.
+// When the caller's OWN estimate of frontier work avoided is below this, the
+// round trip is likely net-negative. It is a break-even signal, not a hard
+// floor — set conservatively so a genuinely worthwhile small delegation is not
+// discouraged, and only ever advisory.
+const microDelegationBreakEvenTokens = 8000
+
+// microDelegationAdvisory returns a single non-blocking advisory when a
+// delegation looks sub-break-even: the caller supplied a baseline_tokens_estimate
+// below microDelegationBreakEvenTokens, it is a single worker (not parallel
+// fan-out, whose value is throughput regardless of per-item size), and it is
+// execute (not a review, whose value is a second opinion rather than token
+// savings). The delegation still runs; this only hands the caller the
+// break-even math it may not have applied.
+//
+// It is deliberately SILENT when no estimate was given: an absent number is not
+// a small one, and inferring size from the objective/handoff prose would fire
+// on exactly the cases most likely to be wrong. The signal is trustworthy only
+// when it rests on a figure the caller chose.
+func microDelegationAdvisory(in DelegationInput) []string {
+	if in.BaselineTokensEstimate <= 0 || in.BaselineTokensEstimate >= microDelegationBreakEvenTokens {
+		return nil
+	}
+	if in.Parallelism > 1 {
+		return nil
+	}
+	if strings.EqualFold(strings.TrimSpace(in.WorkerMode), "review") {
+		return nil
+	}
+	return []string{fmt.Sprintf(
+		"baseline_tokens_estimate (%d) is below the ~%d-token delegation break-even: worker "+
+			"spin-up, injected context, and finalize typically cost more than a slice this small "+
+			"saves. Consider doing it inline unless you specifically need worktree isolation, a "+
+			"second-opinion review, or parallel fan-out.",
+		in.BaselineTokensEstimate, microDelegationBreakEvenTokens,
+	)}
+}
+
 func frontierWorkerWarnings(workerMode string, plan []delegationResolvedModelCandidate) []string {
 	if strings.EqualFold(strings.TrimSpace(workerMode), "review") {
 		return nil
