@@ -109,7 +109,10 @@ func loadConfig() (*Config, error) {
 
 		TrustedHosts: mergeTrustedHosts(
 			parseTrustedHosts(envOr("MCPLEXER_TRUSTED_HOSTS", "")),
-			mergeTrustedHosts(localHostnames(), hostFromURL(envOr("MCPLEXER_PUBLIC_URL", envOr("MCPLEXER_EXTERNAL_URL", "")))),
+			mergeTrustedHosts(
+				mergeTrustedHosts(localHostnames(), localIPHosts()),
+				hostFromURL(envOr("MCPLEXER_PUBLIC_URL", envOr("MCPLEXER_EXTERNAL_URL", ""))),
+			),
 		),
 
 		P2PEnabled:      envBool("MCPLEXER_P2P_ENABLED", false),
@@ -247,6 +250,47 @@ func serverCapabilities(profile string) map[string]bool {
 //
 // Failures are silent: env-driven MCPLEXER_TRUSTED_HOSTS still works,
 // and loopback is always trusted regardless.
+// localIPHosts returns the machine's own non-loopback IP addresses as bare host
+// strings so the dashboard — and, crucially, the same-host /api calls its
+// browser page makes — are reachable when an operator or an emitted task link
+// uses the box's IP instead of a hostname. A task link built from the tailnet
+// IP (or a bare-IP bookmark) otherwise fails the CORS origin check, since
+// os.Hostname()/PublicURL only cover the name forms.
+//
+// Trusting the box's OWN addresses is safe and is not the same as reflecting an
+// arbitrary same-origin Host: a browser only sends an IP-literal Origin when it
+// genuinely loaded the page from that IP, which is this machine. DNS rebinding
+// targets a name (the Origin would be the attacker's name, never one of these
+// IPs), so it cannot exploit an IP allowlist entry. Loopback is already allowed
+// unconditionally; link-local (169.254/fe80::) is dropped as noise.
+func localIPHosts() []string {
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return nil
+	}
+	seen := make(map[string]struct{})
+	var out []string
+	for _, a := range addrs {
+		var ip net.IP
+		switch v := a.(type) {
+		case *net.IPNet:
+			ip = v.IP
+		case *net.IPAddr:
+			ip = v.IP
+		}
+		if ip == nil || ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
+			continue
+		}
+		s := ip.String()
+		if _, ok := seen[s]; ok {
+			continue
+		}
+		seen[s] = struct{}{}
+		out = append(out, s)
+	}
+	return out
+}
+
 func localHostnames() []string {
 	raw, err := os.Hostname()
 	if err != nil {

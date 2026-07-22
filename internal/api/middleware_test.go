@@ -322,6 +322,35 @@ func TestCORSMiddleware(t *testing.T) {
 			t.Fatalf("unexpected allow-origin header: %q", got)
 		}
 	})
+
+	t.Run("trusted IP origin allowed (task link via bare IP)", func(t *testing.T) {
+		// A task link / bookmark that reaches the box by its IP sends an
+		// IP-literal Origin. When that IP is a trusted host (the daemon now
+		// adds its own non-loopback IPs), the origin check must pass so the
+		// dashboard's same-host /api calls succeed.
+		trusted := corsMiddleware([]string{"100.64.0.5"})(noop)
+		req := httptest.NewRequest(http.MethodOptions, "http://100.64.0.5:3333/api/v1/tasks", nil)
+		req.Header.Set("Origin", "http://100.64.0.5:3333")
+		rr := httptest.NewRecorder()
+		trusted.ServeHTTP(rr, req)
+		if rr.Code != http.StatusNoContent {
+			t.Fatalf("expected %d, got %d", http.StatusNoContent, rr.Code)
+		}
+		if got := rr.Header().Get("Access-Control-Allow-Origin"); got != "http://100.64.0.5:3333" {
+			t.Fatalf("IP-origin should be allowed when the IP is trusted, got %q", got)
+		}
+	})
+
+	t.Run("untrusted IP origin still blocked", func(t *testing.T) {
+		trusted := corsMiddleware([]string{"100.64.0.5"})(noop)
+		req := httptest.NewRequest(http.MethodOptions, "http://100.64.0.5:3333/api/v1/tasks", nil)
+		req.Header.Set("Origin", "http://203.0.113.9:3333") // not in the trusted set
+		rr := httptest.NewRecorder()
+		trusted.ServeHTTP(rr, req)
+		if rr.Code != http.StatusForbidden {
+			t.Fatalf("an untrusted IP origin must be denied, got %d", rr.Code)
+		}
+	})
 }
 
 func TestRouterPreflightBypassesAuth(t *testing.T) {
