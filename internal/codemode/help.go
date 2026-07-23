@@ -20,7 +20,7 @@ const helpDescMax = 100
 // this list a model exploring via help() would never learn they exist.
 var helpGlobalHelpers = []string{
 	"print(...values)",
-	"parallel([{tool, args}, ...])",
+	"parallel([[ns.tool, args], ...]) — concurrent, same call form as ns.tool(args)",
 	"compact(value)",
 	"sleep(ms)",
 	"atob(b64) / btoa(str)",
