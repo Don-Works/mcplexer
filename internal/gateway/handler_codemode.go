@@ -863,7 +863,8 @@ func (h *handler) buildCodeExecuteTool(ctx context.Context) (Tool, bool) {
 			"Calling patterns:\n" +
 			"- Sequential (default): calls return values directly, so you can " +
 			"daisy-chain — pass the result of one call straight into the next.\n" +
-			"- Concurrent: use parallel([{tool,args},...]) when calls are independent (max 20 per call). " +
+			"- Concurrent: use parallel([[ns.tool, args], ...]) when calls are independent (max 20 per call) — " +
+			"same call form as the sequential path (a plain \"ns__name\" string or {tool, args} object also works). " +
 			"Failed entries in a parallel() batch surface as `null` at their index — the call itself does NOT throw.\n\n" +
 			"Search search_tools for function signatures before writing code, or call help() in the " +
 			"script to list namespaces and help('namespace') for a namespace's tool signatures (no search round-trip).\n" +
@@ -903,9 +904,10 @@ func (h *handler) buildCodeExecuteTool(ctx context.Context) (Tool, bool) {
 			"- Sequential (default): calls return values directly, so you can " +
 			"daisy-chain — pass the result of one call straight into the next.\n" +
 			"  e.g. const repo = github.get_repo({owner, repo}); const issues = github.list_issues({owner, repo: repo.name})\n" +
-			"- Concurrent: use parallel([{tool,args},...]) when calls are independent (max 20 per call) " +
-			"and don't depend on each other's results. Returns an array of results; failed entries surface " +
-			"as `null` at their index — parallel() itself does NOT throw.\n\n" +
+			"- Concurrent: use parallel([[ns.tool, args], ...]) when calls are independent (max 20 per call) " +
+			"and don't depend on each other's results — same call form as the sequential path (a plain " +
+			"\"ns__name\" string or {tool, args} object also works). Returns an array of results; failed entries " +
+			"surface as `null` at their index — parallel() itself does NOT throw.\n\n" +
 			"Search search_tools for function signatures before writing code, or call help() in the " +
 			"script to list namespaces and help('namespace') for a namespace's tool signatures (no search round-trip).\n" +
 			"Errors throw real `Error` objects. A typo on a namespace or member yields a `ReferenceError` " +

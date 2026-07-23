@@ -203,11 +203,18 @@ func (s *Sandbox) Execute(ctx context.Context, code string, tools []ToolDef) (*E
 				inputSchema: entry.schema,
 				examples:    entry.examples,
 			})
-			if err := nsObj.Set(entry.name, fn); err != nil {
+			// Tag the callable with its canonical name so parallel() can accept
+			// the bound reference (github.list_issues) directly and recover the
+			// name — unifying the concurrent path with the sequential ns.tool()
+			// form. The tag is hidden (non-enumerable) so it never pollutes
+			// Object.keys() or serialization. Both the primary key and any alias
+			// share the SAME tagged value.
+			fnVal := tagToolFunc(vm, fn, fullName)
+			if err := nsObj.Set(entry.name, fnVal); err != nil {
 				return nil, fmt.Errorf("set %s.%s: %w", ns, entry.name, err)
 			}
 			if entry.jsName != entry.name {
-				if err := nsObj.Set(entry.jsName, fn); err != nil {
+				if err := nsObj.Set(entry.jsName, fnVal); err != nil {
 					return nil, fmt.Errorf("set %s.%s alias: %w", ns, entry.jsName, err)
 				}
 			}
@@ -764,6 +771,59 @@ func readHeapBytes() uint64 {
 type toolSchema struct {
 	inputSchema json.RawMessage
 	examples    []string
+}
+
+// toolNameProp is the hidden own-property carrying a bound tool function's
+// canonical "ns__name". parallel() reads it to accept the natural function
+// reference (github.list_issues) in place of a "ns__name" string descriptor.
+const toolNameProp = "__tool"
+
+// tagToolFunc converts a Go tool closure into a Goja callable that carries its
+// canonical name as a hidden (non-enumerable, non-writable) own property. This
+// lets parallel() accept the bound reference directly — parallel([[github.list_issues,
+// {...}]]) — and recover the name for concurrent dispatch, so the concurrent
+// path uses the same ns.tool call form as the sequential one instead of a
+// separate string-descriptor convention. If tagging fails for any reason the
+// untagged callable is returned unchanged: it still works as a sequential call,
+// it just can't be referenced by identity inside parallel().
+func tagToolFunc(vm *goja.Runtime, fn func(goja.FunctionCall) goja.Value, fullName string) goja.Value {
+	fnVal := vm.ToValue(fn)
+	fnObj, ok := fnVal.(*goja.Object)
+	if !ok {
+		return fnVal
+	}
+	if err := fnObj.DefineDataProperty(
+		toolNameProp, vm.ToValue(fullName),
+		goja.FLAG_FALSE, goja.FLAG_FALSE, goja.FLAG_FALSE,
+	); err != nil {
+		return fnVal
+	}
+	return fnObj
+}
+
+// toolNameOfFunc recovers the canonical "ns__name" from a value that may be a
+// tagged tool function. Returns ("", false) for non-functions and for
+// functions that carry no tag (e.g. an agent's own closure).
+func toolNameOfFunc(vm *goja.Runtime, v goja.Value) (string, bool) {
+	if v == nil || goja.IsUndefined(v) || goja.IsNull(v) {
+		return "", false
+	}
+	if _, isFn := goja.AssertFunction(v); !isFn {
+		return "", false
+	}
+	obj := v.ToObject(vm)
+	if obj == nil {
+		return "", false
+	}
+	tag := obj.Get(toolNameProp)
+	if tag == nil || goja.IsUndefined(tag) || goja.IsNull(tag) {
+		return "", false
+	}
+	name := tag.String()
+	if name == "" {
+		return "", false
+	}
+	return name, true
 }
 
 // makeToolFunc creates a Go function that Goja calls synchronously.
