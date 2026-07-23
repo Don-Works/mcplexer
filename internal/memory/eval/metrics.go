@@ -78,25 +78,48 @@ func reciprocalRank(r RankedResult) float64 {
 	return 0.0
 }
 
+// precisionAt1 is 1.0 when the top-ranked hit is relevant, else 0.0. It is the
+// sharpest expression of the production symptom ("the #1 result is an unrelated
+// document"): mean nDCG@5 degrades gently when only the top slot is poisoned,
+// whereas P@1 collapses immediately. Returns 1.0 for a query with no relevant
+// documents, matching the vacuous-satisfaction convention above.
+func precisionAt1(r RankedResult) float64 {
+	if len(r.RelevantKeys) == 0 {
+		return 1.0
+	}
+	if len(r.RankedKeys) == 0 {
+		return 0.0
+	}
+	if _, ok := r.RelevantKeys[r.RankedKeys[0]]; ok {
+		return 1.0
+	}
+	return 0.0
+}
+
 // MetricReport is the aggregate retrieval-quality snapshot the gate asserts
 // against. All scores are means over the query set, in [0,1].
 type MetricReport struct {
-	K          int
-	NumQueries int
-	RecallAtK  float64
-	NDCGAtK    float64
-	MRR        float64
+	K            int
+	NumQueries   int
+	RecallAtK    float64
+	NDCGAtK      float64
+	MRR          float64
+	PrecisionAt1 float64
 	// PerQuery preserves the individual outcomes so a failing gate can name
 	// the exact query that regressed instead of just a sunk aggregate.
 	PerQuery []QueryScore
 }
 
-// QueryScore is one query's contribution to the aggregate.
+// QueryScore is one query's contribution to the aggregate. TopKey records the
+// rank-0 result so a failing gate can name the document that displaced the
+// correct answer instead of only reporting a sunk number.
 type QueryScore struct {
 	Query     string
 	RecallAtK float64
 	NDCGAtK   float64
 	RR        float64
+	P1        float64
+	TopKey    string
 }
 
 // Aggregate folds a slice of ranked results into a MetricReport at cutoff k.
@@ -105,22 +128,29 @@ func Aggregate(results []RankedResult, k int) MetricReport {
 	if len(results) == 0 {
 		return rep
 	}
-	var sumRecall, sumNDCG, sumRR float64
+	var sumRecall, sumNDCG, sumRR, sumP1 float64
 	for _, r := range results {
 		rk := recallAtK(r, k)
 		nd := ndcgAtK(r, k)
 		rr := reciprocalRank(r)
+		p1 := precisionAt1(r)
 		sumRecall += rk
 		sumNDCG += nd
 		sumRR += rr
+		sumP1 += p1
+		top := ""
+		if len(r.RankedKeys) > 0 {
+			top = r.RankedKeys[0]
+		}
 		rep.PerQuery = append(rep.PerQuery, QueryScore{
-			Query: r.Query, RecallAtK: rk, NDCGAtK: nd, RR: rr,
+			Query: r.Query, RecallAtK: rk, NDCGAtK: nd, RR: rr, P1: p1, TopKey: top,
 		})
 	}
 	n := float64(len(results))
 	rep.RecallAtK = sumRecall / n
 	rep.NDCGAtK = sumNDCG / n
 	rep.MRR = sumRR / n
+	rep.PrecisionAt1 = sumP1 / n
 	return rep
 }
 

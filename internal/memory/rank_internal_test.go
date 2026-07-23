@@ -6,6 +6,7 @@ import (
 	"math"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -67,6 +68,12 @@ func TestRerankHitsPinnedBoost(t *testing.T) {
 	}
 }
 
+// TestRerankHitsRecencyDemotesStale is the "recency must still MATTER" half of
+// the contract: between two hits the retriever ranked as near-equals, the
+// fresher one wins. This assertion is UNCHANGED by the bounded-nudge fix — a
+// single tie-breaker term is deliberately sized to climb exactly one adjacent
+// rank, and one rank is all this case asks for. (What the fix removed is the
+// ability to climb TWENTY ranks; see TestRerankHitsRecencyIsBoundedNotDominant.)
 func TestRerankHitsRecencyDemotesStale(t *testing.T) {
 	now := time.Now().UTC()
 	hits := []store.MemoryHit{
@@ -77,6 +84,353 @@ func TestRerankHitsRecencyDemotesStale(t *testing.T) {
 	if out[0].Entry.ID != "fresh" {
 		t.Fatalf("fresh hit should outrank 4-month-old hit, got %q first", out[0].Entry.ID)
 	}
+}
+
+// mkHit builds a rerank input with an explicit retrieval signal. Passing the
+// SAME score to every hit makes normalizedSignals flat (all 1.0), so base(i)
+// reduces to the pure position score and the arithmetic below is exact.
+func mkHit(id string, updated time.Time, pinned bool, score float64) store.MemoryHit {
+	return store.MemoryHit{
+		Entry:  store.MemoryEntry{ID: id, UpdatedAt: updated, Pinned: pinned},
+		Source: "rrf",
+		Score:  score,
+	}
+}
+
+// TestRerankHitsNudgeBudgetArithmetic writes the tie-breaker budget down as
+// numbers, the way the comments in rank_tuning.go do. Three claims:
+//
+//  1. ONE STEP OF AUTHORITY — a hit one position down, at full signal on a
+//     single term, out-scores the hit above it. Without this, pinning and the
+//     recall nudge silently stop working (they become sub-step no-ops).
+//  2. NEVER TWO — that same hit two positions down cannot out-score it. This
+//     is what makes each term a tie-breaker rather than a re-ranker.
+//  3. THE INVARIANT — the worst-case COMBINED nudge (fresh + pinned + hot vs
+//     ancient + unpinned + cold) is strictly smaller than the relevance spread
+//     of the pool it could overturn. This is the property the old
+//     score = base * recencyFactor formulation violated: recencyFactor spanned
+//     20x against a pool spread of ~1.5x, so recency outranked relevance.
+func TestRerankHitsNudgeBudgetArithmetic(t *testing.T) {
+	// The production pool depth: memory__recall defaults limit=10 and Recall
+	// caps the fused pool at k*2 (internal/gateway/handler_memory.go,
+	// internal/memory/registry.go). The FTS-only pool is deeper (50), and
+	// deeper pools only make the bounds below tighter-satisfied, since
+	// positionStep shrinks monotonically.
+	const poolN = 20
+
+	t.Run("every term can climb at least one rank", func(t *testing.T) {
+		// A budget that cannot cover a single adjacent step is a dead term:
+		// it would only ever reorder exact ties. rankRecallSteps is the
+		// smallest budget and therefore the binding case.
+		for _, tc := range []struct {
+			name  string
+			steps float64
+		}{
+			{"recency", rankRecencySteps},
+			{"pin", rankPinSteps},
+			{"recall", rankRecallSteps},
+		} {
+			for i := 0; i+1 < poolN; i++ {
+				lift := tc.steps * positionStep(i+1)
+				if lift <= positionStep(i) {
+					t.Fatalf("%s i=%d: full-signal lift %.4e cannot cover one step %.4e — "+
+						"the tie-break would be dead", tc.name, i, lift, positionStep(i))
+				}
+			}
+		}
+	})
+
+	t.Run("realized climbs match the documented figures", func(t *testing.T) {
+		// rank_tuning.go documents 3.0 steps -> 2 ranks and 1.2 -> 1 rank.
+		// Behaviour claims in comments are load-bearing here, so pin them.
+		for _, tc := range []struct {
+			name  string
+			steps float64
+			ranks int
+		}{
+			{"recency", rankRecencySteps, 2},
+			{"pin", rankPinSteps, 2},
+			{"recall", rankRecallSteps, 1},
+			{"combined", rerankMaxNudgeSteps, 5},
+		} {
+			got := realizedClimb(tc.steps, 0)
+			if got != tc.ranks {
+				t.Errorf("%s budget %.1f steps realizes %d ranks at the head of the "+
+					"pool, comment claims %d", tc.name, tc.steps, got, tc.ranks)
+			}
+		}
+	})
+
+	t.Run("combined nudge cannot outvote relevance magnitude", func(t *testing.T) {
+		// NOTE this deliberately does NOT compare the nudge against the pool's
+		// head-to-tail score spread, the way an earlier revision did. That
+		// spread shrinks as the pool shortens, so the comparison is false for
+		// pools of <=6 hits and the assertion only ever passed because poolN
+		// was hardcoded to 20. The depth-independent bound lives in
+		// TestRerankHitsClimbBoundHoldsAtEveryDepth; what belongs HERE is the
+		// comparison against the other relevance term, which is depth-free.
+		maxNudge := rerankMaxNudgeSteps * positionStep(0)
+		signalSpan := (1.0 - rankBlendAlpha) / float64(rerankBaseK+1)
+		if maxNudge >= signalSpan {
+			t.Fatalf("max combined nudge %.4e (%.1f steps) must be < the "+
+				"signal-magnitude span %.4e (%.1f steps) — freshness would outvote "+
+				"BM25/vector relevance and the original bug returns",
+				maxNudge, maxNudge/positionStep(0),
+				signalSpan, signalSpan/positionStep(0))
+		}
+	})
+}
+
+// ids renders a hit list's IDs in rank order, for failure messages.
+func ids(hits []store.MemoryHit) string {
+	out := make([]string, len(hits))
+	for i, h := range hits {
+		out[i] = h.Entry.ID
+	}
+	return strings.Join(out, ",")
+}
+
+// realizedClimb returns how many ranks a term with the given step budget can
+// actually lift a hit from rank i, by the bound derived in rank_tuning.go:
+// climbing m ranks needs budget > (step(i)+..+step(i+m-1))/step(i+m).
+func realizedClimb(steps float64, i int) int {
+	m, cum := 0, 0.0
+	for {
+		cum += positionStep(i + m)
+		if steps <= cum/positionStep(i+m+1) {
+			return m
+		}
+		m++
+	}
+}
+
+// TestRerankHitsClimbBoundHoldsAtEveryDepth is the depth-independent form of
+// the invariant. The previous revision asserted "max nudge < pool relevance
+// spread" at a single hardcoded pool depth of 20; that statement is not
+// depth-independent (the spread shrinks with the pool, so it is false for
+// pools of <=6) and small pools are common — k=5 recalls, tag/entity-filtered
+// recall, and any query where few rows match at all.
+//
+// The bound that IS true everywhere: a term with budget c climbs at most c
+// ranks, because overtaking from rank j to rank i needs the gap
+// sum_{m=i}^{j-1} step(m) >= (j-i)*step(j) to be under c*step(j).
+func TestRerankHitsClimbBoundHoldsAtEveryDepth(t *testing.T) {
+	for _, depth := range []int{1, 2, 3, 5, 6, 10, 20, 50, 100} {
+		for i := 0; i < depth; i++ {
+			if got := realizedClimb(rerankMaxNudgeSteps, i); float64(got) > rerankMaxNudgeSteps {
+				t.Errorf("depth=%d i=%d: combined budget %.1f steps realized %d ranks, "+
+					"exceeding its own bound", depth, i, rerankMaxNudgeSteps, got)
+			}
+		}
+	}
+}
+
+// TestRerankHitsPinLiftsFromDepth covers the gap that let pin authority
+// collapse ~20x unnoticed: every pre-existing pin test used a pinned hit that
+// was ALSO the freshest, so it would have ranked first regardless and the test
+// passed no matter how weak pin became. Here the pinned hit is the STALEST and
+// starts below its peers, so only pin can move it.
+func TestRerankHitsPinLiftsFromDepth(t *testing.T) {
+	now := time.Now().UTC()
+	// Every hit is equally ancient, so the recency term is flat across the pool
+	// and pin is the ONLY thing that can move anything. (An earlier draft of
+	// this test made the peers fresh, which silently cancelled pin out: the
+	// peers' recency budget equalled the pinned hit's pin budget and nothing
+	// moved. Isolate one variable.)
+	ancient := now.Add(-400 * 24 * time.Hour)
+	hits := make([]store.MemoryHit, 6)
+	for i := range hits {
+		hits[i] = store.MemoryHit{
+			Entry:  store.MemoryEntry{ID: string(rune('a' + i)), UpdatedAt: ancient},
+			Source: "rrf", Score: 1.0,
+		}
+	}
+	hits[5].Entry.Pinned = true // worst starting position: last
+
+	got := rerankHits(hits, now, nil)
+	pos := -1
+	for i, h := range got {
+		if h.Entry.ID == "f" {
+			pos = i
+		}
+	}
+	if pos == 5 {
+		t.Fatalf("pinned hit did not move at all — pin is inert, which is the "+
+			"regression this test exists to catch (order: %s)", ids(got))
+	}
+	if pos == 0 {
+		t.Fatalf("pinned-but-ancient hit reached #1 from the bottom of the pool — "+
+			"pin is overriding relevance, not weighting it (order: %s)", ids(got))
+	}
+}
+
+// TestRankRecencyGradesAcrossMonths guards against the over-correction the
+// first fix introduced: with an exponential curve and a ~1.6-step budget,
+// recency had no ordering effect past ~19 days, so a 20-day-old and a
+// 400-day-old memory were ranking-identical on a store holding months of
+// history. Each age band below must be separated from the next by a visible
+// fraction of a rank.
+func TestRankRecencyGradesAcrossMonths(t *testing.T) {
+	now := time.Now().UTC()
+	day := 24 * time.Hour
+	ages := []time.Duration{0, day, 7 * day, 30 * day, 90 * day, 200 * day}
+
+	prev := math.Inf(1)
+	for i, age := range ages {
+		ranks := rankRecencySteps * rankRecency(now, now.Add(-age))
+		if ranks >= prev {
+			t.Fatalf("age %v: recency must decrease monotonically, got %.3f after %.3f",
+				age, ranks, prev)
+		}
+		// Skip the first band (nothing precedes it to compare against).
+		if i > 0 {
+			if gap := prev - ranks; gap < 0.10 {
+				t.Errorf("age %v: only %.3f ranks separate this band from the previous "+
+					"one — recency has gone flat here", age, gap)
+			}
+		}
+		prev = ranks
+	}
+	// The specific cliff that motivated this test.
+	twenty := rankRecencySteps * rankRecency(now, now.Add(-20*day))
+	fourHundred := rankRecencySteps * rankRecency(now, now.Add(-400*day))
+	if twenty-fourHundred < 1.0 {
+		t.Fatalf("a 20-day-old and a 400-day-old memory differ by only %.3f ranks — "+
+			"this is the three-week cliff regression", twenty-fourHundred)
+	}
+}
+
+// TestRerankHitsRecencyIsBoundedNotDominant is the regression for the bug this
+// file exists to prevent: on the PRODUCTION path (no cross-encoder), a fresh
+// but less-relevant hit could be multiplied from the bottom of a pool to #1,
+// because score = base * recencyFactor gave recency a 20x range against a
+// ~1.5x base. Each case below fixes every variable except the one under test.
+func TestRerankHitsRecencyIsBoundedNotDominant(t *testing.T) {
+	now := time.Now().UTC()
+	ancient := now.Add(-400 * 24 * time.Hour)
+	hot := map[string]store.MemoryRecallStat{
+		"climber": {MemoryID: "climber", RecentCount: 1000, LastRecalledAt: now},
+	}
+
+	t.Run("fresh cannot leap a clearly-higher stale hit", func(t *testing.T) {
+		// staleTop at rank 0, climber (maximally fresh) five ranks down.
+		// pos(0)-pos(5) = 1/61-1/66 = 1.24e-3; the recency nudge available at
+		// rank 5 is 1.6*step(5) = 3.6e-4. Relevance wins by ~3.4x.
+		in := []store.MemoryHit{mkHit("staleTop", ancient, false, 1.0)}
+		for i := 1; i < 5; i++ {
+			in = append(in, mkHit("mid", ancient, false, 1.0))
+		}
+		in = append(in, mkHit("climber", now, false, 1.0))
+		out := rerankHits(in, now, nil)
+		if out[0].Entry.ID != "staleTop" {
+			t.Fatalf("stale-but-most-relevant must stay #1, got %q", out[0].Entry.ID)
+		}
+	})
+
+	t.Run("fresh+pinned+hot cannot leap a clearly-higher stale hit", func(t *testing.T) {
+		// Every tie-breaker maxed at once — the worst case the budget allows.
+		// pos(0)-pos(6) = 1.47e-3 vs a combined nudge of 4.8*step(6) = 1.05e-3.
+		in := []store.MemoryHit{mkHit("staleTop", ancient, false, 1.0)}
+		for i := 1; i < 6; i++ {
+			in = append(in, mkHit("mid", ancient, false, 1.0))
+		}
+		in = append(in, mkHit("climber", now, true, 1.0))
+		out := rerankHits(in, now, hot)
+		if out[0].Entry.ID != "staleTop" {
+			t.Fatalf("stale-but-most-relevant must stay #1 against a maxed-out "+
+				"tie-breaker stack, got %q", out[0].Entry.ID)
+		}
+	})
+
+	// The production symptom in miniature: one old-but-correct hit at the head
+	// of a 20-deep pool that is otherwise entirely fresh noise. Before the fix
+	// the gold hit scored 1/61*0.05 = 2.7e-4 against fresh noise at the TAIL of
+	// the pool scoring 1/80*1.0 = 1.25e-2, so it lost to every single
+	// distractor and finished LAST. Two variants, because the honest answer
+	// depends on whether the retriever separated gold from the noise at all.
+	saturated := func(goldSignal, noiseSignal float64) []store.MemoryHit {
+		in := []store.MemoryHit{mkHit("gold", now.Add(-60*24*time.Hour), false, goldSignal)}
+		for i := 1; i < 20; i++ {
+			in = append(in, mkHit("noise", now.Add(-time.Duration(i)*time.Hour), false, noiseSignal))
+		}
+		return in
+	}
+
+	t.Run("saturated fresh pool cannot displace a clearly-more-relevant old answer", func(t *testing.T) {
+		// Gold carries a clearly stronger retrieval signal (what BM25 actually
+		// produces for a topical match against unrelated prose). The
+		// signal-blend gap is (1-alpha)*(1.0-0.0)*pos(0) ≈ 9.3 position steps,
+		// far outside the 1.6-step recency budget.
+		out := rerankHits(saturated(1.0, 0.2), now, nil)
+		if out[0].Entry.ID != "gold" {
+			t.Fatalf("a 60-day-old but clearly-more-relevant top hit must survive a "+
+				"pool of 19 fresh distractors, got %q", out[0].Entry.ID)
+		}
+	})
+
+	t.Run("flat-signal old answer slips at most one rank in a fresh pool", func(t *testing.T) {
+		// Worst case for the old answer: the retriever gave it NO magnitude
+		// advantage, so only its list position defends it and freshness is the
+		// only differentiator left. By design recency then buys the fresh
+		// neighbour exactly one rank — gold at 60 days (normRecency 0.25) vs a
+		// fresh hit one step down costs 1.147 steps, above the 1.0 it must
+		// cover; the hit TWO steps down needs 1.968 and only musters 1.10. So
+		// gold lands at #2 and no further. Pre-fix it landed at #20.
+		out := rerankHits(saturated(1.0, 1.0), now, nil)
+		var goldRank = -1
+		for i, h := range out {
+			if h.Entry.ID == "gold" {
+				goldRank = i
+				break
+			}
+		}
+		if goldRank != 1 {
+			t.Fatalf("flat-signal gold must slip exactly one rank (to #2) in a fully "+
+				"fresh pool, got rank #%d of %d", goldRank+1, len(out))
+		}
+	})
+
+	t.Run("equal relevance still orders fresher first", func(t *testing.T) {
+		// The other half of the contract: recency MATTERS. Identical signal,
+		// stale listed first — the fresher hit must still take #1.
+		in := []store.MemoryHit{
+			mkHit("stale", now.Add(-90*24*time.Hour), false, 1.0),
+			mkHit("fresher", now, false, 1.0),
+		}
+		out := rerankHits(in, now, nil)
+		if out[0].Entry.ID != "fresher" {
+			t.Fatalf("at equal relevance the fresher hit must win, got %q", out[0].Entry.ID)
+		}
+	})
+
+	t.Run("stale belief loses to its fresher replacement", func(t *testing.T) {
+		// A superseded fact and its replacement retrieve near-identically (same
+		// wording, same signal). The replacement must surface first.
+		in := []store.MemoryHit{
+			mkHit("superseded", now.Add(-200*24*time.Hour), false, 1.0),
+			mkHit("replacement", now.Add(-1*time.Hour), false, 1.0),
+		}
+		out := rerankHits(in, now, nil)
+		if out[0].Entry.ID != "replacement" {
+			t.Fatalf("the fresher replacement must outrank the superseded belief, got %q",
+				out[0].Entry.ID)
+		}
+	})
+
+	t.Run("relevance magnitude outranks freshness", func(t *testing.T) {
+		// A clearly stronger retrieval signal on a STALE hit beats a weak
+		// signal on a FRESH one, even with the fresh hit listed first. This is
+		// the ordering of authorities the fix establishes: signal span at the
+		// head of the pool is ~9.3 position steps, the nudge budget is 1.6.
+		in := []store.MemoryHit{
+			mkHit("freshWeak", now, false, 0.001),
+			mkHit("staleStrong", ancient, false, 1.0),
+		}
+		out := rerankHits(in, now, nil)
+		if out[0].Entry.ID != "staleStrong" {
+			t.Fatalf("the clearly-more-relevant stale hit must win, got %q", out[0].Entry.ID)
+		}
+	})
 }
 
 // TestRerankHitsBM25MagnitudeBreaksTie covers the blend-magnitude change:

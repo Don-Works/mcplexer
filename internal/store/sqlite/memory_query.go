@@ -150,6 +150,23 @@ func (d *DB) VectorSearchMemories(
 // UpsertMemoryEmbedding replaces the vector for one memory ID and stamps
 // embed_model + embed_version on the memories row so callers can detect
 // stale vectors.
+//
+// It deliberately does NOT touch updated_at. An embedding is DERIVED data:
+// computing it is not an edit of the memory, so it must not look like one.
+// updated_at is the sole input to the recall recency signal
+// (internal/memory/rank.go) plus the freshness/decay reporting in
+// memory_stats.go and the ORDER BY of ListMemories — bumping it here made a
+// re-embed pass (backfill after a model change or version bump, see
+// internal/memory/backfill.go) rewrite the age of every row it touched,
+// flattening real authorship ages toward "just now" and destroying the
+// recency signal corpus-wide.
+//
+// Nothing depends on the bump as a "row changed, re-sync me" signal:
+// peer replication is event-driven off memory.Service write events
+// (internal/replication), the brain indexer keys off file sha/mtime, and
+// store.MemoryFilter.SinceUpdated has no production caller. Dropping the
+// write also keeps the DB row and its serialized brain file in agreement,
+// since embedding never re-serializes the on-disk record.
 func (d *DB) UpsertMemoryEmbedding(
 	ctx context.Context, id, embedModel string, embedVersion int,
 	vector []float32,
@@ -158,7 +175,6 @@ func (d *DB) UpsertMemoryEmbedding(
 		return fmt.Errorf("UpsertMemoryEmbedding: id, embed_model and vector required")
 	}
 	vecJSON := vectorToJSON(vector)
-	now := time.Now().Unix()
 	return d.withTx(ctx, func(q queryable) error {
 		_, err := q.ExecContext(ctx,
 			`DELETE FROM memories_vec WHERE memory_id = ?`, id)
@@ -172,9 +188,9 @@ func (d *DB) UpsertMemoryEmbedding(
 			return fmt.Errorf("insert vector: %w", err)
 		}
 		res, err := q.ExecContext(ctx, `
-			UPDATE memories SET embed_model = ?, embed_version = ?, updated_at = ?
+			UPDATE memories SET embed_model = ?, embed_version = ?
 			WHERE id = ? AND deleted_at IS NULL`,
-			embedModel, embedVersion, now, id)
+			embedModel, embedVersion, id)
 		if err != nil {
 			return fmt.Errorf("stamp embedding meta: %w", err)
 		}

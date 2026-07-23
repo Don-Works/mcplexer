@@ -13,15 +13,34 @@
 // fighting chance and the thresholds stay meaningful.
 package eval
 
+import "time"
+
 // FixtureMemory is one labeled document in the eval corpus. Key is a stable
 // human-readable handle used by queries to express relevance — it is mapped
 // to the store-assigned ULID at seed time, so the labels never hard-code an
 // id that changes per run.
+//
+// UpdatedAt/CreatedAt are the ADVERSARIAL knob: a zero value means "seed via
+// memory.Service.Write and let the store stamp now()" (the original,
+// everything-is-fresh behaviour), while a non-zero value backdates the row so
+// the gate can exercise the recency term in ranking. See Harness.seed.
+// Backdating is possible because (*sqlite.DB).WriteMemory only defaults
+// CreatedAt/UpdatedAt/TValidStart when they are zero — it honours whatever the
+// caller supplies. The Service.Write path cannot express this (registry.go
+// builds the store.MemoryEntry literal without timestamp fields), which is why
+// the harness drops to the store for backdated rows.
 type FixtureMemory struct {
 	Key     string // stable label handle (e.g. "editor-pref")
 	Name    string
 	Content string
 	Tags    []string
+
+	// UpdatedAt, when non-zero, is written verbatim to the row (and mirrored
+	// onto created_at / t_valid_start) instead of time.Now().
+	UpdatedAt time.Time
+	// Pinned mirrors store.MemoryEntry.Pinned so a fixture can exercise the
+	// pinnedBoost term. Defaults false for every generated document.
+	Pinned bool
 }
 
 // FixtureQuery is one labeled retrieval probe. RelevantKeys lists the
@@ -109,7 +128,7 @@ func DefaultCorpus() Corpus {
 			},
 		},
 		Queries: []FixtureQuery{
-			{Query: "which text editor does Max use", RelevantKeys: []string{"editor-pref"}},
+			{Query: "which text editor does the operator use", RelevantKeys: []string{"editor-pref"}},
 			{Query: "what shell is configured", RelevantKeys: []string{"shell-pref"}},
 			{Query: "what database engine does mcplexer use", RelevantKeys: []string{"db-choice"}},
 			{Query: "how should secrets be handled", RelevantKeys: []string{"secrets-rule"}},

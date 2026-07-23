@@ -1752,6 +1752,15 @@ func rrfFuse(a, b []store.MemoryHit, topN, k int, wFTS, wVec float64) []store.Me
 	for id, h := range rec {
 		all = append(all, sh{hit: h, score: score[id]})
 	}
+	// DETERMINISM: `rec` is a map, so the loop above produces a RANDOM initial
+	// order, and equal RRF scores are common (a doc at rank r of one arm only
+	// scores exactly 1/(k+r+1), same as any other doc at rank r of the other
+	// arm). Without a secondary key the insertion sort below — which is stable
+	// and therefore preserves whatever the map handed it — would return a
+	// different top-k on identical input between calls, making recall look
+	// flaky and poisoning any A/B of a ranking change. Sort by id first so the
+	// score sort has a deterministic base order to be stable against.
+	sort.Slice(all, func(i, j int) bool { return all[i].hit.Entry.ID < all[j].hit.Entry.ID })
 	// In-place insertion sort — fine for the small N we cap at.
 	for i := 1; i < len(all); i++ {
 		j := i
