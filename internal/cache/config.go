@@ -32,7 +32,7 @@ var DefaultCacheablePatterns = []string{
 // DefaultMutationPatterns are tool name prefixes that indicate write operations.
 var DefaultMutationPatterns = []string{
 	"create_*", "update_*", "delete_*", "send_*", "post_*",
-	"put_*", "set_*", "add_*", "remove_*",
+	"put_*", "set_*", "add_*", "remove_*", "publish_*", "import_*",
 }
 
 // DefaultNoCacheablePatterns are tool name prefixes that must never be cached

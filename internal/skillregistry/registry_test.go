@@ -596,6 +596,7 @@ func TestSeedPopulatesEmptyRegistry(t *testing.T) {
 		t.Errorf("expected ≥2 seeded heads, got %d", len(heads))
 	}
 	authorBuckets := map[string]int{}
+	seededNames := map[string]bool{}
 	for _, h := range heads {
 		// Authors are derived from the seed dir layout: top-level seeds
 		// get "system", grouped seeds (seeds/<group>/*.md) get "<group>".
@@ -606,6 +607,12 @@ func TestSeedPopulatesEmptyRegistry(t *testing.T) {
 			t.Errorf("seed %s version=%d (want 1)", h.Name, h.Version)
 		}
 		authorBuckets[h.Author]++
+		seededNames[h.Name] = true
+	}
+	for _, name := range []string{"skill-creator", "review-skills", "using-mcplexer"} {
+		if !seededNames[name] {
+			t.Errorf("missing governance seed %q", name)
+		}
 	}
 	if authorBuckets["system"] < 2 {
 		t.Errorf("expected ≥2 system seeds, got %d", authorBuckets["system"])

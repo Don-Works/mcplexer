@@ -89,6 +89,42 @@ func TestCachingLister_MutationInvalidates(t *testing.T) {
 	}
 }
 
+func TestCachingLister_SkillPublishInvalidatesRegistryReads(t *testing.T) {
+	inner := &mockLister{result: json.RawMessage(`{"data":"before"}`)}
+	tc := NewToolCache(map[string]ServerCacheConfig{
+		"mcplexer": DefaultServerCacheConfig(),
+	})
+	cl := NewCachingToolLister(inner, tc)
+	ctx := context.Background()
+	listArgs := json.RawMessage(`{"view":"scope_heads","limit":500}`)
+
+	if _, err := cl.Call(ctx, "mcplexer", "", "list_skill_registry", listArgs); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cl.Call(ctx, "mcplexer", "", "list_skill_registry", listArgs); err != nil {
+		t.Fatal(err)
+	}
+	if inner.callCount != 1 {
+		t.Fatalf("registry list should be cached before publish: calls=%d, want 1", inner.callCount)
+	}
+
+	inner.result = json.RawMessage(`{"data":"published"}`)
+	if _, err := cl.Call(ctx, "mcplexer", "", "publish_skill_registry", json.RawMessage(`{"name":"example"}`)); err != nil {
+		t.Fatal(err)
+	}
+	inner.result = json.RawMessage(`{"data":"after"}`)
+	got, err := cl.Call(ctx, "mcplexer", "", "list_skill_registry", listArgs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != `{"data":"after"}` {
+		t.Fatalf("registry list stayed stale after publish: got %s", got)
+	}
+	if inner.callCount != 3 {
+		t.Fatalf("calls=%d, want list + publish + refreshed list = 3", inner.callCount)
+	}
+}
+
 func TestCachingLister_UnknownPatternPassthrough(t *testing.T) {
 	inner := &mockLister{result: json.RawMessage(`{"data":"ok"}`)}
 	tc := NewToolCache(map[string]ServerCacheConfig{

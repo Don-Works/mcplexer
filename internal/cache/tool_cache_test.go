@@ -61,6 +61,8 @@ func TestIsMutation(t *testing.T) {
 		{"set_", "s1", "config__set_value", true},
 		{"add_", "s1", "clickup__add_tag_to_task", true},
 		{"remove_", "s1", "clickup__remove_tag", true},
+		{"publish_", "s1", "mcplexer__publish_skill_registry", true},
+		{"import_", "s1", "mcplexer__import_skill_registry_dir", true},
 		{"get_ is not mutation", "s1", "clickup__get_task", false},
 		{"list_ is not mutation", "s1", "clickup__list_tasks", false},
 	}
