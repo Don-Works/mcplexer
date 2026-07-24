@@ -20,6 +20,7 @@ import (
 	"github.com/don-works/mcplexer/internal/config"
 	"github.com/don-works/mcplexer/internal/index"
 	"github.com/don-works/mcplexer/internal/logwatch/distill"
+	"github.com/don-works/mcplexer/internal/mcpversion"
 	"github.com/don-works/mcplexer/internal/memory"
 	"github.com/don-works/mcplexer/internal/mesh"
 	"github.com/don-works/mcplexer/internal/p2p"
@@ -329,7 +330,14 @@ func (h *handler) handleInitialize(
 		return nil, &RPCError{Code: CodeInvalidParams, Message: err.Error()}
 	}
 
-	if err := h.sessions.create(ctx, p.ClientInfo, p.Roots); err != nil {
+	protocolVersion := mcpversion.Select(p.ProtocolVersion)
+	if err := h.sessions.create(
+		ctx,
+		p.ClientInfo,
+		p.Roots,
+		protocolVersion,
+		p.Capabilities,
+	); err != nil {
 		slog.Warn("create MCP session failed", "error", err)
 		return nil, &RPCError{Code: CodeInvalidRequest, Message: err.Error()}
 	}
@@ -340,16 +348,8 @@ func (h *handler) handleInitialize(
 		_ = h.mesh.RegisterAgent(ctx, meta)
 	}
 
-	// Echo the client's protocolVersion when provided. This keeps strict
-	// MCP clients (that validate the version in the initialize result against
-	// the one they sent) happy. We don't have meaningful per-version behaviour
-	// differences today, so accepting the client's proposal is safe.
-	pv := p.ProtocolVersion
-	if pv == "" {
-		pv = "2025-03-26"
-	}
 	result := InitializeResult{
-		ProtocolVersion: pv,
+		ProtocolVersion: protocolVersion,
 		Capabilities: ServerCapability{
 			Tools: &ToolCapability{ListChanged: true},
 		},

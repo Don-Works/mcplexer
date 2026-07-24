@@ -44,10 +44,32 @@ const (
 
 // InitializeParams is the client's initialize request params.
 type InitializeParams struct {
-	ProtocolVersion string     `json:"protocolVersion"`
-	Capabilities    any        `json:"capabilities"`
-	ClientInfo      ClientInfo `json:"clientInfo"`
-	Roots           []Root     `json:"roots,omitempty"`
+	ProtocolVersion string             `json:"protocolVersion"`
+	Capabilities    ClientCapabilities `json:"capabilities"`
+	ClientInfo      ClientInfo         `json:"clientInfo"`
+	Roots           []Root             `json:"roots,omitempty"`
+}
+
+// ClientCapabilities is the connecting client's open capability object.
+// MCP explicitly permits additional capability keys, so values remain raw JSON
+// rather than being narrowed to the capabilities known by this build.
+type ClientCapabilities map[string]json.RawMessage
+
+// Has reports whether the client declared a top-level capability.
+func (c ClientCapabilities) Has(name string) bool {
+	_, ok := c[name]
+	return ok
+}
+
+func (c ClientCapabilities) clone() ClientCapabilities {
+	if c == nil {
+		return nil
+	}
+	out := make(ClientCapabilities, len(c))
+	for name, value := range c {
+		out[name] = append(json.RawMessage(nil), value...)
+	}
+	return out
 }
 
 // Root represents a workspace root provided by the client.

@@ -11,6 +11,7 @@ import (
 	"sync"
 
 	"github.com/don-works/mcplexer/internal/gateway"
+	"github.com/don-works/mcplexer/internal/mcpversion"
 	"github.com/don-works/mcplexer/internal/store"
 )
 
@@ -87,7 +88,7 @@ func (s *Server) dispatch(ctx context.Context, line []byte) *gateway.Response {
 
 	switch req.Method {
 	case "initialize":
-		result, rpcErr = s.handleInitialize()
+		result, rpcErr = s.handleInitialize(req.Params)
 	case "ping":
 		result, _ = json.Marshal(map[string]any{})
 	case "tools/list":
@@ -119,9 +120,18 @@ func (s *Server) handleNotification(req gateway.Request) {
 	}
 }
 
-func (s *Server) handleInitialize() (json.RawMessage, *gateway.RPCError) {
+func (s *Server) handleInitialize(
+	params json.RawMessage,
+) (json.RawMessage, *gateway.RPCError) {
+	var request gateway.InitializeParams
+	if err := json.Unmarshal(params, &request); err != nil {
+		return nil, &gateway.RPCError{
+			Code:    gateway.CodeInvalidParams,
+			Message: "invalid initialize params: " + err.Error(),
+		}
+	}
 	result := gateway.InitializeResult{
-		ProtocolVersion: "2025-03-26",
+		ProtocolVersion: mcpversion.Select(request.ProtocolVersion),
 		Capabilities: gateway.ServerCapability{
 			Tools: &gateway.ToolCapability{ListChanged: false},
 		},

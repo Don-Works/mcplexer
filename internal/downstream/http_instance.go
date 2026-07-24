@@ -36,6 +36,9 @@ type HTTPInstance struct {
 	authHeaders http.Header
 	applyAuth   AuthRequestFunc
 	sessionID   string // Mcp-Session-Id from server
+	// protocolVersion is selected during initialize and sent on every
+	// subsequent Streamable HTTP request as MCP-Protocol-Version.
+	protocolVersion string
 
 	idleTimeout time.Duration
 	idleTimer   *time.Timer
@@ -98,19 +101,15 @@ func (h *HTTPInstance) start(ctx context.Context) error {
 		return fmt.Errorf("cannot start http instance in state %s", s)
 	}
 	h.state = StateStarting
+	// A fresh initialize request starts a fresh protocol session. Do not leak
+	// prior negotiation or session-routing state into the handshake.
+	h.protocolVersion = ""
+	h.sessionID = ""
+	h.sessionURL = ""
 	h.mu.Unlock()
 
 	// Perform MCP initialize handshake over HTTP (mutex released so doRPC can read authHeaders).
-	initReq := jsonRPCRequest{
-		JSONRPC: "2.0",
-		ID:      json.RawMessage(`1`),
-		Method:  "initialize",
-		Params: json.RawMessage(`{
-			"protocolVersion": "2025-03-26",
-			"capabilities": {},
-			"clientInfo": {"name": "mcplexer", "version": "0.1.0"}
-		}`),
-	}
+	initReq := newInitializeRequest()
 
 	resp, err := h.doRPC(ctx, initReq)
 	if err != nil {
@@ -119,7 +118,16 @@ func (h *HTTPInstance) start(ctx context.Context) error {
 		h.mu.Unlock()
 		return fmt.Errorf("initialize: %w", err)
 	}
-	_ = resp // initialize response not needed
+	selected, err := validateInitializeResult(resp)
+	if err != nil {
+		h.mu.Lock()
+		h.state = StateStopped
+		h.mu.Unlock()
+		return fmt.Errorf("initialize: %w", err)
+	}
+	h.mu.Lock()
+	h.protocolVersion = selected
+	h.mu.Unlock()
 
 	// Send initialized notification (no ID = notification).
 	notif := jsonRPCRequest{
@@ -290,6 +298,7 @@ func (h *HTTPInstance) doRPC(ctx context.Context, rpcReq jsonRPCRequest) (json.R
 	headers := h.authHeaders
 	applyAuth := h.applyAuth
 	sid := h.sessionID
+	protocolVersion := h.protocolVersion
 	h.mu.Unlock()
 	for k, vals := range headers {
 		for _, v := range vals {
@@ -300,6 +309,9 @@ func (h *HTTPInstance) doRPC(ctx context.Context, rpcReq jsonRPCRequest) (json.R
 	// Include session ID from previous initialize handshake.
 	if sid != "" {
 		httpReq.Header.Set("Mcp-Session-Id", sid)
+	}
+	if protocolVersion != "" {
+		httpReq.Header.Set("MCP-Protocol-Version", protocolVersion)
 	}
 
 	if applyAuth != nil && h.key.AuthScopeID != "" {

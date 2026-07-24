@@ -177,7 +177,7 @@ func TestCreateModelHint(t *testing.T) {
 				store:     &mockStore{},
 				transport: TransportStdio,
 			}
-			if err := sm.create(t.Context(), tt.info, nil); err != nil {
+			if err := sm.create(t.Context(), tt.info, nil, "", nil); err != nil {
 				t.Fatalf("create() error: %v", err)
 			}
 			got := sm.modelHint()

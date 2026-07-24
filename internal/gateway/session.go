@@ -73,6 +73,8 @@ type sessionManager struct {
 	discoverRepoBrain   func(ctx context.Context, clientRoot, workspaceID string)
 	initializeStarted   bool
 	initializeSucceeded bool
+	protocolVersion     string
+	clientCapabilities  ClientCapabilities
 }
 
 func newSessionManager(s store.Store, e *routing.Engine, t TransportMode, bus *session.Bus) *sessionManager {
@@ -98,7 +100,13 @@ func (sm *sessionManager) beginInitialize() error {
 	return nil
 }
 
-func (sm *sessionManager) create(ctx context.Context, clientInfo ClientInfo, roots []Root) error {
+func (sm *sessionManager) create(
+	ctx context.Context,
+	clientInfo ClientInfo,
+	roots []Root,
+	protocolVersion string,
+	capabilities ClientCapabilities,
+) error {
 	modelHint := clientInfo.Version
 	if clientInfo.Name != "" {
 		modelHint = clientInfo.Name + "/" + clientInfo.Version
@@ -124,6 +132,8 @@ func (sm *sessionManager) create(ctx context.Context, clientInfo ClientInfo, roo
 		sess.WorkspaceID = &sm.wsChain[0].ID
 	}
 	sm.session = sess
+	sm.protocolVersion = protocolVersion
+	sm.clientCapabilities = capabilities.clone()
 	sm.mu.Unlock()
 
 	// Record last_initialize_at + clientInfo for harness-sync /setup/status.
@@ -517,4 +527,17 @@ func (sm *sessionManager) modelHint() string {
 		return ""
 	}
 	return sm.session.ModelHint
+}
+
+// clientNegotiation returns an immutable snapshot of the protocol revision and
+// open client capability object negotiated during initialize. The capability
+// map and each raw value are copied so future capability-aware handlers can
+// inspect or decode them without racing with or mutating session state.
+func (sm *sessionManager) clientNegotiation() (string, ClientCapabilities) {
+	if sm == nil {
+		return "", nil
+	}
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	return sm.protocolVersion, sm.clientCapabilities.clone()
 }

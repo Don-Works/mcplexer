@@ -7,42 +7,79 @@ import (
 	"testing"
 
 	"github.com/don-works/mcplexer/internal/gateway"
+	"github.com/don-works/mcplexer/internal/mcpversion"
 	"github.com/don-works/mcplexer/internal/store"
 )
 
-func TestServerInitialize(t *testing.T) {
+func TestServerInitializeNegotiatesProtocolVersion(t *testing.T) {
+	tests := make(map[string]string)
+	for _, version := range mcpversion.Supported() {
+		tests[version] = version
+	}
+	tests[""] = mcpversion.Latest
+	tests["2026-01-01"] = mcpversion.Latest
+	tests["DRAFT-2026-v1"] = mcpversion.Latest
+
+	for proposed, want := range tests {
+		t.Run("proposed_"+proposed, func(t *testing.T) {
+			srv := New(newTestDB(t))
+			var in, out bytes.Buffer
+
+			writeReq(&in, 1, "initialize", map[string]any{
+				"protocolVersion": proposed,
+				"capabilities": map[string]any{
+					"futureFeature": map[string]any{"enabled": true},
+				},
+				"clientInfo": map[string]any{"name": "test", "version": "1.0"},
+			})
+
+			if err := srv.run(context.Background(), &in, &out); err != nil {
+				t.Fatal(err)
+			}
+
+			responses := readResponses(t, out.Bytes())
+			if len(responses) != 1 {
+				t.Fatalf("got %d responses, want 1", len(responses))
+			}
+
+			resp := responses[0]
+			if resp.Error != nil {
+				t.Fatalf("unexpected error: %s", resp.Error.Message)
+			}
+
+			var result gateway.InitializeResult
+			if err := json.Unmarshal(resp.Result, &result); err != nil {
+				t.Fatal(err)
+			}
+			if result.ServerInfo.Name != "mcplexer-control" {
+				t.Fatalf("server name = %q", result.ServerInfo.Name)
+			}
+			if result.ProtocolVersion != want {
+				t.Fatalf("protocol version = %q, want %q", result.ProtocolVersion, want)
+			}
+		})
+	}
+}
+
+func TestServerInitializeRejectsMalformedCapabilities(t *testing.T) {
 	srv := New(newTestDB(t))
 	var in, out bytes.Buffer
-
 	writeReq(&in, 1, "initialize", map[string]any{
-		"protocolVersion": "2025-03-26",
-		"capabilities":    map[string]any{},
+		"protocolVersion": mcpversion.Latest,
+		"capabilities":    []string{"not", "an", "object"},
 		"clientInfo":      map[string]any{"name": "test", "version": "1.0"},
 	})
 
 	if err := srv.run(context.Background(), &in, &out); err != nil {
 		t.Fatal(err)
 	}
-
-	responses := readResponses(t, out.Bytes())
-	if len(responses) != 1 {
-		t.Fatalf("got %d responses, want 1", len(responses))
-	}
-
-	resp := responses[0]
-	if resp.Error != nil {
-		t.Fatalf("unexpected error: %s", resp.Error.Message)
-	}
-
-	var result gateway.InitializeResult
-	if err := json.Unmarshal(resp.Result, &result); err != nil {
-		t.Fatal(err)
-	}
-	if result.ServerInfo.Name != "mcplexer-control" {
-		t.Fatalf("server name = %q", result.ServerInfo.Name)
-	}
-	if result.ProtocolVersion != "2025-03-26" {
-		t.Fatalf("protocol version = %q", result.ProtocolVersion)
+	resp := readResponses(t, out.Bytes())[0]
+	if resp.Error == nil || resp.Error.Code != gateway.CodeInvalidParams {
+		t.Fatalf(
+			"malformed initialize error = %#v, want code %d",
+			resp.Error,
+			gateway.CodeInvalidParams,
+		)
 	}
 }
 

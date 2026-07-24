@@ -165,7 +165,7 @@ func initializeParams(t *testing.T, root string) json.RawMessage {
 	t.Helper()
 	params := InitializeParams{
 		ProtocolVersion: "2025-03-26",
-		Capabilities:    map[string]any{},
+		Capabilities:    ClientCapabilities{},
 		ClientInfo:      ClientInfo{Name: "initialization-gate-test", Version: "1.0"},
 		Roots:           []Root{{URI: (&url.URL{Scheme: "file", Path: root}).String()}},
 	}

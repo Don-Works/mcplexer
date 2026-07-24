@@ -24,7 +24,7 @@ func TestWorkspaceAncestors_RefreshOnVersionBump(t *testing.T) {
 
 	sm := &sessionManager{store: st, engine: eng, transport: TransportSocket}
 	// Bind: clientPath + initial chain + lastWSVer captured.
-	if err := sm.create(t.Context(), ClientInfo{Name: "test"}, []Root{{URI: "file:///code/proj/src"}}); err != nil {
+	if err := sm.create(t.Context(), ClientInfo{Name: "test"}, []Root{{URI: "file:///code/proj/src"}}, "", nil); err != nil {
 		t.Fatalf("create: %v", err)
 	}
 
@@ -79,7 +79,7 @@ func TestCreate_FiresRepoBrainDiscoveryOnce(t *testing.T) {
 		gotWS = workspaceID
 	})
 
-	if err := sm.create(t.Context(), ClientInfo{Name: "test"}, []Root{{URI: "file:///code/proj/src"}}); err != nil {
+	if err := sm.create(t.Context(), ClientInfo{Name: "test"}, []Root{{URI: "file:///code/proj/src"}}, "", nil); err != nil {
 		t.Fatalf("create: %v", err)
 	}
 
@@ -121,7 +121,7 @@ func TestCreate_RebindsAfterRepoBrainDiscoveryMaterializesChild(t *testing.T) {
 		eng.InvalidateAllRoutes()
 	})
 
-	if err := sm.create(t.Context(), ClientInfo{Name: "test"}, []Root{{URI: "file:///code/workspace1/folder1/folder2"}}); err != nil {
+	if err := sm.create(t.Context(), ClientInfo{Name: "test"}, []Root{{URI: "file:///code/workspace1/folder1/folder2"}}, "", nil); err != nil {
 		t.Fatalf("create: %v", err)
 	}
 	if callbackWorkspace != "parent" {
@@ -150,7 +150,7 @@ func TestWorkspaceAncestors_ConcurrentRefreshNoRace(t *testing.T) {
 	}
 	eng := routing.NewEngine(st)
 	sm := &sessionManager{store: st, engine: eng, transport: TransportSocket}
-	if err := sm.create(t.Context(), ClientInfo{Name: "test"}, []Root{{URI: "file:///code/proj/src"}}); err != nil {
+	if err := sm.create(t.Context(), ClientInfo{Name: "test"}, []Root{{URI: "file:///code/proj/src"}}, "", nil); err != nil {
 		t.Fatalf("create: %v", err)
 	}
 

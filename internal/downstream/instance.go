@@ -56,6 +56,9 @@ type Instance struct {
 	stdin io.WriteCloser
 	queue *requestQueue
 	reqID atomic.Int64
+	// protocolVersion is selected during initialize. start and initialize run
+	// while mu is held; it is retained for future version-aware behavior.
+	protocolVersion string
 
 	cancel context.CancelFunc
 	done   chan struct{}
@@ -102,6 +105,7 @@ func (inst *Instance) start(ctx context.Context) error {
 		inst.queue = newRequestQueue(64)
 	}
 	inst.state = StateStarting
+	inst.protocolVersion = ""
 	// StateStopped/StateRestarting means the prior command is no longer
 	// allowed to own its transient wrapper profile. This also covers a
 	// defensive manual retry that fails validation before reaching Wrap.
@@ -240,60 +244,82 @@ func (inst *Instance) start(ctx context.Context) error {
 }
 
 func (inst *Instance) initialize(ctx context.Context, stdin io.Writer, scanner *bufio.Scanner) error {
-	initReq := jsonRPCRequest{
-		JSONRPC: "2.0",
-		ID:      json.RawMessage(`1`),
-		Method:  "initialize",
-		Params: json.RawMessage(`{
-			"protocolVersion": "2025-03-26",
-			"capabilities": {},
-			"clientInfo": {"name": "mcplexer", "version": "0.1.0"}
-		}`),
-	}
+	initReq := newInitializeRequest()
 	if err := writeJSONLine(stdin, initReq); err != nil {
 		return fmt.Errorf("write initialize: %w", err)
 	}
 
-	// Read the initialize response, tolerating launcher preamble. A cold
-	// `uvx`/`npx` spawn can print resolution/progress lines to stdout before
-	// the wrapped server starts speaking JSON-RPC; blindly taking the first
-	// line as the response would desync the stream for the instance's whole
-	// life. Skip non-JSON and non-matching lines until the id==1 response.
-	ch := make(chan error, 1)
-	go func() {
-		for scanner.Scan() {
-			line := scanner.Bytes()
-			var resp jsonRPCResponse
-			if err := json.Unmarshal(line, &resp); err != nil || resp.ID == nil {
-				// Preamble noise or a pre-init notification — skip it.
-				inst.logInitPreamble(line)
-				continue
-			}
-			if !responseIDMatches(resp.ID, 1) {
-				inst.logInitPreamble(line)
-				continue
-			}
-			ch <- nil
-			return
-		}
-		ch <- fmt.Errorf("no initialize response")
-	}()
-
-	select {
-	case <-ctx.Done():
-		return fmt.Errorf("initialize timed out: %w", ctx.Err())
-	case err := <-ch:
-		if err != nil {
-			return err
-		}
+	selected, err := inst.awaitInitializeResponse(ctx, scanner)
+	if err != nil {
+		return err
 	}
+	inst.protocolVersion = selected
 
-	// Send initialized notification.
+	// Send initialized notification only after successful version agreement.
 	notif := jsonRPCRequest{
 		JSONRPC: "2.0",
 		Method:  "notifications/initialized",
 	}
 	return writeJSONLine(stdin, notif)
+}
+
+type initializeHandshakeResult struct {
+	protocolVersion string
+	err             error
+}
+
+func (inst *Instance) awaitInitializeResponse(
+	ctx context.Context,
+	scanner *bufio.Scanner,
+) (string, error) {
+	ch := make(chan initializeHandshakeResult, 1)
+	go func() {
+		ch <- inst.scanInitializeResponse(scanner)
+	}()
+	select {
+	case <-ctx.Done():
+		return "", fmt.Errorf("initialize timed out: %w", ctx.Err())
+	case result := <-ch:
+		return result.protocolVersion, result.err
+	}
+}
+
+func (inst *Instance) scanInitializeResponse(
+	scanner *bufio.Scanner,
+) initializeHandshakeResult {
+	// Read the initialize response, tolerating launcher preamble. A cold
+	// `uvx`/`npx` spawn can print resolution/progress lines to stdout before
+	// the wrapped server starts speaking JSON-RPC; blindly taking the first
+	// line as the response would desync the stream for the instance's whole
+	// life. Skip non-JSON and non-matching lines until the id==1 response.
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		var resp jsonRPCResponse
+		if err := json.Unmarshal(line, &resp); err != nil || resp.ID == nil {
+			// Preamble noise or a pre-init notification — skip it.
+			inst.logInitPreamble(line)
+			continue
+		}
+		if !responseIDMatches(resp.ID, 1) {
+			inst.logInitPreamble(line)
+			continue
+		}
+		if resp.Error != nil {
+			return initializeHandshakeResult{err: fmt.Errorf(
+				"rpc error %d: %s",
+				resp.Error.Code,
+				resp.Error.Message,
+			)}
+		}
+		selected, err := validateInitializeResult(resp.Result)
+		return initializeHandshakeResult{protocolVersion: selected, err: err}
+	}
+	if err := scanner.Err(); err != nil {
+		return initializeHandshakeResult{
+			err: fmt.Errorf("read initialize response: %w", err),
+		}
+	}
+	return initializeHandshakeResult{err: fmt.Errorf("no initialize response")}
 }
 
 // logInitPreamble records a non-response line seen during the handshake so a

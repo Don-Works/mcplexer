@@ -36,7 +36,7 @@ func main() {
 			continue
 		}
 		if req.Method == "initialize" {
-			fmt.Fprintf(w, "{\"jsonrpc\":\"2.0\",\"id\":%s,\"result\":{}}\n", req.ID)
+			fmt.Fprintf(w, "{\"jsonrpc\":\"2.0\",\"id\":%s,\"result\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{}}}\n", req.ID)
 			w.Flush()
 			continue
 		}
@@ -67,6 +67,11 @@ func main() {
 			Method string ` + "`json:\"method\"`" + `
 		}
 		if json.Unmarshal(r.Bytes(), &req) != nil || len(req.ID) == 0 {
+			continue
+		}
+		if req.Method == "initialize" {
+			fmt.Fprintf(w, "{\"jsonrpc\":\"2.0\",\"id\":%s,\"result\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{}}}\n", req.ID)
+			w.Flush()
 			continue
 		}
 		fmt.Fprintf(w, "{\"jsonrpc\":\"2.0\",\"id\":%s,\"result\":{\"ok\":true}}\n", req.ID)

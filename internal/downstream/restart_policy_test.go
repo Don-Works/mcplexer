@@ -49,6 +49,12 @@ func main() {
 		if len(req.ID) == 0 {
 			continue
 		}
+		if req.Method == "initialize" {
+			fmt.Fprintf(w, "{\"jsonrpc\":\"2.0\",\"id\":%s,\"result\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{}}}\n",
+				string(req.ID))
+			w.Flush()
+			continue
+		}
 		fmt.Fprintf(w, "{\"jsonrpc\":\"2.0\",\"id\":%s,\"result\":{\"ok\":true,\"method\":%q}}\n",
 			string(req.ID), req.Method)
 		w.Flush()

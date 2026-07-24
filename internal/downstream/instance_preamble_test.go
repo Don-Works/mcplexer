@@ -40,7 +40,7 @@ func TestInitializeSkipsLauncherPreamble(t *testing.T) {
 func TestInitializeSkipsPreInitNotification(t *testing.T) {
 	inst := &Instance{key: InstanceKey{ServerID: "test"}}
 	stream := `{"jsonrpc":"2.0","method":"notifications/message","params":{"level":"info"}}` + "\n" +
-		`{"jsonrpc":"2.0","id":1,"result":{}}` + "\n"
+		`{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-11-25","capabilities":{}}}` + "\n"
 	var stdin bytes.Buffer
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()

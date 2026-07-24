@@ -49,6 +49,11 @@ func main() {
 		if len(req.ID) == 0 {
 			continue
 		}
+		if req.Method == "initialize" {
+			fmt.Fprintf(w, "{\"jsonrpc\":\"2.0\",\"id\":%s,\"result\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{}}}\n", string(req.ID))
+			w.Flush()
+			continue
+		}
 		// Echo the request id with a trivial result. The exact result
 		// shape doesn't matter for the lifecycle test — only that an
 		// id-matched response comes back.

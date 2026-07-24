@@ -12,6 +12,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/don-works/mcplexer/internal/mcpversion"
 )
 
 // ---------------------------------------------------------------------------
@@ -204,9 +206,15 @@ func TestHTTPInstance_AcceptHeaderConformance(t *testing.T) {
 	var gotAccept string
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotAccept = r.Header.Get("Accept")
-		// Always return a valid JSON-RPC response.
+		body, _ := io.ReadAll(r.Body)
+		var req jsonRPCRequest
+		_ = json.Unmarshal(body, &req)
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{}}`))
+		if req.Method == "initialize" {
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-11-25","capabilities":{}}}`))
+			return
+		}
+		w.WriteHeader(http.StatusAccepted)
 	}))
 	defer ts.Close()
 
@@ -230,7 +238,18 @@ func TestHTTPInstance_AcceptHeaderConformance(t *testing.T) {
 func TestHTTPInstance_RoutesSSEAndJSON(t *testing.T) {
 	t.Run("JSON response", func(t *testing.T) {
 		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			body, _ := io.ReadAll(r.Body)
+			var req jsonRPCRequest
+			_ = json.Unmarshal(body, &req)
 			w.Header().Set("Content-Type", "application/json")
+			if req.Method == "initialize" {
+				_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-11-25","capabilities":{}}}`))
+				return
+			}
+			if req.ID == nil {
+				w.WriteHeader(http.StatusAccepted)
+				return
+			}
 			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"ok":true}}`))
 		}))
 		defer ts.Close()
@@ -256,7 +275,18 @@ func TestHTTPInstance_RoutesSSEAndJSON(t *testing.T) {
 
 	t.Run("SSE response", func(t *testing.T) {
 		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			body, _ := io.ReadAll(r.Body)
+			var req jsonRPCRequest
+			_ = json.Unmarshal(body, &req)
+			if req.ID == nil {
+				w.WriteHeader(http.StatusAccepted)
+				return
+			}
 			w.Header().Set("Content-Type", "text/event-stream")
+			if req.Method == "initialize" {
+				fmt.Fprint(w, "data: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{}}}\n\n")
+				return
+			}
 			fmt.Fprintf(w, "data: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"ok\":true}}\n\n")
 		}))
 		defer ts.Close()
@@ -499,8 +529,19 @@ func TestHTTPInstance_SessionIDPropagated(t *testing.T) {
 		sessionIDs = append(sessionIDs, r.Header.Get("Mcp-Session-Id"))
 		mu.Unlock()
 
+		body, _ := io.ReadAll(r.Body)
+		var req jsonRPCRequest
+		_ = json.Unmarshal(body, &req)
 		w.Header().Set("Mcp-Session-Id", "sess-test-123")
 		w.Header().Set("Content-Type", "application/json")
+		if req.Method == "initialize" {
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-11-25","capabilities":{}}}`))
+			return
+		}
+		if req.ID == nil {
+			w.WriteHeader(http.StatusAccepted)
+			return
+		}
 		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{}}`))
 	}))
 	defer ts.Close()
@@ -582,8 +623,7 @@ func TestHTTPInstance_AuthRequired(t *testing.T) {
 // --- Initialize handshake protocol version ---------------------------------
 
 // TestHTTPInstance_InitializeProtocolVersion verifies the initialize request
-// sends protocolVersion "2025-03-26" (the version the gateway currently
-// speaks, even though the latest spec is 2025-11-25).
+// proposes MCPlexer's latest supported revision.
 func TestHTTPInstance_InitializeProtocolVersion(t *testing.T) {
 	var initBody jsonRPCRequest
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -596,7 +636,7 @@ func TestHTTPInstance_InitializeProtocolVersion(t *testing.T) {
 			initBody = req
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-03-26","capabilities":{},"serverInfo":{"name":"test","version":"1.0"}}}`))
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-11-25","capabilities":{},"serverInfo":{"name":"test","version":"1.0"}}}`))
 	}))
 	defer ts.Close()
 
@@ -613,8 +653,8 @@ func TestHTTPInstance_InitializeProtocolVersion(t *testing.T) {
 		ProtocolVersion string `json:"protocolVersion"`
 	}
 	_ = json.Unmarshal(initBody.Params, &params)
-	if params.ProtocolVersion != "2025-03-26" {
-		t.Errorf("protocolVersion = %q, want 2025-03-26", params.ProtocolVersion)
+	if params.ProtocolVersion != mcpversion.Latest {
+		t.Errorf("protocolVersion = %q, want %s", params.ProtocolVersion, mcpversion.Latest)
 	}
 }
 
@@ -637,7 +677,7 @@ func TestHTTPInstance_InitializedNotificationSent(t *testing.T) {
 
 		w.Header().Set("Content-Type", "application/json")
 		if req.Method == "initialize" {
-			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-03-26","capabilities":{},"serverInfo":{"name":"test","version":"1.0"}}}`))
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-11-25","capabilities":{},"serverInfo":{"name":"test","version":"1.0"}}}`))
 		} else {
 			// Notification — return 202.
 			w.WriteHeader(http.StatusAccepted)
