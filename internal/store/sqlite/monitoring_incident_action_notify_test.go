@@ -44,14 +44,14 @@ func TestMonitoringNotificationPauseSemantics(t *testing.T) {
 			wantNotify: true, wantReason: monitoringReasonSeverityEscalation,
 		},
 		{
-			name: "ack does not survive an age escalation",
+			name: "ack holds an age-only reminder",
 			now:  monitoringT0.Add(monitoringAgeEscalateTier1),
 			mut: func(i *store.MonitoringIncident) {
 				i.Severity, i.LastNotifiedSeverity = store.SeverityWarn, store.SeverityWarn
 				i.AckedAt = &at
 				i.AckedSeverity = store.SeverityWarn // floor before it aged past a tier
 			},
-			wantNotify: true, wantReason: monitoringReasonAgeEscalation,
+			wantNotify: false,
 		},
 		{
 			name: "active silence holds the nag", now: monitoringT0.Add(time.Hour),

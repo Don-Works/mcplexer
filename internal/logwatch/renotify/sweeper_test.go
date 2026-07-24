@@ -162,27 +162,28 @@ func TestSweepNotifiesOnceThenRespectsBackoff(t *testing.T) {
 	}
 }
 
-func TestSweepRecordsEffectiveSeverityNotRawSeverity(t *testing.T) {
+func TestSweepKeepsAgeReminderAtClassifierSeverity(t *testing.T) {
 	now := time.Date(2026, 7, 20, 13, 0, 0, 0, time.UTC)
 	st := &fakeStore{
 		workspaces: []store.Workspace{{ID: "ws-1"}},
 		due: map[string][]*store.MonitoringRenotifyCandidate{
-			"ws-1": {candidate("inc-1", "ws-1", "age_escalation", store.SeverityWarn, store.SeverityCritical)},
+			"ws-1": {candidate("inc-1", "ws-1", "age_escalation", store.SeverityWarn, store.SeverityWarn)},
 		},
 	}
 	ntf := &fakeNotifier{}
 	newSweeper(st, ntf, now).Sweep(context.Background())
 
-	// Dispatching the raw "warn" would be filtered out by every channel whose
-	// min_severity is the default "error" — the original silent failure.
-	if ntf.sent[0].Severity != store.SeverityCritical {
-		t.Fatalf("dispatched severity = %q, want critical", ntf.sent[0].Severity)
+	if ntf.sent[0].Severity != store.SeverityWarn {
+		t.Fatalf("dispatched severity = %q, want warn", ntf.sent[0].Severity)
 	}
-	if st.marks[0].severity != store.SeverityCritical {
-		t.Fatalf("recorded severity = %q, want critical", st.marks[0].severity)
+	if st.marks[0].severity != store.SeverityWarn {
+		t.Fatalf("recorded severity = %q, want warn", st.marks[0].severity)
 	}
-	if !strings.Contains(ntf.sent[0].Body, "Severity raised warn to critical") {
-		t.Fatalf("body must state the escalation: %q", ntf.sent[0].Body)
+	if strings.Contains(ntf.sent[0].Body, "Severity raised") {
+		t.Fatalf("body invented an age-based escalation: %q", ntf.sent[0].Body)
+	}
+	if !strings.Contains(ntf.sent[0].Body, "(age reminder)") {
+		t.Fatalf("body did not label the age reminder for a human: %q", ntf.sent[0].Body)
 	}
 }
 

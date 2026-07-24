@@ -27,11 +27,35 @@ func TestRenderMessage_ReadableClickableTaskID(t *testing.T) {
 	got := RenderMessage("acme-prod", "log-watcher", "https://monitor.example/", n)
 	want := "*ERROR · acme-prod*\nPurchase order creation failed\n\n" +
 		"*Host:* acme-production (203.0.113.71)\n*Source:* `acme-production`\n" +
-		"*Watcher:* `log-watcher`\n\nThree upstream requests failed; successful orders are still flowing.\n\n" +
-		"*Task:* <https://monitor.example/tasks/01KXJJD5C0ANQ5GWV8D1NS793P?workspace=acme-ws|01KXJJD5C0ANQ5GWV8D1NS793P>\n" +
-		"*Template:* `f8ece4f0688e6e487943ed079c7f4947`"
+		"*Watcher:* `log-watcher`\n\n*Evidence:* Three upstream requests failed; successful orders are still flowing.\n\n" +
+		"*Task:* <https://monitor.example/tasks/01KXJJD5C0ANQ5GWV8D1NS793P?workspace=acme-ws|01KXJJD5C0ANQ5GWV8D1NS793P>"
 	if got != want {
 		t.Fatalf("rendered message:\n got %q\nwant %q", got, want)
+	}
+}
+
+func TestRenderMessage_CompactsStructuredEvidenceForOperator(t *testing.T) {
+	n := distill.Notification{
+		WorkspaceID: "ws", Severity: store.SeverityCritical,
+		Title: "Order sync has stopped", TaskID: "task-123",
+		Body: "Observed evidence\n- No successful sync has completed for 43 minutes.\n" +
+			"- The process is still running.\n\nVerified facts\n- Queue depth is 842.\n\n" +
+			"Hypotheses / unknowns\n- The worker may be wedged. " +
+			strings.Repeat("additional diagnostic detail ", 30) + "SECRET-TAIL",
+	}
+	got := RenderMessage("orders", "log-watcher", "https://monitor.example", n)
+	if !strings.Contains(got, "*Evidence:* No successful sync has completed for 43 minutes. · The process is still running. · Queue depth is 842.") {
+		t.Fatalf("evidence was not flattened into an operator summary: %q", got)
+	}
+	if strings.Contains(got, "Observed evidence") || strings.Contains(got, "Hypotheses / unknowns") ||
+		strings.Contains(got, "worker may be wedged") || strings.Contains(got, "SECRET-TAIL") {
+		t.Fatalf("structured report leaked into compact Chat alert: %q", got)
+	}
+	if !strings.Contains(got, "*Task:* <https://monitor.example/tasks/task-123?workspace=ws|task-123>") {
+		t.Fatalf("compact alert lost the task link: %q", got)
+	}
+	if len([]rune(got)) > 650 {
+		t.Fatalf("Chat alert is not compact: %d runes", len([]rune(got)))
 	}
 }
 

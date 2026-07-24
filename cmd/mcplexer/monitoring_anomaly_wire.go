@@ -68,7 +68,9 @@ func (e *anomalyIncidentEnsurer) EnsureIncident(
 			"task", taskID, "class", in.ClassKey, "error", pubErr)
 	}
 	if len(in.TemplateIDs) == 0 {
-		return &distill.IncidentRef{TaskID: taskID}, nil
+		// Rate-spike / task-only path: always page; there is no incident ledger
+		// policy to consult.
+		return &distill.IncidentRef{TaskID: taskID, ShouldNotify: true}, nil
 	}
 	result, err := e.store.RecordMonitoringTriage(ctx, store.MonitoringTriageRecord{
 		WorkspaceID: in.WorkspaceID, ClassKey: in.ClassKey, TaskID: taskID,
@@ -80,7 +82,8 @@ func (e *anomalyIncidentEnsurer) EnsureIncident(
 		return nil, err
 	}
 	return &distill.IncidentRef{
-		TaskID: taskID, IncidentID: result.Incident.ID, NewIncident: result.NewIncident,
+		TaskID: taskID, IncidentID: result.Incident.ID,
+		NewIncident: result.NewIncident, ShouldNotify: result.ShouldNotify,
 	}, nil
 }
 

@@ -21,6 +21,12 @@ type severityRule struct {
 // words appears inside a handled message or wrapped error value.
 var criticalKeywordRe = regexp.MustCompile(`(?i)\b(panic|fatal|out of memory|oom-?kill(ed)?|sigsegv|segfault|data race)\b`)
 
+// ansiSeverityRe removes terminal colour/style escapes before application
+// levels are parsed. Several monitored services colourise INFO/WARN tokens;
+// without this pass "\x1b[32mINFO\x1b[0m ... client error ..." misses the
+// explicit INFO level and falls through to the error keyword heuristic.
+var ansiSeverityRe = regexp.MustCompile(`\x1b\[[0-9;]*[A-Za-z]`)
+
 // keywordRules are the fallback keyword heuristics, tried only when the
 // line has no explicit structured log level. First match wins. The
 // synthetic "logwatch:" collector events class as warn.
@@ -140,6 +146,7 @@ func (c *Classifier) Classify(line string) string {
 			return r.sev
 		}
 	}
+	line = ansiSeverityRe.ReplaceAllString(line, "")
 	// 2. The app's OWN structured level is authoritative. Message bodies
 	//    routinely contain wrapped errors, SQL text, and exception names;
 	//    keyword matching those values overrides the application's explicit

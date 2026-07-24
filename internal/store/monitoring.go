@@ -264,11 +264,8 @@ type MonitoringTriageResult struct {
 	NewOccurrence      bool                  `json:"new_occurrence"`
 	ShouldNotify       bool                  `json:"should_notify"`
 	NotificationReason string                `json:"notification_reason,omitempty"`
-	// EffectiveSeverity is the deterministic notification severity: the
-	// classifier severity raised by sustained incident age. Dispatch and
-	// record notifications with THIS value rather than the raw classifier
-	// severity, or an ageing incident never crosses a channel min_severity
-	// floor and the operator keeps hearing nothing.
+	// EffectiveSeverity is the store's deterministic notification severity.
+	// Persistence and age reminders retain the classifier severity.
 	EffectiveSeverity string `json:"effective_severity,omitempty"`
 }
 

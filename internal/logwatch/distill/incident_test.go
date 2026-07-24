@@ -40,7 +40,11 @@ func (f *fakeIncidentEnsurer) EnsureIncident(_ context.Context, in IncidentInput
 		f.byClass = map[string]*IncidentRef{}
 	}
 	if ref, ok := f.byClass[in.ClassKey]; ok {
-		return &IncidentRef{TaskID: ref.TaskID, IncidentID: ref.IncidentID}, nil
+		// Mirror the store: a re-ensure of an already-paged class does not
+		// ask Chat to fire again unless the caller forces Notify.
+		return &IncidentRef{
+			TaskID: ref.TaskID, IncidentID: ref.IncidentID, ShouldNotify: false,
+		}, nil
 	}
 	f.next++
 	incidentID := ""
@@ -49,7 +53,10 @@ func (f *fakeIncidentEnsurer) EnsureIncident(_ context.Context, in IncidentInput
 	}
 	stored := &IncidentRef{TaskID: fmt.Sprintf("task-%d", f.next), IncidentID: incidentID}
 	f.byClass[in.ClassKey] = stored
-	return &IncidentRef{TaskID: stored.TaskID, IncidentID: stored.IncidentID, NewIncident: true}, nil
+	return &IncidentRef{
+		TaskID: stored.TaskID, IncidentID: stored.IncidentID,
+		NewIncident: true, ShouldNotify: true,
+	}, nil
 }
 
 func (f *fakeIncidentEnsurer) MarkNotified(_ context.Context, incidentID, severity string, _ time.Time) error {
@@ -114,6 +121,8 @@ func TestDistiller_AnomalyMintsLinkableTask(t *testing.T) {
 
 // TestDistiller_AnomalyConvergence: N re-fires of the SAME template (forced with
 // Notify lines) roll onto ONE incident and ONE task, never a task per alert.
+// Explicit Notify lines still page (test-ingest / forced re-arm); without Notify,
+// a re-ensure of an already-linked class must not re-page.
 func TestDistiller_AnomalyConvergence(t *testing.T) {
 	fs := &fakeDistillStore{}
 	notifier := &captureNotifier{}
@@ -151,6 +160,36 @@ func TestDistiller_AnomalyConvergence(t *testing.T) {
 	}
 	if _, ok := ens.byClass[wantClass]; !ok {
 		t.Fatalf("class key drift: %v", ens.ensures)
+	}
+}
+
+// TestDistiller_CorrelatedTemplatesSinglePage: two NEW error templates that
+// share a correlation class page once. The second is linked silently.
+func TestDistiller_CorrelatedTemplatesSinglePage(t *testing.T) {
+	fs := &fakeDistillStore{}
+	notifier := &captureNotifier{}
+	ens := &fakeIncidentEnsurer{}
+	ts := time.Date(2026, 7, 8, 14, 0, 0, 0, time.UTC)
+	d := newLinkedDistiller(fs, notifier, ens, ts)
+
+	src := &store.LogSource{ID: "s1", WorkspaceID: "ws", Name: "stack",
+		Kind: store.LogSourceKindDocker, RetentionDays: 7, RetentionMB: 50}
+	host := &store.RemoteHost{ID: "h1", Name: "prod-1", SSHHost: "203.0.113.1"}
+
+	if err := d.Ingest(context.Background(), src, host, []collect.Line{
+		{TS: ts, Text: `open() "/etc/nginx/storefront-state/storefront-proxy-pass.inc" failed (13: Permission denied)`},
+		{TS: ts.Add(time.Second), Text: `open() "/etc/nginx/conf.d/storefront.conf" failed (13: Permission denied)`},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(notifier.notes) != 1 {
+		t.Fatalf("correlated siblings must page once, got %d notes: %+v", len(notifier.notes), notifier.notes)
+	}
+	if len(ens.byClass) != 1 {
+		t.Fatalf("want 1 class, got %d (%v)", len(ens.byClass), ens.ensures)
+	}
+	if IsGenericMonitoringTitle(notifier.notes[0].Title) {
+		t.Fatalf("page title still generic: %q", notifier.notes[0].Title)
 	}
 }
 

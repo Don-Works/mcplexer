@@ -243,9 +243,8 @@ type ExpectedSignalResult struct {
 	Recovered          bool                      `json:"recovered"`
 	ShouldNotify       bool                      `json:"should_notify"`
 	NotificationReason string                    `json:"notification_reason,omitempty"`
-	// EffectiveSeverity is the incident severity after the shared
-	// persistence/age-escalation policy. Dispatch and MarkMonitoringIncidentNotified
-	// with this, not Decision.Severity.
+	// EffectiveSeverity is the dispatch severity after the shared persistence
+	// policy. Age reminders retain Decision.Severity.
 	EffectiveSeverity string `json:"effective_severity,omitempty"`
 }
 

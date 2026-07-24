@@ -69,6 +69,15 @@ func (h *handler) handleMonitoringCommitTriage(ctx context.Context, raw json.Raw
 	if err != nil {
 		return marshalErrorResult(err.Error())
 	}
+	requestedSeverity := args.Severity
+	args.Severity = monitoringBoundedTriageSeverity(args.Severity, templates)
+	// Replace novelty placeholders with an evidence signature so Chat and the
+	// canonical task are operator-usable even when the model copies the
+	// digest's "new error-class log template" framing.
+	if args.Disposition != store.MonitoringDispositionBenign {
+		sample, masked := monitoringTemplateEvidence(templates)
+		args.Title = distill.ImproveMonitoringTitle(args.Title, args.Body, sample, masked)
+	}
 	runID := monitoringRunID(ctx)
 	if args.Disposition == store.MonitoringDispositionBenign {
 		note := args.Body
@@ -187,16 +196,62 @@ func (h *handler) handleMonitoringCommitTriage(ctx context.Context, raw json.Raw
 		"occurrence_count":        result.Incident.OccurrenceCount,
 		"notification_dispatched": notified,
 		"notification_reason":     result.NotificationReason,
+		"severity":                args.Severity,
+		"requested_severity":      requestedSeverity,
 		"run_id":                  runID,
 	})
 }
 
+func monitoringTemplateEvidence(templates []*store.LogTemplate) (sample, masked string) {
+	for _, template := range templates {
+		if template == nil {
+			continue
+		}
+		if masked == "" && template.Masked != "" {
+			masked = template.Masked
+		}
+		if sample == "" {
+			sample = template.SampleLast
+			if sample == "" {
+				sample = template.SampleFirst
+			}
+		}
+		if sample != "" && masked != "" {
+			break
+		}
+	}
+	return sample, masked
+}
+
+// monitoringBoundedTriageSeverity prevents a worker judgement from outranking
+// the deterministic classifier evidence it was given. A worker may lower a
+// severity (for example, when an ERROR line is a harmless handled condition),
+// but promoting an INFO/WARN line to CRITICAL requires a verified impact signal
+// that this commit shape does not carry. Service-health outages are covered by
+// the separate expected-signal and uptime paths.
+func monitoringBoundedTriageSeverity(requested string, templates []*store.LogTemplate) string {
+	capSeverity := ""
+	for _, template := range templates {
+		if template == nil || !store.ValidSeverity(template.Severity) {
+			continue
+		}
+		if capSeverity == "" ||
+			store.SeverityRank(template.Severity) > store.SeverityRank(capSeverity) {
+			capSeverity = template.Severity
+		}
+	}
+	if capSeverity != "" &&
+		store.SeverityRank(requested) > store.SeverityRank(capSeverity) {
+		return capSeverity
+	}
+	return requested
+}
+
 // monitoringEffectiveSeverity picks the severity a notification is dispatched
-// and recorded with. The store computes EffectiveSeverity (classifier severity
-// raised by sustained incident age) and that is authoritative. Callers and
-// store implementations predating that field leave it empty; fall back to the
-// classifier severity rather than dispatching an empty one, which would rank
-// below every channel floor and deliver nothing at all.
+// and recorded with. The store owns deterministic notification policy and its
+// EffectiveSeverity is authoritative. Callers and store implementations
+// predating that field leave it empty; fall back to the bounded classifier
+// severity rather than dispatching an empty one.
 func monitoringEffectiveSeverity(result *store.MonitoringTriageResult, fallback string) string {
 	if result == nil {
 		return fallback
@@ -420,11 +475,7 @@ func genericMonitoringTask(task *store.Task) bool {
 	if task == nil {
 		return false
 	}
-	title := strings.ToLower(strings.TrimSpace(task.Title))
-	return (strings.HasPrefix(title, "new ") &&
-		strings.Contains(title, "-class log template on ")) ||
-		(strings.HasPrefix(title, "observed ") &&
-			strings.Contains(title, "-class monitoring event on "))
+	return distill.IsGenericMonitoringTitle(task.Title)
 }
 
 func monitoringTaskMeta(raw, classKey string, ids []string, correlationKey string) map[string]any {

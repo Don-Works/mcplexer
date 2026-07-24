@@ -47,7 +47,7 @@ func (d *DB) ListMonitoringIncidentsDueForRenotify(
 	now = now.UTC()
 	rows, err := d.q.QueryContext(ctx, monitoringRenotifyQuery(),
 		workspaceID, formatTime(now.Add(-monitoringIncidentActiveWindow)),
-		store.MonitoringDispositionBenign, limit)
+		store.MonitoringDispositionBenign, store.MonitoringOutcomeFixed, limit)
 	if err != nil {
 		return nil, fmt.Errorf("list monitoring incidents due for renotify: %w", err)
 	}
@@ -83,6 +83,9 @@ func (d *DB) ListMonitoringIncidentsDueForRenotify(
 //   - disposition != benign and severity >= warn mirror the policy's two hard
 //     floors exactly. They are floors on the CLASSIFIER severity, before any
 //     age escalation, so info-level noise can never age into a page.
+//   - a live "fixed" task resolution suppresses observations at or before the
+//     resolution timestamp. A genuinely fresh recurrence (last_seen later)
+//     remains eligible and can reopen the canonical task.
 //
 // Ordering is least-recently-notified first (never-notified before all of
 // them), which is precisely the order incidents come due in, so LIMIT bounds
@@ -90,12 +93,19 @@ func (d *DB) ListMonitoringIncidentsDueForRenotify(
 // last_notified_at stamped to now and rotates to the back of the queue.
 func monitoringRenotifyQuery() string {
 	return `SELECT ` + monitoringIncidentReadCols + `
-		FROM monitoring_incidents
-		WHERE workspace_id = ?
-		  AND last_seen >= ?
-		  AND disposition != ?
-		  AND severity IN (` + monitoringNotifiableSeverityList() + `)
-		ORDER BY last_notified_at IS NULL DESC, last_notified_at ASC, first_seen ASC
+		FROM monitoring_incidents AS i
+		WHERE i.workspace_id = ?
+		  AND i.last_seen >= ?
+		  AND i.disposition != ?
+		  AND i.severity IN (` + monitoringNotifiableSeverityList() + `)
+		  AND NOT EXISTS (
+			SELECT 1 FROM monitoring_resolutions AS r
+			WHERE r.incident_id = i.id
+			  AND r.outcome = ?
+			  AND r.cleared_at IS NULL
+			  AND i.last_seen <= r.resolved_at
+		  )
+		ORDER BY i.last_notified_at IS NULL DESC, i.last_notified_at ASC, i.first_seen ASC
 		LIMIT ?`
 }
 

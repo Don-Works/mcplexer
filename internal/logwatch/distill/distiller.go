@@ -185,7 +185,10 @@ func (d *Distiller) Ingest(ctx context.Context, src *store.LogSource, host *stor
 
 // fireAnomaly reports a never-seen-before error-class template. The
 // dispatcher throttles per (workspace, template), so a storm of new
-// shapes still lands as bounded notifications.
+// shapes still lands as bounded notifications. When the incident ensurer
+// is wired, Chat pages only when the store's notify policy says so — a
+// second new template that rolls into an already-notified correlation
+// class is linked silently instead of re-paging the operator.
 func (d *Distiller) fireAnomaly(
 	ctx context.Context, src *store.LogSource, host *store.RemoteHost,
 	agg *templateAgg, isNew bool,
@@ -195,15 +198,19 @@ func (d *Distiller) fireAnomaly(
 			"source", src.Name, "severity", agg.tpl.Severity, "template", agg.tpl.Masked)
 		return
 	}
-	headline := fmt.Sprintf("new %s-class log template on %s/%s (×%d)", agg.tpl.Severity, host.Name, src.Name, agg.count)
-	if agg.notify && !isNew {
-		headline = fmt.Sprintf("observed %s-class monitoring event on %s/%s (×%d)", agg.tpl.Severity, host.Name, src.Name, agg.count)
+	sample := agg.tpl.SampleLast
+	if sample == "" {
+		sample = agg.tpl.SampleFirst
 	}
+	headline := OperatorAnomalyTitle(
+		agg.tpl.Severity, host.Name, src.Name, agg.count, isNew && !agg.notify,
+		sample, agg.tpl.Masked)
+	body := fmt.Sprintf("Template: %s\nFirst sample: %s", agg.tpl.Masked, sample)
 	n := Notification{
 		WorkspaceID:    src.WorkspaceID,
 		Severity:       agg.tpl.Severity,
 		Title:          headline,
-		Body:           fmt.Sprintf("Template: %s\nFirst sample: %s", agg.tpl.Masked, agg.tpl.SampleFirst),
+		Body:           body,
 		NewIncident:    isNew || agg.notify,
 		RemoteHostName: host.Name,
 		RemoteHostAddr: host.SSHHost,
@@ -212,6 +219,14 @@ func (d *Distiller) fireAnomaly(
 		IncidentID:     agg.incidentID,
 	}
 	ref := d.linkAnomalyIncident(ctx, &n, src, agg)
+	// Explicit collect.Line.Notify (test-ingest / forced re-arm) always pages.
+	// Otherwise honor the incident ledger: no second Chat for the same class.
+	if !agg.notify && ref != nil && !ref.ShouldNotify {
+		slog.Info("distill: anomaly linked without re-page",
+			"source", src.Name, "template", agg.tpl.ID,
+			"incident", ref.IncidentID, "task", ref.TaskID)
+		return
+	}
 	if err := d.notifier.Notify(ctx, n); err != nil {
 		slog.Warn("distill: notify", "source", src.Name, "error", err)
 		return

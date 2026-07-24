@@ -119,9 +119,8 @@ func TestMonitoringNotificationDuePolicy(t *testing.T) {
 	}
 }
 
-// A warn incident that is still recurring must climb past the default channel
-// min_severity floor ("error") on age alone, and must do so once per tier.
-func TestMonitoringAgeEscalationCrossesFloorExactlyOnce(t *testing.T) {
+// Age gets a bounded reminder but cannot turn a warn into an error/critical.
+func TestMonitoringAgeReminderKeepsClassifierSeverity(t *testing.T) {
 	tier1 := monitoringT0.Add(monitoringAgeEscalateTier1)
 	warn := func(now time.Time, notifiedAt time.Time, notifiedSev string) *store.MonitoringIncident {
 		return monitoringIncidentAt(now, func(i *store.MonitoringIncident) {
@@ -132,12 +131,12 @@ func TestMonitoringAgeEscalationCrossesFloorExactlyOnce(t *testing.T) {
 	}
 	first := monitoringNotificationDue(warn(tier1, monitoringT0, store.SeverityWarn), false, tier1)
 	if !first.Notify || first.Reason != monitoringReasonAgeEscalation ||
-		first.EffectiveSeverity != store.SeverityError {
-		t.Fatalf("tier-1 crossing = %+v, want age_escalation at error", first)
+		first.EffectiveSeverity != store.SeverityWarn {
+		t.Fatalf("tier-1 crossing = %+v, want age reminder at warn", first)
 	}
 	// Once notified, the same tier must not fire again — whether the caller
 	// recorded the effective severity or the raw classifier severity.
-	for _, sev := range []string{store.SeverityError, store.SeverityWarn} {
+	for _, sev := range []string{store.SeverityWarn} {
 		after := tier1.Add(5 * time.Minute)
 		got := monitoringNotificationDue(warn(after, tier1, sev), false, after)
 		if got.Notify {
@@ -147,8 +146,8 @@ func TestMonitoringAgeEscalationCrossesFloorExactlyOnce(t *testing.T) {
 	tier2 := monitoringT0.Add(monitoringAgeEscalateTier2)
 	second := monitoringNotificationDue(warn(tier2, tier1, store.SeverityError), false, tier2)
 	if !second.Notify || second.Reason != monitoringReasonAgeEscalation ||
-		second.EffectiveSeverity != store.SeverityCritical {
-		t.Fatalf("tier-2 crossing = %+v, want age_escalation at critical", second)
+		second.EffectiveSeverity != store.SeverityWarn {
+		t.Fatalf("tier-2 crossing = %+v, want age reminder at warn", second)
 	}
 }
 

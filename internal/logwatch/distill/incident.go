@@ -64,6 +64,12 @@ type IncidentRef struct {
 	TaskID      string
 	IncidentID  string
 	NewIncident bool
+	// ShouldNotify is the store's persistence-policy verdict for this ensure.
+	// When false, the distiller still links the template/task but must not
+	// page Chat again (e.g. another new template rolled into an already-notified
+	// correlation class). Zero value is false; callers that lack a policy
+	// signal must set it explicitly when a page is required.
+	ShouldNotify bool
 }
 
 // WithIncidents late-binds the ensurer. Boot builds the distiller before the

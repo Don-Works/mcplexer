@@ -95,6 +95,10 @@ func TestClassifier_DefaultsAndOverrides(t *testing.T) {
 		`{"log.level":"debug","msg":"wrapped exception"}`:                                                                                                                 store.SeverityInfo,
 		`{"level":"info","severity":"error","msg":"handled"}`:                                                                                                             store.SeverityInfo,
 		`INFO handled payload={"level":"error","message":"downstream failed"}`:                                                                                            store.SeverityInfo,
+		// ANSI colour escapes around the level must not hide that explicit
+		// application decision and expose message text to keyword fallback.
+		"\x1b[32mINFO\x1b[0m HTTP client error was handled; retry scheduled": store.SeverityInfo,
+		"\x1b[33mWARN\x1b[0m handled downstream error":                       store.SeverityWarn,
 		// With no structured level, the conservative keyword fallback remains.
 		`worker panic: nil deref`: store.SeverityCritical,
 	} {

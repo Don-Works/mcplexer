@@ -101,7 +101,7 @@ func newMonitoringOwnershipHandler(t *testing.T) (*handler, *sqlite.DB, *capture
 	now := time.Now().UTC()
 	tplA := &store.LogTemplate{
 		ID: "tpl-A", SourceID: srcA.ID, Masked: "GET / <n>",
-		Severity: store.SeverityInfo, FirstSeen: now, LastSeen: now,
+		Severity: store.SeverityError, FirstSeen: now, LastSeen: now,
 	}
 	if _, err := db.UpsertLogTemplate(ctx, tplA, 1); err != nil {
 		t.Fatalf("upsert tpl-A: %v", err)

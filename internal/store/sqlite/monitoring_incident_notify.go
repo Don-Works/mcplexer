@@ -33,13 +33,10 @@ const (
 	monitoringRenotifyCapError    = 12 * time.Hour
 	monitoringRenotifyCapCritical = 4 * time.Hour
 
-	// monitoringAgeEscalateTier1/2 raise the EFFECTIVE severity of an incident
-	// that is still recurring, so it eventually crosses channel min_severity
-	// floors (which default to "error") and actually reaches the operator.
-	// Sustained duration is the signal, never raw volume: a single template
-	// repeating fast cannot escalate itself. 4h is about half a working shift;
-	// 12h is the overnight blind window that let the original incident sit
-	// unnoticed until the operator found it himself the next day.
+	// monitoringAgeEscalateTier1/2 schedule one reminder at meaningful age
+	// boundaries. Age changes cadence, never severity: a long-lived warning is
+	// still a warning, not a synthetic critical page. 4h is about half a
+	// working shift; 12h covers the overnight blind window.
 	monitoringAgeEscalateTier1 = 4 * time.Hour
 	monitoringAgeEscalateTier2 = 12 * time.Hour
 
@@ -77,27 +74,23 @@ var monitoringSeverityLadder = []string{
 type monitoringNotificationDecision struct {
 	Notify bool
 	Reason string
-	// EffectiveSeverity is the classifier severity raised by sustained age.
-	// Dispatch and record notifications with this, not the raw severity.
+	// EffectiveSeverity is the deterministic severity to dispatch and record.
+	// Persistence and age reminders retain the classifier severity.
 	EffectiveSeverity string
 }
 
 // monitoringNotificationDue is pure — now is passed in rather than read from
 // the clock, so the policy is deterministic and identical wherever it runs. It
 // is the persistence policy (monitoringNotificationDueRaw) gated by the
-// operator's ack/silence pause: a pause mutes the routine "still broken" nag but
-// never a genuine escalation, because a pause only holds while the effective
-// severity has not risen above the level the operator acted at.
+// operator's ack/silence pause: a pause mutes routine "still broken" and age
+// reminders, but never a genuine classifier escalation.
 func monitoringNotificationDue(
 	i *store.MonitoringIncident, newIncident bool, now time.Time,
 ) monitoringNotificationDecision {
 	d := monitoringNotificationDueRaw(i, newIncident, now)
 	if d.Notify && monitoringActionSuppressed(i, now, d.EffectiveSeverity) {
-		// The escalation reasons are never reached here: a classifier or age
-		// escalation raises the effective severity above the pause floor, which
-		// is exactly the condition monitoringActionSuppressed returns false on.
-		// So this only ever swallows new/unnotified/persistent — the nag — and
-		// the "worse than when I acked" case still notifies.
+		// Only a classifier escalation raises severity above the pause floor.
+		// Age reminders remain at the acknowledged severity and stay muted.
 		return monitoringNotificationDecision{EffectiveSeverity: d.EffectiveSeverity}
 	}
 	return d
@@ -110,9 +103,8 @@ func monitoringNotificationDue(
 // floor pierces both. Silence is additionally bounded by silenced_until and
 // lapses on its own at expiry, after which a still-active incident re-notifies.
 //
-// Severity and age are both monotonic non-decreasing, so effective severity only
-// ever climbs: once a pause is pierced it stays pierced until the operator acts
-// again, which is what "ack does not survive an escalation" means in practice.
+// Once a classifier escalation pierces a pause it stays pierced until the
+// operator acts again.
 func monitoringActionSuppressed(i *store.MonitoringIncident, now time.Time, effective string) bool {
 	if i == nil {
 		return false
@@ -142,8 +134,8 @@ func monitoringNotificationDueRaw(
 		return monitoringNotificationDecision{}
 	}
 	silent := monitoringNotificationDecision{EffectiveSeverity: monitoringEffectiveSeverity(i, now)}
-	// The warn floor is applied to the CLASSIFIER severity, before any age
-	// escalation: info-level noise must never become notifiable by ageing.
+	// The warn floor is applied to the classifier severity: info-level noise
+	// must never become notifiable by ageing.
 	if store.SeverityRank(i.Severity) < store.SeverityRank(store.SeverityWarn) {
 		return silent
 	}
@@ -182,9 +174,7 @@ func monitoringPersistenceDue(
 	notify func(string) monitoringNotificationDecision,
 ) monitoringNotificationDecision {
 	lastNotified := *i.LastNotifiedAt
-	// Age escalation fires exactly once per tier boundary. The comparison is
-	// between tiers, not severities, so it stays correct even if a caller
-	// records the raw classifier severity when marking the incident notified.
+	// The age reminder fires exactly once per tier boundary.
 	if monitoringSustained(i) &&
 		monitoringAgeTier(now.Sub(i.FirstSeen)) > monitoringAgeTier(lastNotified.Sub(i.FirstSeen)) {
 		return notify(monitoringReasonAgeEscalation)
@@ -198,20 +188,11 @@ func monitoringPersistenceDue(
 	return silent
 }
 
-// monitoringEffectiveSeverity raises severity with sustained age only. Volume
-// is deliberately absent from this computation.
+// monitoringEffectiveSeverity deliberately preserves classifier severity.
+// Incident age affects reminder timing, never page class.
 func monitoringEffectiveSeverity(i *store.MonitoringIncident, now time.Time) string {
-	base := i.Severity
-	if store.SeverityRank(base) < store.SeverityRank(store.SeverityWarn) {
-		return base
-	}
-	if i.Disposition == store.MonitoringDispositionBenign {
-		return base
-	}
-	if !monitoringSustained(i) || !monitoringIncidentActive(i, now) {
-		return base
-	}
-	return monitoringRaiseSeverity(base, monitoringAgeTier(now.Sub(i.FirstSeen)))
+	_ = now
+	return i.Severity
 }
 
 // monitoringSustained reports whether the incident has spanned more than one
@@ -229,7 +210,7 @@ func monitoringIncidentActive(i *store.MonitoringIncident, now time.Time) bool {
 	return now.Sub(i.LastSeen) <= monitoringIncidentActiveWindow
 }
 
-// monitoringAgeTier maps incident age onto the two escalation tiers.
+// monitoringAgeTier maps incident age onto the two reminder tiers.
 func monitoringAgeTier(age time.Duration) int {
 	switch {
 	case age >= monitoringAgeEscalateTier2:
@@ -239,17 +220,6 @@ func monitoringAgeTier(age time.Duration) int {
 	default:
 		return 0
 	}
-}
-
-func monitoringRaiseSeverity(severity string, steps int) string {
-	rank := store.SeverityRank(severity)
-	if rank < 0 || steps <= 0 {
-		return severity
-	}
-	if rank += steps; rank >= len(monitoringSeverityLadder) {
-		rank = len(monitoringSeverityLadder) - 1
-	}
-	return monitoringSeverityLadder[rank]
 }
 
 // monitoringRenotifyInterval doubles the quiet period as the incident ages,

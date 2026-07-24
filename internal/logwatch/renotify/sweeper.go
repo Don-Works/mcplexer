@@ -135,9 +135,8 @@ func (s *Sweeper) renotify(
 		return
 	}
 	incident := candidate.Incident
-	// EffectiveSeverity, never incident.Severity: channel min_severity
-	// defaults to "error", so an ageing warn dispatched raw is filtered out
-	// at every channel and the reminder silently evaporates.
+	// Use the store's deterministic dispatch severity. Persistence reminders
+	// retain the classifier severity; age alone never manufactures a page.
 	severity := candidate.EffectiveSeverity
 	if !store.ValidSeverity(severity) {
 		severity = incident.Severity
@@ -157,8 +156,7 @@ func (s *Sweeper) renotify(
 			"incident", incident.ID, "severity", severity, "error", err)
 		return
 	}
-	// Recorded with the dispatched severity so the policy's own
-	// severity-escalation check compares like with like on the next pass.
+	// Record exactly what was dispatched so later comparisons stay coherent.
 	if err := s.store.MarkMonitoringIncidentNotified(ctx, incident.ID, severity, now); err != nil {
 		slog.Error("renotify: notification sent but backoff not advanced",
 			"workspace", incident.WorkspaceID, "incident", incident.ID, "error", err)
@@ -171,8 +169,14 @@ func (s *Sweeper) renotify(
 
 func renotifyTitle(i *store.MonitoringIncident) string {
 	title := strings.TrimSpace(i.Title)
-	if title == "" {
-		title = i.ClassKey
+	if title == "" || distill.IsGenericMonitoringTitle(title) {
+		// Avoid "Still unresolved: new error-class log template…" — that is the
+		// exact Chat shape that trained operators to ignore renotifies.
+		if class := strings.TrimPrefix(i.ClassKey, "correlation:"); class != "" && class != i.ClassKey {
+			title = class
+		} else if title == "" {
+			title = i.ClassKey
+		}
 	}
 	return "Still unresolved: " + title
 }
@@ -181,7 +185,12 @@ func renotifyTitle(i *store.MonitoringIncident) string {
 // identical for the same row and clock on every machine.
 func renotifyBody(i *store.MonitoringIncident, reason, severity string, now time.Time) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "This incident is still recurring and has not been resolved (%s).\n\n", reason)
+	fmt.Fprintf(&b, "This incident is still recurring and has not been resolved (%s).\n\n",
+		renotifyReasonLabel(reason))
+	if title := strings.TrimSpace(i.Title); title != "" && !distill.IsGenericMonitoringTitle(title) {
+		fmt.Fprintf(&b, "Title: %s\n", title)
+	}
+	fmt.Fprintf(&b, "Severity: %s (unchanged by age — reminder only)\n", severity)
 	fmt.Fprintf(&b, "First seen: %s (%s ago)\n", i.FirstSeen.UTC().Format(time.RFC3339),
 		renotifyDuration(now.Sub(i.FirstSeen)))
 	fmt.Fprintf(&b, "Last seen: %s (%s ago)\n", i.LastSeen.UTC().Format(time.RFC3339),
@@ -191,10 +200,15 @@ func renotifyBody(i *store.MonitoringIncident, reason, severity string, now time
 		fmt.Fprintf(&b, "Last notified: %s (%s ago)\n", i.LastNotifiedAt.UTC().Format(time.RFC3339),
 			renotifyDuration(now.Sub(*i.LastNotifiedAt)))
 	}
-	if severity != i.Severity {
-		fmt.Fprintf(&b, "\nSeverity raised %s to %s by sustained age.\n", i.Severity, severity)
-	}
+	fmt.Fprintf(&b, "\nNext step: open the linked task and confirm whether impact is still live; ack or silence if already handled.\n")
 	return b.String()
+}
+
+func renotifyReasonLabel(reason string) string {
+	if reason == "age_escalation" {
+		return "age reminder"
+	}
+	return strings.ReplaceAll(reason, "_", " ")
 }
 
 // renotifyDuration renders a whole-unit age. Minute resolution is deliberate:

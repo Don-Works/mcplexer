@@ -131,6 +131,26 @@ func TestCorrelationKey_DeduplicatesOperationalFamilies(t *testing.T) {
 			sample: "logwatch: source discontinuity — container/service restarted, recreated, or logs rotated",
 			want:   "webhooks|source-discontinuity",
 		},
+		{
+			name:   "nginx permission denied on .inc",
+			sample: `2026/07/24 08:00:00 [emerg] open() "/etc/nginx/storefront-state/storefront-proxy-pass.inc" failed (13: Permission denied)`,
+			want:   "webhooks|nginx-config-permission",
+		},
+		{
+			name:   "nginx permission denied on .conf sibling",
+			sample: `2026/07/24 08:00:01 [emerg] open() "/etc/nginx/conf.d/storefront.conf" failed (13: Permission denied)`,
+			want:   "webhooks|nginx-config-permission",
+		},
+		{
+			name:   "nginx upstream reset",
+			sample: `2026/07/24 08:56:21 [error] 12#12: *99 recv() failed (104: Connection reset by peer) while reading response header from upstream, client: 203.0.113.9, server: _, request: "GET /wp-json/emb/v1/product/1 HTTP/1.1", upstream: "fastcgi://203.0.113.10:9000"`,
+			want:   "webhooks|nginx-upstream-failure",
+		},
+		{
+			name:   "store api product slug",
+			sample: `Error [StoreApiError]: Store API 502 for /products?slug=anthem-organic-heavyweight-t-shirt`,
+			want:   "webhooks|store-api|/products",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -138,6 +158,25 @@ func TestCorrelationKey_DeduplicatesOperationalFamilies(t *testing.T) {
 				t.Fatalf("correlationKey = %q; want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestAnomalyClass_NginxPermissionSiblingsShareClass(t *testing.T) {
+	src := &store.LogSource{Name: "stack"}
+	a := &store.LogTemplate{
+		ID:         "tpl-inc",
+		SampleLast: `open() "/etc/nginx/storefront-state/storefront-proxy-pass.inc" failed (13: Permission denied)`,
+	}
+	b := &store.LogTemplate{
+		ID:         "tpl-conf",
+		SampleLast: `open() "/etc/nginx/conf.d/storefront.conf" failed (13: Permission denied)`,
+	}
+	gotA, gotB := anomalyClassForTemplate(src, a), anomalyClassForTemplate(src, b)
+	if gotA != gotB {
+		t.Fatalf("siblings must share class: %q vs %q", gotA, gotB)
+	}
+	if !strings.HasPrefix(gotA, "correlation:") {
+		t.Fatalf("want correlation class, got %q", gotA)
 	}
 }
 

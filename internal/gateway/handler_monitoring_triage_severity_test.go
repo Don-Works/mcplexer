@@ -105,79 +105,61 @@ func observeTemplateAt(t *testing.T, h *handler, at time.Time) {
 	}
 }
 
-// TestMonitoringCommitTriageDispatchesEffectiveSeverity drives a warn incident
-// past the 12h age-escalation tier and asserts the notification is dispatched
-// AND recorded at the escalated severity. Before the fix both used the raw
-// "warn" classifier severity, which ranks below the default "error" channel
-// floor and is therefore silently dropped at delivery.
-func TestMonitoringCommitTriageDispatchesEffectiveSeverity(t *testing.T) {
+func TestMonitoringBoundedTriageSeverity(t *testing.T) {
+	templates := []*store.LogTemplate{
+		{Severity: store.SeverityInfo},
+		{Severity: store.SeverityWarn},
+	}
+	for _, tc := range []struct {
+		name, requested, want string
+	}{
+		{"model cannot promote past evidence", store.SeverityCritical, store.SeverityWarn},
+		{"model may keep evidence severity", store.SeverityWarn, store.SeverityWarn},
+		{"model may lower severity", store.SeverityInfo, store.SeverityInfo},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := monitoringBoundedTriageSeverity(tc.requested, templates); got != tc.want {
+				t.Fatalf("bounded severity = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// A worker may explain evidence, but it cannot manufacture a higher page
+// class than the deterministic template classifier observed.
+func TestMonitoringCommitTriageCapsWorkerPromotionAtTemplateSeverity(t *testing.T) {
 	h, db, notifier := newMonitoringOwnershipHandler(t)
 	ctx := runner.WithWorkerRunCtx(context.Background(), runner.WorkerRunCtx{
-		RunID: "run-age-escalation", WorkerID: "log-watch", WorkspaceID: "ws-A",
+		RunID: "run-severity-cap", WorkerID: "log-watch", WorkspaceID: "ws-A",
 	})
-	args := monitoringCommitArgsJSON(t, store.SeverityWarn)
-
-	// First sighting, 13h ago. One occurrence bucket — not yet sustained, so
-	// the incident is notified at its plain classifier severity.
-	first := time.Now().UTC().Add(-13 * time.Hour)
-	observeTemplateAt(t, h, first)
-	if text, isErr := monitoringToolTextWithContext(t, ctx, h, "monitoring__commit_triage", args); isErr {
-		t.Fatalf("first commit failed: %s", text)
+	text, isErr := monitoringToolTextWithContext(
+		t, ctx, h, "monitoring__commit_triage",
+		monitoringCommitArgsJSON(t, store.SeverityCritical),
+	)
+	if isErr {
+		t.Fatalf("commit failed: %s", text)
 	}
-	if len(notifier.notes) != 1 || notifier.notes[0].Severity != store.SeverityWarn {
-		t.Fatalf("first notification severity = %+v, want one note at warn", notifier.notes)
+	var decoded map[string]any
+	if err := json.Unmarshal([]byte(text), &decoded); err != nil {
+		t.Fatalf("decode commit: %v (%s)", err, text)
 	}
-
+	if decoded["severity"] != store.SeverityError ||
+		decoded["requested_severity"] != store.SeverityCritical {
+		t.Fatalf("severity audit fields = %#v", decoded)
+	}
+	if len(notifier.notes) != 1 {
+		t.Fatalf("notification count = %d, want 1", len(notifier.notes))
+	}
+	if got := notifier.notes[0].Severity; got != store.SeverityError {
+		t.Fatalf("dispatched severity = %q, want classifier cap %q", got, store.SeverityError)
+	}
 	incident, err := db.GetMonitoringIncidentByClass(ctx, "ws-A", "correlation:api a ordersync go")
 	if err != nil {
 		t.Fatalf("read incident: %v", err)
 	}
-	// The handler stamps last_notified_at from the wall clock while the
-	// incident's own first_seen/last_seen live on the observedAt timeline.
-	// Pin it back onto that timeline so the age-tier comparison under test is
-	// the one a real deployment makes.
-	if err := db.MarkMonitoringIncidentNotified(ctx, incident.ID, store.SeverityWarn, first); err != nil {
-		t.Fatalf("pin last_notified_at: %v", err)
-	}
-
-	// Still recurring 12.5h later: a second occurrence bucket makes it
-	// sustained, and the age crosses tier 2.
-	second := first.Add(12*time.Hour + 30*time.Minute)
-	observeTemplateAt(t, h, second)
-	text, isErr := monitoringToolTextWithContext(t, ctx, h, "monitoring__commit_triage", args)
-	if isErr {
-		t.Fatalf("second commit failed: %s", text)
-	}
-	var decoded map[string]any
-	if err := json.Unmarshal([]byte(text), &decoded); err != nil {
-		t.Fatalf("decode second commit: %v (%s)", err, text)
-	}
-	if decoded["notification_dispatched"] != true {
-		t.Fatalf("second commit did not notify: %#v", decoded)
-	}
-
-	if len(notifier.notes) != 2 {
-		t.Fatalf("notification count = %d, want 2", len(notifier.notes))
-	}
-	escalated := notifier.notes[1]
-	// warn (rank 1) raised by two age tiers = critical.
-	if escalated.Severity != store.SeverityCritical {
-		t.Fatalf("dispatched severity = %q, want %q (escalated); the classifier severity is dropped at the default error channel floor",
-			escalated.Severity, store.SeverityCritical)
-	}
-	if store.SeverityRank(escalated.Severity) < store.SeverityRank(store.SeverityError) {
-		t.Fatalf("dispatched severity %q ranks below the default channel min_severity; it would never be delivered",
-			escalated.Severity)
-	}
-
-	// The recorded notification severity must match what was dispatched, so
-	// the next decision compares against what the operator actually received.
-	after, err := db.GetMonitoringIncidentByClass(ctx, "ws-A", "correlation:api a ordersync go")
-	if err != nil {
-		t.Fatalf("re-read incident: %v", err)
-	}
-	if after.LastNotifiedSeverity != store.SeverityCritical {
-		t.Fatalf("last_notified_severity = %q, want %q", after.LastNotifiedSeverity, store.SeverityCritical)
+	if incident.Severity != store.SeverityError ||
+		incident.LastNotifiedSeverity != store.SeverityError {
+		t.Fatalf("incident recorded an unbounded worker severity: %+v", incident)
 	}
 }
 

@@ -27,7 +27,15 @@ type templateEvidence struct {
 }
 
 var fileLineRe = regexp.MustCompile(`(?:^|[\s"'(])([A-Za-z0-9_./-]+\.(?:go|rs|py|php|js|jsx|ts|tsx|java|cs|rb|kt|swift|c|cc|cpp|h|hpp):\d+)\b`)
+
+// configPathRe catches nginx/app config paths that never appear as code
+// locations (no :line). Without this, permission-denied pairs on .conf vs .inc
+// mint one template-class incident each and page twice for one misconfig.
+var configPathRe = regexp.MustCompile(`(?i)(/etc/nginx/[A-Za-z0-9_./-]+\.(?:conf|inc)|[A-Za-z0-9_./-]+\.(?:conf|inc))`)
 var accessRequestRe = regexp.MustCompile(`(?i)"(GET|HEAD) ([^ ]+) HTTP/`)
+var storeAPIErrorRe = regexp.MustCompile(`(?i)store\s*api(?:error)?[^/\n]{0,40}(/[A-Za-z0-9_./?=&%-]+)`)
+var nginxUpstreamRe = regexp.MustCompile(`(?i)(recv\(\) failed|connect\(\) failed|upstream prematurely closed|no live upstreams|connection reset by peer).{0,80}(upstream|fastcgi|proxy)`)
+var permissionDeniedRe = regexp.MustCompile(`(?i)(permission denied|open\(\)\s*"([^"]+)"\s+failed)`)
 
 func (q *Query) templateEvidence(
 	ctx context.Context, t *store.LogTemplate, src *store.LogSource,
@@ -92,12 +100,32 @@ func correlationKey(src *store.LogSource, sample string) string {
 	case strings.Contains(lower, "acme") &&
 		(strings.Contains(lower, "challenge") || strings.Contains(lower, "certificate")):
 		return source + "|acme-certificate"
+	case permissionDeniedRe.MatchString(sample) && configPathRe.MatchString(sample):
+		// Group every permission failure on a config path under one class so
+		// .conf and .inc siblings of the same misconfig do not double-page.
+		return source + "|nginx-config-permission"
+	case nginxUpstreamRe.MatchString(sample):
+		return source + "|nginx-upstream-failure"
+	case strings.Contains(lower, "storeapierror") || strings.Contains(lower, "store api"):
+		if m := storeAPIErrorRe.FindStringSubmatch(sample); len(m) > 1 {
+			return source + "|store-api|" + stripQuery(m[1])
+		}
+		return source + "|store-api-error"
 	}
-	match := fileLineRe.FindStringSubmatch(sample)
-	if match == nil {
-		return ""
+	if match := fileLineRe.FindStringSubmatch(sample); match != nil {
+		return source + "|" + match[1]
 	}
-	return source + "|" + match[1]
+	if match := configPathRe.FindStringSubmatch(sample); match != nil {
+		return source + "|config|" + match[1]
+	}
+	return ""
+}
+
+func stripQuery(path string) string {
+	if i := strings.IndexAny(path, "?#"); i >= 0 {
+		return path[:i]
+	}
+	return path
 }
 
 func suspiciousAccessProbe(sample string) bool {

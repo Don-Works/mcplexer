@@ -39,7 +39,7 @@ decisions.map(x => monitoring.commit_triage(x));
 
 Print the results. Each object must contain disposition, severity, and every exact template_id in template_ids. Copy correlation_key exactly when present. For benign, body is the short acknowledgement reason; omit title if desired.
 
-For actionable/uncertain/evidence-gap, title and body are required. The body must be self-contained because tasks replicate while raw logs do not. Use these concise sections:
+For actionable/uncertain/evidence-gap, title and body are required. Title MUST name the verified failure signature (path, error code, endpoint, or constraint) — never "new error-class log template on …". The body must be self-contained because tasks replicate while raw logs do not. Use these concise sections:
 
 Observed evidence
 - source/host and exact file:line when present;

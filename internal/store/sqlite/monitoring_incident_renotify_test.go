@@ -146,6 +146,30 @@ func TestRenotifyIgnoresStoppedRecurringIncident(t *testing.T) {
 	}
 }
 
+func TestRenotifyIgnoresIncidentResolvedFixedAfterLastObservation(t *testing.T) {
+	f := newRenotifyFixture(t)
+	incident := f.seed(t, store.SeverityError,
+		incidentStart, incidentStart.Add(20*time.Minute), incidentStart.Add(40*time.Minute))
+	f.markNotified(t, incident.ID, store.SeverityError, incidentStart)
+
+	resolvedAt := incidentStart.Add(45 * time.Minute)
+	if _, err := f.db.ApplyMonitoringTaskResolution(f.ctx, store.MonitoringResolutionInput{
+		WorkspaceID: f.wsID,
+		TaskID:      incident.TaskID,
+		Outcome:     store.MonitoringOutcomeFixed,
+		StatusText:  "done",
+		ResolvedAt:  resolvedAt,
+	}); err != nil {
+		t.Fatalf("resolve incident as fixed: %v", err)
+	}
+
+	// The old row is still inside the active window at 90m, but the operator
+	// closed it after its last observation. It must not say "still unresolved".
+	if due := f.due(t, incidentStart.Add(90*time.Minute), 10); len(due) != 0 {
+		t.Fatalf("fixed incident emitted a stale unresolved reminder: %+v", due)
+	}
+}
+
 func TestRenotifyIgnoresBelowWarnIncidents(t *testing.T) {
 	f := newRenotifyFixture(t)
 	// Never notified, still recurring: everything except severity says "due".
@@ -159,12 +183,9 @@ func TestRenotifyIgnoresBelowWarnIncidents(t *testing.T) {
 	// without writing raw SQL; both the query and the policy exclude it.
 }
 
-// TestRenotifyAgeEscalationRaisesEffectiveSeverity guards the subtle failure:
-// channel min_severity defaults to "error", so an ageing warn incident
-// dispatched at its raw severity is filtered out at every channel and the
-// reminder evaporates silently. The sweep must dispatch and record the
-// escalated severity.
-func TestRenotifyAgeEscalationRaisesEffectiveSeverity(t *testing.T) {
+// An age boundary may schedule a reminder, but it must not manufacture a
+// higher severity than the classifier observed.
+func TestRenotifyAgeReminderKeepsClassifierSeverity(t *testing.T) {
 	f := newRenotifyFixture(t)
 	incident := f.seed(t, store.SeverityWarn, incidentStart, incidentStart.Add(4*time.Hour))
 	f.markNotified(t, incident.ID, store.SeverityWarn, incidentStart)
@@ -176,8 +197,8 @@ func TestRenotifyAgeEscalationRaisesEffectiveSeverity(t *testing.T) {
 	if due[0].NotificationReason != "age_escalation" {
 		t.Fatalf("reason = %q, want age_escalation", due[0].NotificationReason)
 	}
-	if due[0].EffectiveSeverity != store.SeverityError {
-		t.Fatalf("effective severity = %q, want error (warn raised by sustained age)",
+	if due[0].EffectiveSeverity != store.SeverityWarn {
+		t.Fatalf("effective severity = %q, want warn (age must not raise severity)",
 			due[0].EffectiveSeverity)
 	}
 	if due[0].Incident.Severity != store.SeverityWarn {

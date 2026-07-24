@@ -4,9 +4,12 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+	"unicode"
 
 	"github.com/don-works/mcplexer/internal/logwatch/distill"
 )
+
+const googleChatEvidenceLimit = 280
 
 func firstNonEmpty(values ...string) string {
 	for _, value := range values {
@@ -48,7 +51,8 @@ func RenderMessage(workspaceName, gatewayHost, publicURL string, n distill.Notif
 	}
 	if evidence := strings.TrimSpace(n.Body); evidence != "" {
 		body.WriteString("\n\n")
-		body.WriteString(evidence)
+		body.WriteString("*Evidence:* ")
+		body.WriteString(compactChatEvidence(evidence))
 	}
 	if footer := renderRichFooter(publicURL, n); len(footer) > 0 {
 		body.WriteString("\n\n")
@@ -75,7 +79,7 @@ func renderContextLines(gatewayHost string, n distill.Notification) []string {
 }
 
 func renderRichFooter(publicURL string, n distill.Notification) []string {
-	footer := make([]string, 0, 2)
+	footer := make([]string, 0, 1)
 	if n.TaskID != "" {
 		if link := taskURL(normalizePublicURL(publicURL), n.WorkspaceID, n.TaskID); link != "" {
 			footer = append(footer, "*Task:* <"+link+"|"+n.TaskID+">")
@@ -83,10 +87,63 @@ func renderRichFooter(publicURL string, n distill.Notification) []string {
 			footer = append(footer, "*Task:* `"+n.TaskID+"`")
 		}
 	}
-	if n.TemplateID != "" {
-		footer = append(footer, "*Template:* `"+n.TemplateID+"`")
-	}
 	return footer
+}
+
+// compactChatEvidence turns the worker's structured multi-section report into
+// one bounded operator summary. The canonical task retains the full evidence;
+// Chat should carry enough to decide whether to open it, not reproduce it.
+func compactChatEvidence(raw string) string {
+	parts := make([]string, 0, 4)
+	skipSection := false
+	for _, line := range strings.Split(raw, "\n") {
+		line = strings.TrimSpace(line)
+		line = strings.TrimSpace(strings.TrimLeft(line, "-*•"))
+		if line == "" {
+			continue
+		}
+		switch chatEvidenceHeading(line) {
+		case "hypotheses":
+			skipSection = true
+			continue
+		case "evidence", "next":
+			skipSection = false
+			continue
+		}
+		if skipSection {
+			continue
+		}
+		parts = append(parts, strings.Join(strings.Fields(line), " "))
+	}
+	summary := strings.Join(parts, " · ")
+	if summary == "" {
+		summary = strings.Join(strings.Fields(raw), " ")
+	}
+	runes := []rune(summary)
+	if len(runes) <= googleChatEvidenceLimit {
+		return summary
+	}
+	cut := googleChatEvidenceLimit - 1
+	for cut > googleChatEvidenceLimit-40 && !unicode.IsSpace(runes[cut]) {
+		cut--
+	}
+	if cut <= googleChatEvidenceLimit-40 {
+		cut = googleChatEvidenceLimit - 1
+	}
+	return strings.TrimSpace(string(runes[:cut])) + "…"
+}
+
+func chatEvidenceHeading(line string) string {
+	switch strings.ToLower(strings.TrimSuffix(line, ":")) {
+	case "observed evidence", "verified facts":
+		return "evidence"
+	case "hypotheses / unknowns", "hypotheses/unknowns":
+		return "hypotheses"
+	case "next step", "next steps":
+		return "next"
+	default:
+		return ""
+	}
 }
 
 // RenderPlainMessage is the deterministic representation for all channels

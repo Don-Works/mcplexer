@@ -6,12 +6,10 @@
 // query side of that, and it carries the two derived facts a raw row cannot
 // answer on its own.
 //
-// EffectiveSeverity is the first. The stored `severity` column is the
-// classifier's verdict; the severity that actually governs notification is that
-// value raised by sustained age (see the persistence policy in sqlite). An
-// operator comparing a stored `warn` against a channel floor of `error` and
-// concluding "this will never page me" would be wrong, so the effective value
-// is served alongside rather than left to be re-derived.
+// EffectiveSeverity is the first. It is the store's deterministic dispatch
+// severity and is served alongside the stored classifier verdict so future
+// policy additions do not have to be re-derived by clients. Age alone does not
+// raise it.
 //
 // ClassKind is the second. Class keys are namespaced strings, and the ONE
 // distinction that changes what an operator does — a signal that genuinely
@@ -76,8 +74,8 @@ func ClassifyIncidentClassKey(classKey string) (kind, ref string) {
 // the incident already has, so the derived fields are additive.
 type MonitoringIncidentView struct {
 	*MonitoringIncident
-	// EffectiveSeverity is Severity raised by sustained age — the value the
-	// dispatcher compares against channel min_severity floors.
+	// EffectiveSeverity is the value the dispatcher compares against channel
+	// min_severity floors. Age reminders retain Severity.
 	EffectiveSeverity string `json:"effective_severity"`
 	// ClassKind is one of the IncidentClass* constants.
 	ClassKind string `json:"class_kind"`
@@ -95,7 +93,7 @@ type MonitoringIncidentView struct {
 	// notification policy's own suppression gate, so "the row says silenced" can
 	// never disagree with "the daemon actually stays quiet". They are IN-FORCE
 	// facts, not merely "was ever set": an ack or silence whose effective
-	// severity has since climbed past the floor it was taken at is pierced and
+	// classifier severity has since climbed past the floor it was taken at is pierced and
 	// reads false here, and an expired silence window reads false too. The raw
 	// attribution the UI pairs with them — silenced_until, silenced_by,
 	// acked_at, acked_by — rides along on the embedded incident.

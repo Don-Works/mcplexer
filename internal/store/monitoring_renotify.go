@@ -18,12 +18,8 @@ type MonitoringRenotifyCandidate struct {
 	// NotificationReason is the policy's vocabulary — age_escalation,
 	// persistent_incident, unnotified_incident, severity_escalation.
 	NotificationReason string `json:"notification_reason"`
-	// EffectiveSeverity is the classifier severity raised by sustained
-	// incident age. Dispatch AND MarkMonitoringIncidentNotified with this
-	// value, never Incident.Severity: channel min_severity defaults to
-	// "error", so an ageing warn incident that is dispatched at its raw
-	// severity is filtered out at every channel and the operator hears
-	// nothing — which is exactly the failure this sweep exists to end.
+	// EffectiveSeverity is the store's deterministic dispatch severity.
+	// Persistence and age reminders retain the classifier severity.
 	EffectiveSeverity string `json:"effective_severity"`
 }
 
