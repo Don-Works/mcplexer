@@ -52,7 +52,7 @@ func (d *DB) RewriteGenericMonitoringTitles(
 	if err != nil {
 		return 0, fmt.Errorf("list incidents for title rewrite: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	type item struct {
 		id, taskID, title, classKey, evidence, sample, masked string

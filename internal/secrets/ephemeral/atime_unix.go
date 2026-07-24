@@ -8,8 +8,11 @@ import (
 	"time"
 )
 
-// atimeOf extracts the access time from a unix stat_t. Used only by the
-// polling fallback (kqueue/inotify build tags do not invoke it).
+// atimeOf extracts the access time from a unix stat_t. Used by the polling
+// fallback and darwin kqueue path; linux inotify may not reference it on
+// that GOOS, so unused still reports it under multi-platform packages.
+//
+//nolint:unused // referenced from pollForRead / kqueue paths under build tags
 func atimeOf(info os.FileInfo) time.Time {
 	if st, ok := info.Sys().(*syscall.Stat_t); ok {
 		return atimeFromStat(st)
