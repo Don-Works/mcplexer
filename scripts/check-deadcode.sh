@@ -56,7 +56,7 @@ check_sym_absent "DefaultStickyHash"
 check_sym_absent "MeshPeerApprover"
 check_sym_absent "NewMeshPeerApprover"
 
-# 4. Dispatcher dead exports — superseded by the two-tool surface.
+# 4. Dispatcher dead exports — superseded by the adaptive worker surface.
 check_sym_absent "parseAllowlistJSONForWorker"
 check_sym_absent "workerAllowlistPatterns"
 

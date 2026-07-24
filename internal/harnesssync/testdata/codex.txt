@@ -1,6 +1,6 @@
 <!-- MCPLEXER:HARNESS-SYNC:BEGIN v1 (codex) -->
 
-Use the 5 top-level tools (mcpx__search_tools + mcpx__execute_code for batch, secret__prompt/list_refs, mcpx__retrieve for compression markers).
+Use the 6 top-level tools when available: mcpx__search_tools for discovery; mcpx__call_tool for one small independent call; mcpx__execute_code for batches, dependencies, filtering, polling, or transforms; secret__prompt/list_refs; and mcpx__retrieve for compression markers. On an older gateway without mcpx__call_tool, use mcpx__execute_code for every invocation.
 
 For the full contract, fetch mcpx.skill_get({name:"using-mcplexer"}) directly. Use mcpx.skill_search only for unknown/deeper playbooks: mcplexer-features / mcplexer-tasks / agent-mesh / token-preserving-delegation.
 

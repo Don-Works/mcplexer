@@ -631,3 +631,21 @@ func TestSeedPopulatesEmptyRegistry(t *testing.T) {
 		t.Errorf("seed not idempotent: %d -> %d", before, len(heads2))
 	}
 }
+
+func TestUsingMCPlexerSeedGuidesAdaptiveInvocation(t *testing.T) {
+	body, err := skillregistry.SeedBody("using-mcplexer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, contract := range []string{
+		"`mcpx__call_tool`",
+		"One target, independent, result returned unchanged",
+		"More than one call",
+		"`mcpx__call_tool` absent",
+		"Do not turn a batch into repeated `mcpx__call_tool` round trips",
+	} {
+		if !strings.Contains(body, contract) {
+			t.Errorf("using-mcplexer seed missing adaptive guidance %q", contract)
+		}
+	}
+}

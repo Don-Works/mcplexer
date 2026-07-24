@@ -1531,7 +1531,7 @@ func buildServerDeps(ctx context.Context, cfg *Config, db *sqlite.DB, settingsSv
 		workerAdminSvc.SetDispatcherReloader(triggerDispatcher)
 	}
 
-	// Two-tool worker surface — build a dedicated gateway.Server bound
+	// Three-tool worker surface — build a dedicated gateway.Server bound
 	// to worker use, then wire its CallTool into the worker dispatcher's
 	// BuiltinToolCaller. This Server never receives an MCP initialize
 	// (workers go through CallTool, not the JSON-RPC transport), so its

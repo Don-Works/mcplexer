@@ -12,7 +12,7 @@ The bet, stated plainly: opencode shells through its own provider config (Anthro
 ### Migrate to opencode first (high mcplexer-leverage, low harness-specific risk)
 These session types lean on the gateway, not on Claude-Code-only features, so they isolate the variable we actually care about:
 
-- **Code-mode / discovery-heavy work** — sessions dominated by `mcpx__search_tools` → `mcpx__execute_code` against downstream MCP servers (github, linear, clickup, postgres, vercel, customer, …). The slim 5-tool surface is gateway-side, not harness-side, so it should behave identically and is the cleanest A/B.
+- **Discovery/invocation-heavy work** — sessions dominated by `mcpx__search_tools`, `mcpx__call_tool`, and `mcpx__execute_code` against downstream MCP servers (github, linear, clickup, postgres, vercel, customer, …). The slim 6-tool surface is gateway-side, not harness-side, so it should behave identically and is the cleanest A/B.
 - **Mesh / multi-agent coordination** — discover mesh/task signatures with `mcpx__search_tools`, then call `mesh.receive(...)`, `mesh.send(...)`, `task.offer(...)`, and `task.assign_remote(...)` inside `mcpx__execute_code`. Provider-agnostic by design; good stress test of whether opencode keeps a stable MCP session for inbound mesh delivery.
 - **Task-ledger-driven execution** — claim → heartbeat → review → done loops where the work is "drive the ledger and call downstream tools," not "deeply edit a large local repo." This directly probes lease/heartbeat behavior under a different harness.
 - **Memory + skill registry ops** — `memory__recall/save`, `mcpx__skill_search/get/publish`. Read/write to the gateway, no harness dependence.
@@ -45,7 +45,7 @@ In opencode's MCP config (project- or user-level), register mcplexer as a local 
       "type": "local",
       "command": ["<path>/mcplexer", "serve"],   // copy from working Claude Code config
       "environment": {
-        // slim surface is the gateway DEFAULT (v0.20+): only 5 tools advertised.
+        // slim surface is the gateway DEFAULT: only 6 tools advertised.
         // Leave unset to inherit the default; set explicitly only to override.
         // "MCPLEXER_SLIM_SURFACE": "true"
       },
@@ -67,12 +67,12 @@ If opencode's stdio supervision proves flaky, point it at the daemon's MCP-over-
 ```
 *(The dashboard is `http://localhost:3333`; whether an MCP-protocol HTTP endpoint is mounted there must be confirmed — the documented, supported transport is stdio.)*
 
-### 2c. The slim-surface code-mode workflow (must work identically)
-This is the load-bearing acceptance check, because it's the whole value prop. After wiring, the opencode session must see **exactly 5 top-level tools** (the original four plus `mcpx__retrieve` for reversible compression markers) and drive everything else through code mode:
+### 2c. The slim-surface adaptive invocation workflow (must work identically)
+This is the load-bearing acceptance check, because it's the whole value prop. After wiring, the opencode session must see **exactly 6 top-level tools** and drive everything else through the two invocation wrappers:
 
-1. `tools/list` returns only: `mcpx__execute_code`, `mcpx__search_tools`, `secret__prompt`, `secret__list_refs`, `mcpx__retrieve`. **If opencode shows the wide surface, slim mode isn't being inherited — stop and fix before measuring.**
+1. `tools/list` returns only: `mcpx__search_tools`, `mcpx__call_tool`, `mcpx__execute_code`, `secret__prompt`, `secret__list_refs`, `mcpx__retrieve`. **If opencode shows the wide surface, slim mode isn't being inherited — stop and fix before measuring.**
 2. Discover: `mcpx__search_tools({ queries: ["task create","github list issues"], detail: "full" })` → get TS signatures.
-3. Execute: one `mcpx__execute_code` snippet batching related downstream calls, e.g.
+3. Confirm a single independent read uses `mcpx__call_tool`, and related work uses one `mcpx__execute_code` snippet, e.g.
    ```js
    const issues = github.list_issues({ owner: "don-works", repo: "mcplexer", state: "open" });
    print(issues.length, issues.slice(0,5).map(i => i.title));
@@ -94,7 +94,7 @@ Baseline first: run an identical workload basket on **Claude Code** and record t
 | Metric | How measured | SUCCESS (ship/expand) | FAILURE (rollback) |
 |---|---|---|---|
 | **Tool-call success rate** | gateway audit log (`mcplexer__query_audit`) — successful vs errored downstream + builtin calls per session | ≥ Claude Code baseline, and ≥ 95% absolute | < 90%, or any *systematic* class (unwrap, mesh delivery, secret subst) broken |
-| **Code-mode integrity** | manual + audit: auto-unwrap correct, batching works, slim surface = 5 tools | 100% parity on the §2c checklist | any §2c item fails and isn't fixable in-pilot |
+| **Invocation integrity** | manual + audit: direct envelope correct, auto-unwrap correct, batching works, slim surface = 6 tools | 100% parity on the §2c checklist | any §2c item fails and isn't fixable in-pilot |
 | **Latency (per tool call)** | timestamp deltas in audit log; p50 + p95 | p50 within +15% of baseline; p95 within +30% | p50 > +30% or p95 > +50% sustained |
 | **Context-token savings** | harness-reported context size at session start + per-turn token usage; compare wide vs slim, and opencode vs Claude Code | slim surface yields the ~22k-token saving in opencode too; total ≤ Claude Code baseline | opencode bloats context such that net tokens > Claude Code despite slim mode |
 | **Task-ledger discipline** | audit: ratio of work units that passed through dynamic `task.claim(...)`→`review`→`done`; count of zombie/abandoned `doing` left at session end; lease auto-release observed on disconnect | ≥ baseline discipline; **zero** un-released leases after opencode disconnect | lease auto-release doesn't fire for opencode sessions → zombie tasks (hard blocker) |
@@ -148,7 +148,7 @@ Rollback is cheap by construction — **nothing about the gateway changes**, onl
 **Confirmed-unknown (must resolve at kickoff):**
 - **opencode MCP config schema** — exact keys, stdio vs HTTP support, and whether it cleanly supervises a long-lived stdio MCP child. Plan assumes stdio parity with Claude Code; unverified until we read the installed version's docs.
 - **Auto-unwrap behavior** — does opencode pass `mcpx__execute_code` results through such that the documented auto-unwrap (`result.id`, not `JSON.parse(...)`) holds? If opencode reformats tool results, code-mode snippets break subtly. **High-impact, must test Day 0.**
-- **Slim-surface inheritance** — slim mode is gateway-side, but if opencode re-requests or caches `tools/list` differently, the 5-tool surface could leak wide. Test Day 0.
+- **Slim-surface inheritance** — slim mode is gateway-side, but if opencode re-requests or caches `tools/list` differently, the 6-tool surface could leak wide. Test Day 0.
 - **Mesh inbound delivery** — pending-message appending to tool results is a gateway convention; needs confirmation it survives opencode's result handling, else agents go deaf to mesh.
 - **Lease auto-release on opencode disconnect** — keyed on session id (harness-agnostic in theory), but the disconnect hook firing for an opencode-initiated MCP session is the single biggest correctness risk. Zombie tasks poison coordination for *everyone* on the mesh, not just the pilot operator. **Verify explicitly in Phase 2; treat failure as a hard blocker.**
 

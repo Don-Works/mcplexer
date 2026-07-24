@@ -56,15 +56,15 @@ smell, not a commit candidate.
 
 ## Configuring MCPlexer
 - **Configure via MCP, never via raw SQL.** Use the admin surface (`mcplexer__list/get/create/update/delete_{workspace,server,route,auth_scope}`, `mcplexer__status`, `mcplexer__query_audit`, `mcpx__provision_mcp` etc.) from inside an agent.
-- **Admin tools are CWD-gated.** Visible only when CWD is at or under `~/.mcplexer`. From project directories the agent sees only `mcpx__search_tools`, `mcpx__execute_code`, `secret__prompt`, and `secret__list_refs`; everything else is discovered via search and called inside `execute_code`.
+- **Admin tools are CWD-gated.** Visible only when CWD is at or under `~/.mcplexer`. From project directories the slim surface is `mcpx__search_tools`, `mcpx__call_tool`, `mcpx__execute_code`, `secret__prompt`, `secret__list_refs`, and `mcpx__retrieve`; everything else is discovered via search and reached through one of the invocation wrappers.
 - **No raw-SQL fallback.** If you reach for `sqlite__*` tools or `~/.mcplexer/mcplexer.db` directly, stop. Supported paths: MCP tools, YAML config (`~/.mcplexer/mcplexer.yaml`), or the dashboard.
 
 ## MCP harness compatibility
 mcplexer detects the connecting client and adapts the tool surface (`internal/gateway/client_harness.go`).
 
-- **Direct harnesses** (Claude Code, Codex, OpenCode): advertise canonical names (`mcpx__execute_code`, `mcpx__search_tools`, `secret__prompt`, `secret__list_refs`, `mcpx__retrieve`). Call directly. Pi's native extension intentionally wraps the same workflow in four Pi-native tools and exposes retrieval inside `mcpx_exec`.
-- **Server-prefixed harnesses** (Grok CLI, Cursor, Windsurf, Gemini CLI, Picoclaw): advertise single-segment aliases (`execute_code`, `search_tools`, `prompt`, `list_refs`, `retrieve`) so the qualified name has only one `__`. `tools/call` accepts both alias and canonical forms.
-- **All namespaces** are discovered via the search tool and invoked inside `execute_code` — never top-level. Inside JS snippets: `memory.save({...})`, `task.create({...})`, `mesh.send({...})`. The skill registry is `mcpx.skill_search/get`; the separate `skill.*` namespace is run telemetry only.
+- **Direct harnesses** (Claude Code, Codex, OpenCode): advertise canonical names (`mcpx__search_tools`, `mcpx__call_tool`, `mcpx__execute_code`, `secret__prompt`, `secret__list_refs`, `mcpx__retrieve`). Call directly. Pi's native extension intentionally wraps the same workflow in four Pi-native tools and exposes retrieval inside `mcpx_exec`.
+- **Server-prefixed harnesses** (Grok CLI, Cursor, Windsurf, Gemini CLI, Picoclaw): advertise single-segment aliases (`search_tools`, `call_tool`, `execute_code`, `prompt`, `list_refs`, `retrieve`) so the qualified name has only one `__`. `tools/call` accepts both alias and canonical forms.
+- **All namespaces** are discovered via the search tool and invoked through `call_tool` for one small independent call or `execute_code` for composition — never as direct top-level downstream calls. Inside JS snippets: `memory.save({...})`, `task.create({...})`, `mesh.send({...})`. The skill registry is `mcpx.skill_search/get`; the separate `skill.*` namespace is run telemetry only.
 - For full harness setup, install wiring, and worker preamble details, see the **`using-mcplexer`** skill (`mcpx__skill_search`) and the **Setup page** (`/harness-setup`).
 
 ## Workers — CLI providers are opt-in

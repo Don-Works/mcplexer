@@ -1,16 +1,27 @@
 ---
 name: using-mcplexer
-description: Use when connected to the mcplexer gateway (mcpx__execute_code / mcpx__search_tools in your tool list) — the minimal operating contract. Discover via search, batch via code execution, fetch deeper playbooks from the skill registry on demand instead of preloading context. Includes the code-index-first contract (index.context before reading the repo).
+description: Use when connected to the mcplexer gateway (mcpx__search_tools plus mcpx__call_tool and/or mcpx__execute_code in your tool list) — the minimal operating contract. Discover first, choose direct single-call or composed code execution from the task shape, and fetch deeper playbooks on demand. Includes the code-index-first contract (index.context before reading the repo).
 ---
 
 # Using MCPlexer
 
-The gateway exposes 5 top-level tools; EVERYTHING else (github, linear, task, mesh, memory, skill, ...) is reachable only through them.
+Current gateways expose 6 top-level tools; EVERYTHING else (github, linear, task, mesh, memory, skill, ...) is discovered and reached through them. Older gateways may not expose `mcpx__call_tool`; when it is absent, use `mcpx__execute_code` for every invocation.
 
 1. `mcpx__search_tools` — find any callable. Start cheap with summary mode: `{queries:["create task"], namespaces:["task"]}`. Fetch one exact signature with `{tool:"task__create"}`. Use `detail:"full"` only for a narrow query/namespace when you need several signatures at once.
-2. `mcpx__execute_code` — call tools as JavaScript: `const r = task.create({title:"..."}); print(r.id)`. Registry names are `ns__tool`; in JS use the DOT form `ns.tool(args)` — synchronous, no await. Batch related calls into ONE snippet. Tool results auto-unwrap: JSON text usually becomes objects, plain-text tools such as `mcpx.skill_get` return strings. Never `JSON.parse(result.content[0].text)`. `parallel([...])` returns null for failed entries (it does not throw). The sandbox is also a full JS environment for math/parsing/transforms, and `sleep(ms)` enables bounded poll loops.
-3. `secret__prompt` / `secret__list_refs` — pass `secret://KEY` refs as tool args; plaintext never enters your context.
-4. `mcpx__retrieve` — expand a compression marker (see below) back to the exact original bytes.
+2. `mcpx__call_tool` — invoke exactly one small, independent discovered tool: `{"name":"task__get","arguments":{"id":"..."}}`. Use it when the result can be returned as-is. It preserves the target's MCP result envelope and traverses the same routing, scope, approval, sanitization, compression, and audit pipeline as Code Mode.
+3. `mcpx__execute_code` — compose calls as JavaScript: `const r = task.create({title:"..."}); print(r.id)`. Registry names are `ns__tool`; in JS use the DOT form `ns.tool(args)` — synchronous, no await. Batch related calls into ONE snippet. Tool results auto-unwrap: JSON text usually becomes objects, plain-text tools such as `mcpx.skill_get` return strings. Never `JSON.parse(result.content[0].text)`. `parallel([...])` returns null for failed entries (it does not throw). The sandbox is also a full JS environment for math/parsing/transforms, and `sleep(ms)` enables bounded poll loops.
+4. `secret__prompt` / `secret__list_refs` — pass `secret://KEY` refs as tool args; plaintext never enters your context.
+5. `mcpx__retrieve` — expand a compression marker (see below) back to the exact original bytes.
+
+## Choose the invocation path from the task
+
+After discovery, choose from the work you actually need to do:
+
+- One target, independent, result returned unchanged → `mcpx__call_tool`.
+- More than one call, independent fan-out, a later call using an earlier result, filtering, aggregation, transformation, branching, retries, or polling → one `mcpx__execute_code` call.
+- `mcpx__call_tool` absent from the visible surface → `mcpx__execute_code`.
+
+Do not turn a batch into repeated `mcpx__call_tool` round trips. Do not wrap one simple read in JavaScript merely out of habit. If the result contains an integer beyond JavaScript's exact range, prefer `mcpx__call_tool` so the raw digits never pass through float64.
 
 ## Compression markers — `[[ccr key=... bytes=N ...]]` (load-bearing)
 
@@ -20,7 +31,7 @@ Markers appear where the gateway: truncated an oversize result (head + marker + 
 
 ## Values in the sandbox are EXACT (2026-07 contract)
 
-Tool results consumed inside `mcpx__execute_code` are never pruned or reshaped: `null` fields, empty arrays (`.map` works), and pagination metadata (`next_cursor`, `has_more`, ...) all survive — follow cursors with confidence. `print()` renders true values (large arrays as tables). `compact(obj)` is the explicit opt-in that prunes nulls/empties and columnarizes for display — it keeps pagination keys. Caveat: JavaScript numbers are float64, so integers beyond 2^53 lose precision inside the sandbox — for exact big-int IDs, read them from the raw text of a direct tool result instead of doing sandbox arithmetic on them.
+Tool results consumed inside `mcpx__execute_code` are never pruned or reshaped: `null` fields, empty arrays (`.map` works), and pagination metadata (`next_cursor`, `has_more`, ...) all survive — follow cursors with confidence. `print()` renders true values (large arrays as tables). `compact(obj)` is the explicit opt-in that prunes nulls/empties and columnarizes for display — it keeps pagination keys. Caveat: JavaScript numbers are float64, so integers beyond 2^53 lose precision inside the sandbox — for exact big-int IDs, use `mcpx__call_tool` and read the raw target result instead of doing sandbox arithmetic on them.
 
 ## Code index — ask the index BEFORE reading the repo (load-bearing)
 

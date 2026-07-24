@@ -5,7 +5,7 @@ full architecture, commands, security posture, worker caveats, and the
 **MCP harness compatibility** section (Grok/Cursor server-prefixed tool names
 vs Claude direct `mcpx__*` names). Memory (`memory__*` / `memory.save` etc.),
 tasks, mesh and skills are reached the same way in all harnesses and delegated
-workers: via the two-tool worker or five-tool interactive surface; see the memory
+workers: via the three-tool worker or six-tool interactive surface; see the memory
 and delegation docs for call forms and allowlist coverage.
 
 ## Delegation — use workers where they win

@@ -17,17 +17,17 @@ with codebase scans, build logs, repeated file reads, or mechanical edits.
 mcplexer already has most of the substrate:
 
 - `docs/context-cost.md` documents the low-context MCP surface:
-  `mcpx__search_tools`, `mcpx__execute_code`, bounded mesh previews, task
-  preview/hydrate, and runtime context-cost counters.
+  `mcpx__search_tools`, `mcpx__call_tool`, `mcpx__execute_code`, bounded mesh
+  previews, task preview/hydrate, and runtime context-cost counters.
 - Workers are persisted in `internal/store/workers.go` with per-run caps:
   `MaxInputTokens`, `MaxOutputTokens`, `MaxToolCalls`,
   `MaxWallClockSeconds`, and monthly cost / failure autopause fields.
-- Worker runs are driven by `internal/workers/runner`, with a two-tool worker
+- Worker runs are driven by `internal/workers/runner`, with a three-tool worker
   surface locked by `internal/gateway/worker_surface_test.go`: workers see only
-  `mcpx__search_tools` and `mcpx__execute_code`.
-- The worker dispatcher applies the worker's allowlist to discovery and nested
-  calls, so a worker can be given broad search/execute primitives while still
-  being limited to specific inner tools.
+  `mcpx__search_tools`, `mcpx__call_tool`, and `mcpx__execute_code`.
+- The worker dispatcher applies the worker's allowlist to discovery and wrapper
+  targets, so a worker can be given broad entrypoints while still being limited
+  to specific reachable tools.
 - `claude_cli`, `opencode_cli`, and `grok_cli` worker providers exist in
   `internal/models/claude_cli.go`, `internal/models/opencode_cli.go`, and
   `internal/models/grok_cli.go`. They are opt-in through daemon env vars
@@ -45,11 +45,12 @@ mcplexer already has most of the substrate:
   (internal/workers/admin/delegation.go) includes `memory__save`, `memory__recall`,
   `memory__list` (plus core task tools) for execute workers; review workers get the
   read side only. The `WorkerPreamble` (embedded in gateway, locked by test) tells
-  every worker "your surface is exactly two tools" and "persist across runs in the
-  `memory` namespace". Inside `execute_code` the worker calls `memory.save` /
+  every worker to choose `call_tool` for one independent call or `execute_code`
+  for composition, and to "persist across runs in the `memory` namespace".
+  Inside `execute_code` the worker calls `memory.save` /
   `memory.recall` (verb form under the namespace object; search surfaces the
   `memory__*` names). Skill bodies can be attached for extra memory usage examples
-  or domain facts ("skill/body pickup"). The same two-tool + search/execute path
+  or domain facts ("skill/body pickup"). The same adaptive search/call/execute path
   works for direct harnesses, server-prefixed (Grok CLI etc.), and all CLI-backed
   workers (grok_cli, opencode_cli for MiniMax/GLM, etc.). Harness naming differences
   are normalised by the gateway; the inner memory namespace contract is identical.

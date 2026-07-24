@@ -64,21 +64,24 @@ Claude-compatible, direct vs server-prefixed). There is no per-harness
 registration difference:
 
 - Direct harnesses (Claude Code, Codex, native OpenCode) see the canonical
-  5-tool slim surface and call `mcpx__search_tools` + `mcpx__execute_code`.
+  6-tool slim surface and use `mcpx__search_tools`, `mcpx__call_tool`, and
+  `mcpx__execute_code`.
 - Server-prefixed harnesses (Grok CLI and similar) see aliased single-segment
-  names (`search_tools`, `execute_code` etc.) under the server prefix (e.g.
-  `mcplexer__search_tools`); the gateway normalises on receipt.
+  names (`search_tools`, `call_tool`, `execute_code` etc.) under the server
+  prefix (e.g. `mcplexer__search_tools`); the gateway normalises on receipt.
 - Delegated workers (any provider, any `model_provider`) are locked to the
-  strict two-tool surface (`mcpx__search_tools` + `mcpx__execute_code`) by the
-  worker dispatcher and receive the gateway `WorkerPreamble` (see
+  strict three-tool surface (`mcpx__search_tools`, `mcpx__call_tool`, and
+  `mcpx__execute_code`) by the worker dispatcher and receive the gateway
+  `WorkerPreamble` (see
   `internal/gateway/preamble.md` and `WorkerPreamble` test). The preamble
-  directs: "Your top-level tool surface is exactly two tools... Everything else
-  ... memory ... is reachable from inside an `execute_code` snippet." and
+  directs the model to use `call_tool` for one independent operation and
+  `execute_code` for composed workflows, and
   "Anything you want to persist across runs belongs in the `memory` namespace."
 
 Discovery and invocation are identical in all cases: search first (pass
-namespaces or queries containing "memory"), then `execute_code` with a JS
-snippet. Inside the snippet the namespaces are objects with verb methods:
+namespaces or queries containing "memory"), then choose `call_tool` or
+`execute_code` from the task shape. Inside an `execute_code` snippet the
+namespaces are objects with verb methods:
 `memory.save({...})`, `memory.recall({query:...})`, `memory.list({...})`,
 `memory.get({id})` etc. (search results list the canonical `memory__*` tool
 names; the JS binding strips to the action under the namespace). The same
