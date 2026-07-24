@@ -1,10 +1,12 @@
 import type { SystemInfo } from '@/api/client'
 
-export type ServerProfile = 'full' | 'skills' | 'tasks' | 'skills+tasks'
+export type ServerProfile = 'core' | 'full' | 'skills' | 'tasks' | 'skills+tasks'
 
 export function normalizeServerProfile(profile?: string | null): ServerProfile {
   const raw = (profile ?? '').trim().toLowerCase().replace(/,/g, '+').replace(/\s+/g, '')
   switch (raw) {
+    case 'core':
+      return 'core'
     case 'skills':
       return 'skills'
     case 'tasks':
@@ -45,6 +47,8 @@ export function serverHomePath(system?: Pick<SystemInfo, 'server_profile' | 'cap
 
 export function serverProfileLabel(system?: Pick<SystemInfo, 'server_profile'> | null): string {
   switch (normalizeServerProfile(system?.server_profile)) {
+    case 'core':
+      return 'Core gateway'
     case 'skills':
       return 'Skills server'
     case 'tasks':

@@ -20,6 +20,7 @@ import (
 	"github.com/don-works/mcplexer/internal/addon"
 	"github.com/don-works/mcplexer/internal/api"
 	"github.com/don-works/mcplexer/internal/approval"
+	"github.com/don-works/mcplexer/internal/assist"
 	"github.com/don-works/mcplexer/internal/audit"
 	"github.com/don-works/mcplexer/internal/auth"
 	"github.com/don-works/mcplexer/internal/backup"
@@ -216,6 +217,7 @@ func cmdServe(args []string) error {
 
 	cfgSvc := config.NewService(db)
 	settingsSvc := config.NewSettingsService(db)
+	modules := runtimeModulesForProfile(cfg.ServerProfile)
 
 	dataDir := filepath.Dir(cfg.DBDSN)
 	api.SetSystemInfo(api.SystemInfo{
@@ -228,7 +230,7 @@ func cmdServe(args []string) error {
 		ConfigFile:    cfg.ConfigFile,
 		LogPath:       filepath.Join(dataDir, "mcplexer.log"),
 		AddonsDir:     filepath.Join(dataDir, "addons"),
-		P2PEnabled:    cfg.P2PEnabled,
+		P2PEnabled:    cfg.P2PEnabled && modules.Collaboration,
 		ServerProfile: cfg.ServerProfile,
 		TrustedHosts:  cfg.TrustedHosts,
 		Capabilities:  serverCapabilities(cfg.ServerProfile),
@@ -299,6 +301,7 @@ func applyFlags(cfg *Config, args []string) error {
 // gateway both need. Built once by buildServerDeps and consumed by
 // runServer in either http-only or http+socket mode.
 type serverDeps struct {
+	modulePlan        runtimeModulePlan
 	authInj           *auth.Injector
 	flow              *oauth.FlowManager
 	enc               *secrets.AgeEncryptor
@@ -380,6 +383,7 @@ type serverDeps struct {
 	brainSerial     *brain.Serializer
 	brainIndexer    *brain.Indexer
 	brainEditor     *brain.Editor
+	brainAssist     *assist.Assistant
 	brainCfg        brain.Config
 	brainGit        *brain.Git
 	brainAutoCommit *brain.AutoCommitter
@@ -426,7 +430,12 @@ func (d *serverDeps) shutdown() {
 // servers. The returned cleanup must be invoked (LIFO) by the caller before
 // process exit.
 func buildServerDeps(ctx context.Context, cfg *Config, db *sqlite.DB, settingsSvc *config.SettingsService) (*serverDeps, error) {
-	d := &serverDeps{}
+	modules := runtimeModulesForProfile(cfg.ServerProfile)
+	d := &serverDeps{modulePlan: modules}
+	// This first construction-profile slice gates Collaboration and
+	// Experimental below. Agent, Automation and Ops remain on their legacy
+	// path until their API/gateway consumers are nil-safe; the plan records
+	// the intended boundary without claiming those groups are isolated yet.
 	d.backupSvc = backup.New(filepath.Dir(cfg.DBDSN), cfg.DBDSN, mcplexerVersion)
 
 	authInj, fm, enc, secretsMgr, err := buildAuthInjector(cfg, db)
@@ -440,7 +449,7 @@ func buildServerDeps(ctx context.Context, cfg *Config, db *sqlite.DB, settingsSv
 	// peer→peer secret transfer (`mesh__send_secret`). Best-effort: a
 	// failure here only disables the receive half of secret transfer;
 	// it must not block the rest of the daemon.
-	if enc != nil {
+	if modules.Collaboration && enc != nil {
 		xferPath := filepath.Join(filepath.Dir(cfg.DBDSN), "secret-transfer.age.key")
 		if k, err := secrets.LoadOrCreateTransferKey(xferPath, enc); err == nil {
 			d.secretTransferKey = k
@@ -457,50 +466,52 @@ func buildServerDeps(ctx context.Context, cfg *Config, db *sqlite.DB, settingsSv
 	slog.Info("api token loaded", "path", cfg.APITokenPath)
 	d.apiToken = apiToken
 
-	resolveP2PEnabled(ctx, cfg, settingsSvc)
-	d.p2pHost = mustStartP2P(ctx, cfg, enc)
-	if d.p2pHost != nil {
-		host := d.p2pHost
-		d.defer_(func() { _ = host.Close() })
-	}
-	d.p2pPairing = buildPairingService(d.p2pHost, db)
-	selfUser, suErr := config.BootstrapSelfUser(ctx, db, db)
-	if suErr != nil {
-		slog.Warn("bootstrap self user failed", "error", suErr)
-	}
-	d.selfUser = selfUser
-	inviteSvc := p2p.NewCollaborationInviteService(d.p2pHost, db)
-	d.collaboration = collaboration.NewManager(db, inviteSvc)
-	if selfUser != nil {
-		if _, ownerErr := d.collaboration.EnsureLocalOwner(ctx, selfUser); ownerErr != nil {
-			slog.Warn("bootstrap collaboration owner failed", "error", ownerErr)
-		} else if d.p2pHost != nil {
-			if _, shareErr := d.collaboration.EnsureWorkspaceShares(ctx); shareErr != nil {
-				slog.Warn("bootstrap collaboration workspace shares failed", "error", shareErr)
+	if modules.Collaboration {
+		resolveP2PEnabled(ctx, cfg, settingsSvc)
+		d.p2pHost = mustStartP2P(ctx, cfg, enc)
+		if d.p2pHost != nil {
+			host := d.p2pHost
+			d.defer_(func() { _ = host.Close() })
+		}
+		d.p2pPairing = buildPairingService(d.p2pHost, db)
+		selfUser, suErr := config.BootstrapSelfUser(ctx, db, db)
+		if suErr != nil {
+			slog.Warn("bootstrap self user failed", "error", suErr)
+		}
+		d.selfUser = selfUser
+		inviteSvc := p2p.NewCollaborationInviteService(d.p2pHost, db)
+		d.collaboration = collaboration.NewManager(db, inviteSvc)
+		if selfUser != nil {
+			if _, ownerErr := d.collaboration.EnsureLocalOwner(ctx, selfUser); ownerErr != nil {
+				slog.Warn("bootstrap collaboration owner failed", "error", ownerErr)
+			} else if d.p2pHost != nil {
+				if _, shareErr := d.collaboration.EnsureWorkspaceShares(ctx); shareErr != nil {
+					slog.Warn("bootstrap collaboration workspace shares failed", "error", shareErr)
+				}
 			}
 		}
+		d.consentResolver = newConsentResolver(db, selfUser)
+		attachSelfIdentity(d.p2pPairing, db, selfUser)
+		if d.p2pPairing != nil {
+			d.p2pPairing.SetDisplayNameProvider(makeDisplayNameProvider(ctx, settingsSvc))
+		}
+		d.p2pLookup = p2p.NewSQLPeerLookup(db.Raw(), slog.Default())
+		p2pDiscovery := p2p.NewDiscoveryService(d.p2pHost, d.p2pLookup, slog.Default())
+		d.defer_(func() { _ = p2pDiscovery.Close() })
+		d.p2pReconnector = p2p.NewReconnector(d.p2pHost, d.p2pLookup, 0, slog.Default())
+		d.p2pLiveness = p2p.NewLivenessMonitor(d.p2pHost, d.p2pLookup, db, slog.Default())
+		if d.p2pLiveness != nil {
+			d.p2pReconnector.SetLivenessOracle(d.p2pLiveness)
+			// Reverse hook: successful pings stamp reconnect_state="connected"
+			// so the UI badge never gets stuck at "Searching" while last_seen
+			// is being refreshed by liveness.
+			d.p2pLiveness.SetReconnectMarker(d.p2pReconnector)
+			d.p2pLiveness.Start(ctx)
+			d.defer_(d.p2pLiveness.Close)
+		}
+		d.p2pReconnector.Start(ctx)
+		d.defer_(d.p2pReconnector.Close)
 	}
-	d.consentResolver = newConsentResolver(db, selfUser)
-	attachSelfIdentity(d.p2pPairing, db, selfUser)
-	if d.p2pPairing != nil {
-		d.p2pPairing.SetDisplayNameProvider(makeDisplayNameProvider(ctx, settingsSvc))
-	}
-	d.p2pLookup = p2p.NewSQLPeerLookup(db.Raw(), slog.Default())
-	p2pDiscovery := p2p.NewDiscoveryService(d.p2pHost, d.p2pLookup, slog.Default())
-	d.defer_(func() { _ = p2pDiscovery.Close() })
-	d.p2pReconnector = p2p.NewReconnector(d.p2pHost, d.p2pLookup, 0, slog.Default())
-	d.p2pLiveness = p2p.NewLivenessMonitor(d.p2pHost, d.p2pLookup, db, slog.Default())
-	if d.p2pLiveness != nil {
-		d.p2pReconnector.SetLivenessOracle(d.p2pLiveness)
-		// Reverse hook: successful pings stamp reconnect_state="connected"
-		// so the UI badge never gets stuck at "Searching" while last_seen
-		// is being refreshed by liveness.
-		d.p2pLiveness.SetReconnectMarker(d.p2pReconnector)
-		d.p2pLiveness.Start(ctx)
-		d.defer_(d.p2pLiveness.Close)
-	}
-	d.p2pReconnector.Start(ctx)
-	d.defer_(d.p2pReconnector.Close)
 
 	d.engine = routing.NewEngine(db)
 	d.manager = downstream.NewManager(db, d.authInj)
@@ -748,9 +759,12 @@ func buildServerDeps(ctx context.Context, cfg *Config, db *sqlite.DB, settingsSv
 	// settings.brain_enabled. Every error is non-fatal (logged + degrade),
 	// matching the FileWatcher precedent above. Flag-off = today's
 	// behaviour, byte-for-byte — no file write, no watcher.
-	brainCfg := brain.LoadConfig(os.Getenv)
-	if raw, sErr := db.GetSettings(ctx); sErr == nil {
-		brainCfg = brainCfg.MergeSettings(raw)
+	brainCfg := brain.Config{}
+	if modules.Experimental {
+		brainCfg = brain.LoadConfig(os.Getenv)
+		if raw, sErr := db.GetSettings(ctx); sErr == nil {
+			brainCfg = brainCfg.MergeSettings(raw)
+		}
 	}
 	d.brainCfg = brainCfg
 	if brainCfg.Enabled {
@@ -918,59 +932,64 @@ func buildServerDeps(ctx context.Context, cfg *Config, db *sqlite.DB, settingsSv
 			}
 		}
 	}
+	if modules.Experimental {
+		d.brainAssist = brainAssistant(db, d.secretsMgr, d.brainEditor)
+	}
 
 	d.addonReg, d.addonExec, d.addonCreator = loadAddonsWithCreator(ctx, cfg, db, d.authInj)
 
-	settings := settingsSvc.Load(ctx)
-	if settings.MeshEnabled {
-		d.meshMgr = mesh.NewManager(db)
-		d.meshMgr.SetNotifyBus(d.notifyBus)
-		d.meshMgr.SetDisplayNameProvider(makeDisplayNameProvider(ctx, settingsSvc))
-		d.meshMgr.SetPeerRenamer(db)
-		d.meshMgr.SetPeerLister(db)
-		// v0.13.0 — mesh__send_secret plumbing.
-		d.meshMgr.SetPeerIdentityUpdater(db)
-		d.meshMgr.SetSecretOfferStager(db)
-		// mesh__push_skill plumbing — stage inbound skill offers.
-		d.meshMgr.SetSkillOfferStager(db)
-		if d.secretTransferKey != nil {
-			recipient := d.secretTransferKey.Recipient().String()
-			d.meshMgr.SetTransferRecipientProvider(func() string { return recipient })
+	if modules.Collaboration {
+		settings := settingsSvc.Load(ctx)
+		if settings.MeshEnabled {
+			d.meshMgr = mesh.NewManager(db)
+			d.meshMgr.SetNotifyBus(d.notifyBus)
+			d.meshMgr.SetDisplayNameProvider(makeDisplayNameProvider(ctx, settingsSvc))
+			d.meshMgr.SetPeerRenamer(db)
+			d.meshMgr.SetPeerLister(db)
+			// v0.13.0 — mesh__send_secret plumbing.
+			d.meshMgr.SetPeerIdentityUpdater(db)
+			d.meshMgr.SetSecretOfferStager(db)
+			// mesh__push_skill plumbing — stage inbound skill offers.
+			d.meshMgr.SetSkillOfferStager(db)
+			if d.secretTransferKey != nil {
+				recipient := d.secretTransferKey.Recipient().String()
+				d.meshMgr.SetTransferRecipientProvider(func() string { return recipient })
+			}
+			d.meshMgr.SetAuthSync(db, d.enc, d.secretTransferKey)
+			d.meshMgr.SetAuthSyncRefreshHook(func() {
+				if d.engine != nil {
+					d.engine.InvalidateAllRoutes()
+				}
+				if d.manager != nil {
+					d.manager.NotifyToolsChanged()
+				}
+			})
+			wireAuthSyncHooks(d.meshMgr, d.secretsMgr, d.flow)
+			reaper := mesh.NewReaper(ctx, db)
+			d.defer_(reaper.Stop)
 		}
-		d.meshMgr.SetAuthSync(db, d.enc, d.secretTransferKey)
-		d.meshMgr.SetAuthSyncRefreshHook(func() {
-			if d.engine != nil {
-				d.engine.InvalidateAllRoutes()
-			}
-			if d.manager != nil {
-				d.manager.NotifyToolsChanged()
-			}
-		})
-		wireAuthSyncHooks(d.meshMgr, d.secretsMgr, d.flow)
-		reaper := mesh.NewReaper(ctx, db)
-		d.defer_(reaper.Stop)
-	}
-	meshTransport := wireMeshP2P(ctx, d.p2pHost, d.p2pLookup, d.meshMgr)
-	if meshTransport != nil {
-		d.defer_(func() { _ = meshTransport.Close() })
-	}
-	// Offline-delivery queue: park targeted to_peer sends that fail at
-	// the libp2p layer (peer offline / unreachable) and replay them on
-	// reconnect. Cross-machine only — same-machine routing stays via the
-	// local sqlite bus and never queues here.
-	if d.meshMgr != nil && meshTransport != nil {
-		_ = wireMeshOutboundQueue(ctx, d.meshMgr, db, meshTransport,
-			d.p2pReconnector, d.p2pLiveness, d.notifyBus)
-	}
+		meshTransport := wireMeshP2P(ctx, d.p2pHost, d.p2pLookup, d.meshMgr)
+		if meshTransport != nil {
+			d.defer_(func() { _ = meshTransport.Close() })
+		}
+		// Offline-delivery queue: park targeted to_peer sends that fail at
+		// the libp2p layer (peer offline / unreachable) and replay them on
+		// reconnect. Cross-machine only — same-machine routing stays via the
+		// local sqlite bus and never queues here.
+		if d.meshMgr != nil && meshTransport != nil {
+			_ = wireMeshOutboundQueue(ctx, d.meshMgr, db, meshTransport,
+				d.p2pReconnector, d.p2pLiveness, d.notifyBus)
+		}
 
-	d.telegramMgr = buildTelegramManager(ctx, db, d.enc, d.meshMgr, d.notifyBus, d.auditor)
-	if d.telegramMgr != nil {
-		d.manager.RegisterInternal("telegram", telegram.NewMCPServer(d.telegramMgr))
-	}
+		d.telegramMgr = buildTelegramManager(ctx, db, d.enc, d.meshMgr, d.notifyBus, d.auditor)
+		if d.telegramMgr != nil {
+			d.manager.RegisterInternal("telegram", telegram.NewMCPServer(d.telegramMgr))
+		}
 
-	d.hammerspoonMgr = buildHammerspoonManager(ctx, db, d.enc, d.auditor)
-	if d.hammerspoonMgr != nil {
-		d.manager.RegisterInternal("hammerspoon", hammerspoon.NewMCPServer(d.hammerspoonMgr))
+		d.hammerspoonMgr = buildHammerspoonManager(ctx, db, d.enc, d.auditor)
+		if d.hammerspoonMgr != nil {
+			d.manager.RegisterInternal("hammerspoon", hammerspoon.NewMCPServer(d.hammerspoonMgr))
+		}
 	}
 
 	// LM Studio kickoff tools. Always registered so the tools advertise;
@@ -978,8 +997,10 @@ func buildServerDeps(ctx context.Context, cfg *Config, db *sqlite.DB, settingsSv
 	// is set on the daemon.
 	d.manager.RegisterInternal("lmstudio", lmstudio.NewMCPServer(lmstudio.NewManagerFromEnv()))
 
-	d.googleChatMgr = buildGoogleChatManager(ctx, db, d.enc, d.meshMgr, d.notifyBus, d.auditor)
-	d.googleChatJWT = googlechat.NewJWTVerifier(os.Getenv("GOOGLECHAT_BOT_PROJECT_NUMBER"))
+	if modules.Collaboration {
+		d.googleChatMgr = buildGoogleChatManager(ctx, db, d.enc, d.meshMgr, d.notifyBus, d.auditor)
+		d.googleChatJWT = googlechat.NewJWTVerifier(os.Getenv("GOOGLECHAT_BOT_PROJECT_NUMBER"))
+	}
 
 	// Register the self-CRUD InternalBackend. Admin visibility is gated
 	// by AdminCWDGate at the gateway, so these tools only appear when the
@@ -1035,7 +1056,9 @@ func buildServerDeps(ctx context.Context, cfg *Config, db *sqlite.DB, settingsSv
 	// auto-recovered today.
 	wireAutoReloadHook(d.manager, db, d.auditor, d.meshMgr)
 
-	d.skillShare = buildSkillShareService(d.p2pHost, db, d.auditor, defaultDataPath("skills"), d.consentResolver, d.selfUser)
+	if modules.Collaboration {
+		d.skillShare = buildSkillShareService(d.p2pHost, db, d.auditor, defaultDataPath("skills"), d.consentResolver, d.selfUser)
+	}
 	// skillShare backs mesh__offer_skill / mesh__request_skill over
 	// /mcplexer/skill/1.0.0 gated by mesh.skill_request (distinct from
 	// the registry surface below which uses mesh.registry_request).
@@ -1051,9 +1074,11 @@ func buildServerDeps(ctx context.Context, cfg *Config, db *sqlite.DB, settingsSv
 	if err := skillregistry.Seed(ctx, d.skillRegistry); err != nil {
 		slog.Warn("skill registry seed failed", "error", err)
 	}
-	d.registryShare = buildRegistryShareService(
-		d.p2pHost, db, d.skillRegistry, d.auditor, d.consentResolver, d.selfUser,
-	)
+	if modules.Collaboration {
+		d.registryShare = buildRegistryShareService(
+			d.p2pHost, db, d.skillRegistry, d.auditor, d.consentResolver, d.selfUser,
+		)
+	}
 
 	// Worker templates — their own table since migration 057. Independent
 	// of the skill registry (skills are markdown, templates are JSON +
@@ -1204,41 +1229,43 @@ func buildServerDeps(ctx context.Context, cfg *Config, db *sqlite.DB, settingsSv
 	// Cross-peer memory sharing over /mcplexer/memory/1.0.0. Built only
 	// when p2p is active; the stub-mode constructor is a no-op so the
 	// memorySvc + memoryShare can both safely be nil downstream.
-	d.memoryShare = buildMemoryShareService(d.p2pHost, db, d.memorySvc, d.auditor, d.consentResolver, d.selfUser, settingsSvc)
-	// Cross-peer task-attachment fetch over /mcplexer/attachment/1.0.0.
-	// Pull-only — requesting peer asks by attachment id, the offering
-	// peer answers with the full payload base64-encoded inline. Scope
-	// gate: mesh.attachment_request. Tier 1 auto-paired peers inherit
-	// the scope by default; Tier 2/3 require an explicit grant. The
-	// stub-mode constructor is a no-op so attachmentShare can safely
-	// be nil downstream.
-	d.attachmentShare = buildAttachmentShareService(d.p2pHost, db, d.auditor, d.consentResolver, d.selfUser)
-	// Cross-peer task sharing over /mcplexer/task/1.0.0 (Phase 3).
-	// The tasks service implements p2p.TaskShareReceiver so the wire handler
-	// applies proof-bound collaboration authorization, throttling, and
-	// staleness checks before accepting anything.
-	d.tasksSvc.SetTaskShare(buildTaskShareService(d.p2pHost, db, d.tasksSvc, d.auditor, d.consentResolver, d.selfUser))
-	// Cross-peer task-state sync over /mcplexer/task-sync/1.0.0 provides
-	// read-only catch-up for accepted workspace memberships. The inbound
-	// handler registers in both build modes (stub no-ops); the outbound
-	// scheduler only runs with a live p2p host. The workspace home resolves
-	// the live proof-bound device and exact read grants on every stream;
-	// legacy linked-workspace scopes are routing hints only.
-	d.taskSync = buildTaskSyncService(d.p2pHost, db, d.tasksSvc, d.auditor, d.consentResolver, d.selfUser)
-	d.defer_(d.taskSync.Stop)
-	if d.p2pHost != nil {
-		if sched := newTaskSyncScheduler(d.taskSync, db, db, slog.Default()); sched != nil {
-			d.taskSyncScheduler = sched
-			sched.SetOutbox(d.tasksSvc)
-			sched.Start(ctx)
-			if d.p2pReconnector != nil {
-				// Immediate catch-up when a peer transitions back online so a
-				// partition heals without waiting for the next 60s tick.
-				d.p2pReconnector.AddOnlineObserver(func(peerID string) {
-					_ = sched.SyncPeerNow(peerID)
-				})
+	if modules.Collaboration {
+		d.memoryShare = buildMemoryShareService(d.p2pHost, db, d.memorySvc, d.auditor, d.consentResolver, d.selfUser, settingsSvc)
+		// Cross-peer task-attachment fetch over /mcplexer/attachment/1.0.0.
+		// Pull-only — requesting peer asks by attachment id, the offering
+		// peer answers with the full payload base64-encoded inline. Scope
+		// gate: mesh.attachment_request. Tier 1 auto-paired peers inherit
+		// the scope by default; Tier 2/3 require an explicit grant. The
+		// stub-mode constructor is a no-op so attachmentShare can safely
+		// be nil downstream.
+		d.attachmentShare = buildAttachmentShareService(d.p2pHost, db, d.auditor, d.consentResolver, d.selfUser)
+		// Cross-peer task sharing over /mcplexer/task/1.0.0 (Phase 3).
+		// The tasks service implements p2p.TaskShareReceiver so the wire handler
+		// applies proof-bound collaboration authorization, throttling, and
+		// staleness checks before accepting anything.
+		d.tasksSvc.SetTaskShare(buildTaskShareService(d.p2pHost, db, d.tasksSvc, d.auditor, d.consentResolver, d.selfUser))
+		// Cross-peer task-state sync over /mcplexer/task-sync/1.0.0 provides
+		// read-only catch-up for accepted workspace memberships. The inbound
+		// handler registers in both build modes (stub no-ops); the outbound
+		// scheduler only runs with a live p2p host. The workspace home resolves
+		// the live proof-bound device and exact read grants on every stream;
+		// legacy linked-workspace scopes are routing hints only.
+		d.taskSync = buildTaskSyncService(d.p2pHost, db, d.tasksSvc, d.auditor, d.consentResolver, d.selfUser)
+		d.defer_(d.taskSync.Stop)
+		if d.p2pHost != nil {
+			if sched := newTaskSyncScheduler(d.taskSync, db, db, slog.Default()); sched != nil {
+				d.taskSyncScheduler = sched
+				sched.SetOutbox(d.tasksSvc)
+				sched.Start(ctx)
+				if d.p2pReconnector != nil {
+					// Immediate catch-up when a peer transitions back online so a
+					// partition heals without waiting for the next 60s tick.
+					d.p2pReconnector.AddOnlineObserver(func(peerID string) {
+						_ = sched.SyncPeerNow(peerID)
+					})
+				}
+				slog.Info("task-sync scheduler ready", "protocol", p2p.TaskSyncProtocol)
 			}
-			slog.Info("task-sync scheduler ready", "protocol", p2p.TaskSyncProtocol)
 		}
 	}
 
@@ -1260,36 +1287,38 @@ func buildServerDeps(ctx context.Context, cfg *Config, db *sqlite.DB, settingsSv
 	// existing memory_share / skill_share libp2p protocols on a
 	// 5-second batch interval. Same-user pairs (consent Tier 1) are
 	// the target tier; same-org and cross-org peers stay manual.
-	d.replicator = buildReplicationCoordinator(
-		d.p2pHost, d.memoryShare, d.skillShare, d.memorySvc, db,
-		d.consentResolver, defaultDataPath("skills"),
-	)
-	if d.replicator != nil {
-		// Chain the memory notify hook so the dashboard's notify bus
-		// continues to receive every event AND the replicator queues
-		// each write. The replicator runs first (queueing is fast);
-		// the SSE publish runs second so backpressure on a slow
-		// dashboard subscriber can't delay queueing.
-		existing := d.memorySvc.Notify
-		d.memorySvc.Notify = chainedMemoryNotify(d.replicator, existing)
-		// Linked-workspace task replication: on every task mutation in a
-		// workspace explicitly linked to a peer, silently re-assign the
-		// task to that peer (the same direct-assign path task__assign_remote
-		// uses). Link-gated, so non-linked workspaces never replicate; the
-		// coordinator owns the echo guard. Nil-safe wiring — without a task
-		// emitter (mesh disabled) the hook just isn't installed.
-		d.replicator.SetTaskReplication(
-			&taskReplicationPusher{tasks: d.tasksSvc},
-			linkListerAdapter{store: db},
+	if modules.Collaboration {
+		d.replicator = buildReplicationCoordinator(
+			d.p2pHost, d.memoryShare, d.skillShare, d.memorySvc, db,
+			d.consentResolver, defaultDataPath("skills"),
 		)
-		if taskEmitter != nil {
-			rep := d.replicator
-			taskEmitter.SetReplicationHook(func(hookCtx context.Context, workspaceID, taskID, source string) {
-				rep.OnTaskEvent(hookCtx, workspaceID, taskID, source)
-			})
+		if d.replicator != nil {
+			// Chain the memory notify hook so the dashboard's notify bus
+			// continues to receive every event AND the replicator queues
+			// each write. The replicator runs first (queueing is fast);
+			// the SSE publish runs second so backpressure on a slow
+			// dashboard subscriber can't delay queueing.
+			existing := d.memorySvc.Notify
+			d.memorySvc.Notify = chainedMemoryNotify(d.replicator, existing)
+			// Linked-workspace task replication: on every task mutation in a
+			// workspace explicitly linked to a peer, silently re-assign the
+			// task to that peer (the same direct-assign path task__assign_remote
+			// uses). Link-gated, so non-linked workspaces never replicate; the
+			// coordinator owns the echo guard. Nil-safe wiring — without a task
+			// emitter (mesh disabled) the hook just isn't installed.
+			d.replicator.SetTaskReplication(
+				&taskReplicationPusher{tasks: d.tasksSvc},
+				linkListerAdapter{store: db},
+			)
+			if taskEmitter != nil {
+				rep := d.replicator
+				taskEmitter.SetReplicationHook(func(hookCtx context.Context, workspaceID, taskID, source string) {
+					rep.OnTaskEvent(hookCtx, workspaceID, taskID, source)
+				})
+			}
+			d.replicator.Start(ctx)
+			d.defer_(d.replicator.Stop)
 		}
-		d.replicator.Start(ctx)
-		d.defer_(d.replicator.Stop)
 	}
 
 	// Lease sweep (migration 071) — clears expired lease_expires_at
@@ -1741,7 +1770,7 @@ func runServer(ctx context.Context, cfg *Config, db *sqlite.DB, cfgSvc *config.S
 		BrainEnabled:           d.brainCfg.Enabled,
 		BrainEditor:            d.brainEditor,
 		BrainIndexer:           d.brainIndexer,
-		BrainAssist:            brainAssistant(db, d.secretsMgr, d.brainEditor),
+		BrainAssist:            d.brainAssist,
 		TrustedHosts:           cfg.TrustedHosts,
 		CatalogSvc:             config.NewCatalogService(),
 	}))
@@ -1813,6 +1842,7 @@ func runServer(ctx context.Context, cfg *Config, db *sqlite.DB, cfgSvc *config.S
 }
 
 func runStdio(ctx context.Context, cfg *Config, db *sqlite.DB, settingsSvc *config.SettingsService) error {
+	modules := runtimeModulesForProfile(cfg.ServerProfile)
 	authInj, stdioFlow, stdioEnc, secretsMgr, err := buildAuthInjector(cfg, db)
 	if err != nil {
 		return err
@@ -1887,7 +1917,7 @@ func runStdio(ctx context.Context, cfg *Config, db *sqlite.DB, settingsSvc *conf
 	// Electron shell runs the HTTP+socket mode and subscribes to the SSE.
 	var meshMgr *mesh.Manager
 	var meshReaper *mesh.Reaper
-	if settingsSvc.Load(ctx).MeshEnabled {
+	if modules.Collaboration && settingsSvc.Load(ctx).MeshEnabled {
 		meshMgr = mesh.NewManager(db)
 		meshMgr.SetAuthSync(db, stdioEnc, nil)
 		meshMgr.SetAuthSyncRefreshHook(func() {

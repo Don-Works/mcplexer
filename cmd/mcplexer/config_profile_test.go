@@ -10,6 +10,7 @@ func TestNormalizeServerProfile(t *testing.T) {
 		wantErr bool
 	}{
 		{name: "empty defaults full", raw: "", want: serverProfileFull},
+		{name: "core", raw: " CORE ", want: serverProfileCore},
 		{name: "full", raw: "full", want: serverProfileFull},
 		{name: "skills", raw: "skills", want: serverProfileSkills},
 		{name: "tasks", raw: "tasks", want: serverProfileTasks},
@@ -38,13 +39,24 @@ func TestNormalizeServerProfile(t *testing.T) {
 }
 
 func TestLoadConfigReadsServerProfile(t *testing.T) {
-	t.Setenv("MCPLEXER_SERVER_PROFILE", "skills,tasks")
-	cfg, err := loadConfig()
-	if err != nil {
-		t.Fatalf("loadConfig: %v", err)
+	tests := []struct {
+		raw  string
+		want string
+	}{
+		{raw: "core", want: serverProfileCore},
+		{raw: "skills,tasks", want: serverProfileSkillsTasks},
 	}
-	if cfg.ServerProfile != serverProfileSkillsTasks {
-		t.Fatalf("ServerProfile = %q, want %q", cfg.ServerProfile, serverProfileSkillsTasks)
+	for _, tt := range tests {
+		t.Run(tt.raw, func(t *testing.T) {
+			t.Setenv("MCPLEXER_SERVER_PROFILE", tt.raw)
+			cfg, err := loadConfig()
+			if err != nil {
+				t.Fatalf("loadConfig: %v", err)
+			}
+			if cfg.ServerProfile != tt.want {
+				t.Fatalf("ServerProfile = %q, want %q", cfg.ServerProfile, tt.want)
+			}
+		})
 	}
 }
 
@@ -62,12 +74,23 @@ func TestParseTrustedHostsNormalizesBrowserOrigins(t *testing.T) {
 }
 
 func TestApplyFlagsReadsServerProfile(t *testing.T) {
-	cfg := &Config{ServerProfile: serverProfileFull}
-	if err := applyFlags(cfg, []string{"--server-profile=skills"}); err != nil {
-		t.Fatalf("applyFlags: %v", err)
+	tests := []struct {
+		flag string
+		want string
+	}{
+		{flag: "--server-profile=core", want: serverProfileCore},
+		{flag: "--profile=skills", want: serverProfileSkills},
 	}
-	if cfg.ServerProfile != serverProfileSkills {
-		t.Fatalf("ServerProfile = %q, want %q", cfg.ServerProfile, serverProfileSkills)
+	for _, tt := range tests {
+		t.Run(tt.flag, func(t *testing.T) {
+			cfg := &Config{ServerProfile: serverProfileFull}
+			if err := applyFlags(cfg, []string{tt.flag}); err != nil {
+				t.Fatalf("applyFlags: %v", err)
+			}
+			if cfg.ServerProfile != tt.want {
+				t.Fatalf("ServerProfile = %q, want %q", cfg.ServerProfile, tt.want)
+			}
+		})
 	}
 }
 
@@ -82,5 +105,54 @@ func TestServerCapabilities(t *testing.T) {
 		if caps[key] {
 			t.Fatalf("capability %q = true, want false", key)
 		}
+	}
+}
+
+func TestCoreServerCapabilities(t *testing.T) {
+	caps := serverCapabilities(serverProfileCore)
+	for _, key := range []string{
+		"approvals", "audit", "downstreams", "guards",
+		"local_setup", "signals", "server_settings",
+	} {
+		if !caps[key] {
+			t.Fatalf("core capability %q = false, want true", key)
+		}
+	}
+	for _, key := range []string{
+		"brain", "delegations", "memory", "model_routing",
+		"skills", "tasks", "workers",
+	} {
+		if caps[key] {
+			t.Fatalf("core capability %q = true, want false", key)
+		}
+	}
+}
+
+func TestRuntimeModulesForProfile(t *testing.T) {
+	all := runtimeModulePlan{
+		Core:          true,
+		Agent:         true,
+		Automation:    true,
+		Collaboration: true,
+		Ops:           true,
+		Experimental:  true,
+	}
+	tests := []struct {
+		profile string
+		want    runtimeModulePlan
+	}{
+		{profile: serverProfileCore, want: runtimeModulePlan{Core: true}},
+		{profile: serverProfileFull, want: all},
+		{profile: serverProfileSkills, want: all},
+		{profile: serverProfileTasks, want: all},
+		{profile: serverProfileSkillsTasks, want: all},
+		{profile: "not-a-profile", want: all},
+	}
+	for _, tt := range tests {
+		t.Run(tt.profile, func(t *testing.T) {
+			if got := runtimeModulesForProfile(tt.profile); got != tt.want {
+				t.Fatalf("runtimeModulesForProfile(%q) = %+v, want %+v", tt.profile, got, tt.want)
+			}
+		})
 	}
 }

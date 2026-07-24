@@ -32,8 +32,9 @@ type Config struct {
 	WebPushSubject string // VAPID subject used for browser Web Push
 	APITokenPath   string // path to HTTP API auth token (~/.mcplexer/api-key)
 	// ServerProfile reshapes the daemon for appliance-style deployments.
-	// "full" preserves the local workstation UI. "skills", "tasks", and
-	// "skills+tasks" keep the shared server surfaces prominent.
+	// "full" preserves the local workstation UI. "core" construction-gates
+	// optional product groups. "skills", "tasks", and "skills+tasks" keep
+	// the shared server surfaces prominent.
 	ServerProfile string
 	// TrustedHosts lists extra hostnames allowed as browser Origin / CORS
 	// targets in addition to loopback. Use this when serving the UI on a
@@ -181,6 +182,7 @@ func hostFromURL(raw string) []string {
 }
 
 const (
+	serverProfileCore        = "core"
 	serverProfileFull        = "full"
 	serverProfileSkills      = "skills"
 	serverProfileTasks       = "tasks"
@@ -195,6 +197,8 @@ func normalizeServerProfile(raw string) (string, error) {
 	p = strings.ReplaceAll(p, ",", "+")
 	p = strings.ReplaceAll(p, " ", "")
 	switch p {
+	case serverProfileCore:
+		return serverProfileCore, nil
 	case serverProfileFull:
 		return serverProfileFull, nil
 	case serverProfileSkills:
@@ -204,7 +208,48 @@ func normalizeServerProfile(raw string) (string, error) {
 	case serverProfileSkillsTasks, "tasks+skills":
 		return serverProfileSkillsTasks, nil
 	default:
-		return "", fmt.Errorf("server profile must be one of: full, skills, tasks, skills+tasks")
+		return "", fmt.Errorf("server profile must be one of: core, full, skills, tasks, skills+tasks")
+	}
+}
+
+// runtimeModulePlan is the pure construction plan derived from a server
+// profile. Core gateway services (routing, downstream lifecycle, auth,
+// secrets, approvals, audit and settings) are always present. The remaining
+// fields describe optional product groups which can be construction-gated
+// independently as their wiring is made nil-safe.
+type runtimeModulePlan struct {
+	Core          bool
+	Agent         bool
+	Automation    bool
+	Collaboration bool
+	Ops           bool
+	Experimental  bool
+}
+
+// runtimeModulesForProfile intentionally leaves the established shared-server
+// profiles on their historical full construction path. They currently narrow
+// the advertised/UI surface, and changing their runtime dependencies in the
+// same release as introducing core would be an avoidable compatibility risk.
+//
+// The core profile is the first true construction profile. Unknown input
+// falls back to full, matching serverCapabilities and the existing upgrade
+// safety rule that older/invalid persisted values must not silently remove
+// services.
+func runtimeModulesForProfile(profile string) runtimeModulePlan {
+	profile, err := normalizeServerProfile(profile)
+	if err != nil {
+		profile = serverProfileFull
+	}
+	if profile == serverProfileCore {
+		return runtimeModulePlan{Core: true}
+	}
+	return runtimeModulePlan{
+		Core:          true,
+		Agent:         true,
+		Automation:    true,
+		Collaboration: true,
+		Ops:           true,
+		Experimental:  true,
 	}
 }
 
@@ -214,16 +259,17 @@ func serverCapabilities(profile string) map[string]bool {
 		profile = serverProfileFull
 	}
 	full := profile == serverProfileFull
+	core := profile == serverProfileCore
 	skills := full || profile == serverProfileSkills || profile == serverProfileSkillsTasks
 	tasks := full || profile == serverProfileTasks || profile == serverProfileSkillsTasks
-	local := full
+	local := full || core
 	return map[string]bool{
-		"approvals":       full,
-		"audit":           full,
+		"approvals":       local,
+		"audit":           local,
 		"brain":           full,
 		"delegations":     full,
-		"downstreams":     full,
-		"guards":          full,
+		"downstreams":     local,
+		"guards":          local,
 		"local_setup":     local,
 		"memory":          full,
 		"model_routing":   full,
