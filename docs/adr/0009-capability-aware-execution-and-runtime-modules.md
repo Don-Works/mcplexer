@@ -131,4 +131,3 @@ The daemon's code remains a modular monolith, but operators can run a genuinely
 smaller core. During migration, some optional groups may still be constructed
 under profiles whose module plan has not yet been fully enforced; documentation
 and capability reporting must state that boundary accurately.
-
