@@ -71,9 +71,9 @@ type browserSessionReleaser interface {
 }
 
 // BuiltinToolCaller invokes mcplexer's built-in tool surface — primarily
-// mcpx__search_tools and mcpx__execute_code — through the gateway's full
+// mcpx__search_tools, mcpx__call_tool, and mcpx__execute_code — through the gateway's full
 // pipeline (sanitize, approval, audit, code-mode sandbox). The worker
-// dispatcher delegates the two-tool surface through this interface so
+// dispatcher delegates the three-tool surface through this interface so
 // workers get the same hardening external MCP clients get.
 //
 // CallBuiltin: args is the JSON-encoded tool input exactly as the model
@@ -83,10 +83,10 @@ type browserSessionReleaser interface {
 // transport / wiring failure distinct from tool-reported failure (which
 // surfaces inside the envelope).
 //
-// WorkerToolSurface: returns the two-tool schema list workers see in
+// WorkerToolSurface: returns the three-tool schema list workers see in
 // their model-facing tool inventory. The dispatcher returns this to the
-// runner from ListTools; everything else is reachable from inside an
-// mcpx__execute_code snippet.
+// runner from ListTools; everything else is reached through call_tool or
+// execute_code.
 type BuiltinToolCaller interface {
 	CallBuiltin(ctx context.Context, name string, args json.RawMessage) (json.RawMessage, error)
 	WorkerToolSurface(ctx context.Context) []models.ToolSchema
@@ -330,14 +330,14 @@ type Deps struct {
 	// Preamble — gateway-owned system-prompt prefix prepended before
 	// skill bodies. Tells the worker it's running inside mcplexer and
 	// that its tool surface is exactly mcpx__search_tools +
-	// mcpx__execute_code. Empty string disables injection (used by tests
-	// that want clean prompt assertions).
+	// mcpx__call_tool + mcpx__execute_code. Empty string disables injection
+	// (used by tests that want clean prompt assertions).
 	Preamble string
 	// PreambleCLI — the variant used for CLI-backed providers
 	// (models.IsCLIProvider). Those adapters shell out to a coding agent
 	// that runs its own loop with its own native tools and never receives
-	// the runner's tool list, so Preamble's "your surface is exactly two
-	// tools" claim is false for them. Empty falls back to Preamble, which
+	// the runner's tool list, so Preamble's exact three-tool claim is false
+	// for them. Empty falls back to Preamble, which
 	// preserves the pre-split behaviour exactly.
 	PreambleCLI string
 	// PeerTiers — optional. Gates the memory-consolidator Tier-1

@@ -40,17 +40,21 @@ func TestResolveHarnessToolName(t *testing.T) {
 	}{
 		{"mcpx__execute_code", "mcpx__execute_code"},
 		{"mcpx__search_tools", "mcpx__search_tools"},
+		{"mcpx__call_tool", "mcpx__call_tool"},
 		{"secret__prompt", "secret__prompt"},
 		{"execute_code", "mcpx__execute_code"},
 		{"search_tools", "mcpx__search_tools"},
+		{"call_tool", "mcpx__call_tool"},
 		{"prompt", "secret__prompt"},
 		{"list_refs", "secret__list_refs"},
 		{"mcplexer__execute_code", "mcpx__execute_code"},
 		{"mcplexer__search_tools", "mcpx__search_tools"},
+		{"mcplexer__call_tool", "mcpx__call_tool"},
 		{"mcplexer__prompt", "secret__prompt"},
 		{"mcplexer__list_refs", "secret__list_refs"},
 		{"mcplexer__mcpx__execute_code", "mcpx__execute_code"},
 		{"mcplexer__mcpx__search_tools", "mcpx__search_tools"},
+		{"mcplexer__mcpx__call_tool", "mcpx__call_tool"},
 		{"mcplexer__secret__prompt", "secret__prompt"},
 		{"mx__execute_code", "mcpx__execute_code"},
 		{"mcplexer__execute_code", "mcpx__execute_code"},
@@ -81,12 +85,13 @@ func TestApplyHarnessToolListNames_Grok(t *testing.T) {
 	in := []Tool{
 		{Name: "mcpx__execute_code"},
 		{Name: "mcpx__search_tools"},
+		{Name: "mcpx__call_tool"},
 		{Name: "secret__prompt"},
 		{Name: "secret__list_refs"},
 		{Name: "mcpx__retrieve"},
 	}
 	got := applyHarnessToolListNames(HarnessServerPrefixed, in)
-	want := []string{"execute_code", "search_tools", "prompt", "list_refs", "retrieve"}
+	want := []string{"execute_code", "search_tools", "call_tool", "prompt", "list_refs", "retrieve"}
 	if len(got) != len(want) {
 		t.Fatalf("len = %d, want %d", len(got), len(want))
 	}
@@ -121,7 +126,7 @@ func TestHandleToolsList_GrokAliases(t *testing.T) {
 			t.Errorf("grok tools/list still has double-underscore name %q (all: %v)", name, names)
 		}
 	}
-	for _, want := range []string{"execute_code", "search_tools"} {
+	for _, want := range []string{"execute_code", "search_tools", "call_tool"} {
 		if !containsString(names, want) {
 			t.Errorf("missing harness alias %q in %v", want, names)
 		}
@@ -161,6 +166,7 @@ func TestBuildCodeModeInstructions(t *testing.T) {
 			want: []string{
 				"`mcpx__execute_code`",
 				"`mcpx__search_tools`",
+				"`mcpx__call_tool`",
 				"`mcpx__retrieve`",
 				"`mcpx.skill_get",
 			},
@@ -171,6 +177,7 @@ func TestBuildCodeModeInstructions(t *testing.T) {
 			want: []string{
 				"`mcplexer__execute_code`",
 				"`mcplexer__search_tools`",
+				"`mcplexer__call_tool`",
 				"`mcplexer__retrieve`",
 			},
 		},
@@ -209,6 +216,7 @@ func TestBuildCompactCodeModeInstructions_KeepsLoadBearingRules(t *testing.T) {
 	for _, must := range []string{
 		"mcpx__execute_code",           // how to run anything
 		"mcpx__search_tools",           // how to find anything
+		"mcpx__call_tool",              // cheap path for one independent call
 		"mcpx__retrieve",               // how to expand a CCR marker
 		"`<namespace>.<tool>(args)`",   // the call form
 		"synchronous",                  // no await
@@ -275,7 +283,12 @@ func TestHandleToolsList_ClaudeCanonical(t *testing.T) {
 		t.Fatalf("handleToolsList: %v", rpcErr.Message)
 	}
 	names := toolNames(result)
-	if len(names) == 0 || names[0] != "mcpx__execute_code" {
-		t.Errorf("claude tools/list = %v, want mcpx__* canonical names", names)
+	if len(names) == 0 {
+		t.Fatal("claude tools/list is empty")
+	}
+	for _, name := range names {
+		if name == "call_tool" || name == "execute_code" || name == "search_tools" {
+			t.Errorf("claude tools/list = %v, want canonical names", names)
+		}
 	}
 }

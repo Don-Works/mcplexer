@@ -53,12 +53,13 @@ type CapabilityFeatures struct {
 }
 
 // mcpxNamespace is the mcpx builtin namespace segment. The Minimal preset
-// lists it in NamespaceAllow so that, in addition to the two always-allow
+// lists it in NamespaceAllow so that, in addition to the model-facing
 // entrypoint tools (mcpxEntrypointTools in capability_gate.go), the other
 // non-admin, non-feature-denied mcpx builtins remain reachable under the
-// otherwise-deny-everything minimal floor. Note: only mcpx__execute_code and
-// mcpx__search_tools get the unconditional Allows() bypass; everything else
-// in the mcpx namespace is subject to the normal feature / namespace gates.
+// otherwise-deny-everything minimal floor. Only the exact discovery,
+// invocation-wrapper, and retrieval entrypoints get the unconditional
+// Allows() bypass; everything else in the mcpx namespace is subject to the
+// normal feature / namespace gates.
 const mcpxNamespace = "mcpx"
 
 func boolPtr(b bool) *bool { return &b }
@@ -119,7 +120,7 @@ func Researcher() *CapabilityProfile {
 }
 
 // Minimal returns the bare-slim preset: ONLY the mcpx namespace
-// (search_tools + execute_code + pure compute), nothing else.
+// (discovery + invocation wrappers + pure compute), nothing else.
 func Minimal() *CapabilityProfile {
 	return &CapabilityProfile{
 		Preset:         "minimal",
@@ -178,11 +179,11 @@ func Merge(base, override *CapabilityProfile) *CapabilityProfile {
 		// REPLACES (does not union) base.NamespaceAllow: an override
 		// NamespaceAllow is the new authoritative allow-list. mcpx survival
 		// across this replacement does NOT depend on "mcpx" being present in
-		// the resulting list — the two entrypoint tools (mcpx__execute_code /
-		// mcpx__search_tools) are always-allowed by Allows()'s hardcoded
+		// the resulting list — the exact entrypoint tools are always-allowed
+		// by Allows()'s hardcoded
 		// mcpxEntrypointTools bypass, which runs before the NamespaceAllow
 		// gate. So a Merge that narrows to e.g. ["github"] still leaves
-		// search/execute reachable by construction; other mcpx tools become
+		// discovery/invocation reachable by construction; other mcpx tools become
 		// reachable only if "mcpx" is also listed.
 		out.NamespaceAllow = ov.NamespaceAllow
 	}

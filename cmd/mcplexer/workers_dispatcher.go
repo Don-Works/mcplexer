@@ -18,12 +18,12 @@ import (
 	"github.com/don-works/mcplexer/internal/workers/writeclass"
 )
 
-// toolDispatcher is the runner's gateway hook. Workers see exactly two
-// tools at the model layer: mcpx__search_tools and mcpx__execute_code.
+// toolDispatcher is the runner's gateway hook. Workers see exactly three
+// tools at the model layer: mcpx__search_tools, mcpx__call_tool, and
+// mcpx__execute_code.
 // Every other capability (downstream MCP, mesh, secret, memory, admin)
-// is reachable from inside an execute_code snippet, which routes through
-// the gateway's full pipeline (sanitize, approval, audit, code-mode
-// sandbox) via the BuiltinToolCaller.
+// is reached through call_tool or execute_code, both of which route through
+// the gateway's full pipeline via the BuiltinToolCaller.
 //
 // The store + engine + manager fields are retained for backwards-
 // compatible construction (the M0 dispatcher rooted in them is now an
@@ -34,8 +34,8 @@ import (
 //
 // Worker tool allowlists are attached to the gateway context before
 // dispatching these builtins. The gateway applies that allowlist to
-// mcpx__search_tools discovery and to every inner tool call made from
-// inside mcpx__execute_code.
+// mcpx__search_tools discovery and to every target call made through
+// mcpx__call_tool or mcpx__execute_code.
 type toolDispatcher struct {
 	store   store.Store
 	engine  *routing.Engine
@@ -51,7 +51,7 @@ func newToolDispatcher(s store.Store, e *routing.Engine, m *downstream.Manager) 
 // dispatcher has been constructed. The wiring order in serve.go builds
 // the dispatcher (inside buildWorkerRunner) before the worker-bound
 // gateway.Server exists, so this is the seam that closes the loop.
-// Calling with nil disables the two-tool surface (workers see zero
+// Calling with nil disables the three-tool surface (workers see zero
 // tools, every dispatch fails — fail-closed beats fail-open).
 func (d *toolDispatcher) SetBuiltinCaller(c runner.BuiltinToolCaller) {
 	d.builtin = c
@@ -70,22 +70,22 @@ func (d *toolDispatcher) ReleaseBrowserSession(sessionID string) {
 	d.manager.ReleaseSession(sessionID)
 }
 
-// ListTools returns the two-tool surface workers see at the model layer:
-// mcpx__search_tools and mcpx__execute_code. Everything else is reachable
-// from inside an execute_code snippet through the gateway's full pipeline.
+// ListTools returns the three-tool surface workers see at the model layer:
+// mcpx__search_tools, mcpx__call_tool, and mcpx__execute_code. Everything
+// else is reached through one of the two invocation wrappers.
 //
 // The allowlist argument is retained on the interface for backwards
 // compatibility. A non-empty worker allowlist no longer filters the
-// top-level two-tool surface; instead it is enforced by the gateway for
-// discovery results and sandbox inner calls. An empty (but non-nil)
+// top-level three-tool surface; instead it is enforced by the gateway for
+// discovery results and wrapper target calls. An empty (but non-nil)
 // allowlist still fails closed (zero tools) as the operator's explicit
 // "deny everything" signal, and is checked BEFORE the builtin-wired
 // check so the deny contract holds regardless of wiring state.
 //
 // SECURITY: fails closed when the BuiltinToolCaller has not been wired.
 // A silent fallback to "list every downstream tool" would defeat the
-// whole point of the two-tool surface: an operator who deliberately
-// constrained workers to mcpx__search_tools + mcpx__execute_code would
+// whole point of the three-tool surface: an operator who deliberately
+// constrained workers to the mcpx discovery/invocation wrappers would
 // suddenly have workers seeing every github/linear/slack/customer tool
 // directly if any wiring path forgot to call SetBuiltinCaller. Fail
 // loudly so the misconfiguration surfaces at the first worker run.
@@ -180,15 +180,15 @@ func parseToolListing(payload []byte, namespace string) []models.ToolSchema {
 	return out
 }
 
-// DispatchTool routes the worker's tool call. With the two-tool surface
-// (mcpx__search_tools + mcpx__execute_code) workers should only ever ask
-// the dispatcher to invoke one of those two names. Any other name is a
+// DispatchTool routes the worker's tool call. With the three-tool surface
+// workers should only ever ask the dispatcher to invoke one of those three
+// names. Any other name is a
 // model hallucination — the worker's tool inventory doesn't list it —
 // and we fail closed with a clear message rather than try to route it.
 //
-// Both supported names delegate to the BuiltinToolCaller, which runs the
+// All supported names delegate to the BuiltinToolCaller, which runs the
 // call through the gateway's full pipeline (sanitize, approval, audit,
-// code-mode sandbox). WriteClass is set to false because the two builtins
+// code-mode sandbox). WriteClass is set to false because the three builtins
 // are themselves stateless wrappers; the side effects happen inside the
 // execute_code sandbox where the gateway's own write-class auditing
 // fires per inner call.
@@ -196,7 +196,7 @@ func parseToolListing(payload []byte, namespace string) []models.ToolSchema {
 // SECURITY: fails closed when the BuiltinToolCaller has not been wired.
 // See ListTools for the rationale — a silent fallback to engine.Route
 // would let workers reach downstream tools directly, bypassing the
-// two-tool surface contract.
+// three-tool surface contract.
 func (d *toolDispatcher) DispatchTool(ctx context.Context, call runner.ToolCallRequest) (runner.ToolCallResult, error) {
 	if d.builtin == nil {
 		return runner.ToolCallResult{}, errors.New("worker dispatcher: BuiltinToolCaller not wired — call SetBuiltinCaller before running workers")
@@ -211,11 +211,11 @@ func (d *toolDispatcher) DispatchTool(ctx context.Context, call runner.ToolCallR
 // silently routing.
 func (d *toolDispatcher) dispatchBuiltin(ctx context.Context, call runner.ToolCallRequest) (runner.ToolCallResult, error) {
 	switch call.Name {
-	case "mcpx__search_tools", "mcpx__execute_code":
+	case "mcpx__search_tools", "mcpx__call_tool", "mcpx__execute_code":
 		// supported — fall through
 	default:
 		return runner.ToolCallResult{
-			OutputJSON: fmt.Sprintf(`{"error":"tool %q is not in the worker tool surface (workers only get mcpx__search_tools + mcpx__execute_code directly). Use mcpx__search_tools then mcpx__execute_code with JS (mcpx.* / task.* namespaces available inside the snippet; print() to capture results). The worker allowlist gates what execute_code can reach."}`, call.Name),
+			OutputJSON: fmt.Sprintf(`{"error":"tool %q is not in the worker tool surface (workers only get mcpx__search_tools + mcpx__call_tool + mcpx__execute_code directly). Discover first, use call_tool for one small independent call, or execute_code for batching/dependencies/filtering/polling/transforms. The worker allowlist gates each target."}`, call.Name),
 			IsError:    true,
 		}, nil
 	}
@@ -431,8 +431,8 @@ func parseCapabilityProfileForWorker(workerID, raw string) *toolgate.CapabilityP
 // + model spend) before any namespace gate runs. Minimal() additionally
 // pins every may_* feature flag explicitly false, so the feature-derived
 // tool-deny (which runs BEFORE the mcpx bypass) blocks those mcpx tools. The
-// result: only the irreducible mcpx__search_tools + mcpx__execute_code
-// entrypoints survive — true deny-everything-else.
+// result: only the irreducible mcpx discovery/invocation entrypoints
+// survive — true deny-everything-else.
 func denyEverythingCapabilityProfile() *toolgate.CapabilityProfile {
 	return toolgate.Minimal()
 }

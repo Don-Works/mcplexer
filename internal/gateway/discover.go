@@ -36,8 +36,8 @@ type discoverQueryResult struct {
 
 // searchToolsDefinition returns the built-in mcpx__search_tools Tool.
 //
-// This is one of only two tools workers ever see in their top-level tool
-// list (the other is mcpx__execute_code), so the description is
+// This is one of only three tools workers ever see in their top-level tool
+// list (alongside mcpx__call_tool and mcpx__execute_code), so the description is
 // deliberately long — it's the single entry point through which every
 // other capability is discovered, and the cost of context bytes here is
 // amortised against all the tool schemas that are NOT in the worker's
@@ -48,8 +48,9 @@ func searchToolsDefinition() Tool {
 		Description: "Search for any callable function reachable from mcplexer — " +
 			"downstream MCP servers (github, linear, slack, customer-specific, …) AND " +
 			"mcplexer's built-in namespaces (mesh, memory, secret, mcpx admin, skill registry). " +
-			"This is the ONLY discovery surface: nothing except mcpx__execute_code is " +
-			"exposed in tools/list, so if a capability exists, it's found here.\n\n" +
+			"This is the ONLY discovery surface: downstream tools are not exposed directly in " +
+			"tools/list, so if a capability exists, it is found here and then invoked with " +
+			"mcpx__call_tool or mcpx__execute_code.\n\n" +
 			"How to use:\n" +
 			"- Infer search terms from the user's request — don't ask what to search for, just guess.\n" +
 			"- Pass `queries: [\"send message to peer\", \"check pending mesh\", ...]` to search several " +
@@ -70,10 +71,9 @@ func searchToolsDefinition() Tool {
 			"- mcpx — gateway operations and the skills registry (`mcpx.skill_search`, `mcpx.skill_get`)\n" +
 			"- skill — skill-run telemetry only (`skill.run_start`, `skill.phase`, `skill.run_complete`)\n" +
 			"- github, linear, slack, postgres, … — downstream MCP servers configured by the operator\n\n" +
-			"Workflow: search in summary mode to find the function, fetch the exact signature if needed, " +
-			"then call it from inside mcpx__execute_code. " +
-			"Batch related calls into a single execute_code invocation rather than alternating between " +
-			"search and execute.",
+			"Workflow: search in summary mode to find the function and fetch the exact signature if needed. " +
+			"Use mcpx__call_tool for one small independent call. Use mcpx__execute_code for batching, " +
+			"dependent calls, filtering/aggregation, polling, branching, or transforms.",
 		InputSchema: json.RawMessage(`{
 			"type": "object",
 			"properties": {

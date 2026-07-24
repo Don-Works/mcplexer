@@ -33,6 +33,7 @@ func TestCapabilityPresetGate(t *testing.T) {
 	}{
 		// full: everything except admin.
 		{"full", "mcpx__execute_code", true},
+		{"full", "mcpx__call_tool", true},
 		{"full", "github__create_issue", true},
 		{"full", "memory__save", true},
 		{"full", "mesh__send", true},
@@ -45,6 +46,7 @@ func TestCapabilityPresetGate(t *testing.T) {
 
 		// coder: code/search + task/memory write; no mesh/secret/subdeleg.
 		{"coder", "mcpx__execute_code", true},
+		{"coder", "mcpx__call_tool", true},
 		{"coder", "task__create", true},
 		{"coder", "memory__save", true},
 		{"coder", "github__create_issue", true}, // downstream not narrowed by namespace_allow
@@ -60,6 +62,7 @@ func TestCapabilityPresetGate(t *testing.T) {
 
 		// researcher: read-only; writes denied across namespaces.
 		{"researcher", "mcpx__execute_code", true},
+		{"researcher", "mcpx__call_tool", true},
 		{"researcher", "memory__recall", true},
 		{"researcher", "task__list", true},
 		{"researcher", "github__create_issue", false}, // write-class blanket deny
@@ -71,6 +74,7 @@ func TestCapabilityPresetGate(t *testing.T) {
 		// minimal: mcpx only.
 		{"minimal", "mcpx__execute_code", true},
 		{"minimal", "mcpx__search_tools", true},
+		{"minimal", "mcpx__call_tool", true},
 		{"minimal", "mcpx__retrieve", true},
 		{"minimal", "github__list_issues", false},
 		{"minimal", "task__list", false},
@@ -97,7 +101,7 @@ func TestCapabilityMcpxAlwaysAllowed(t *testing.T) {
 	// Even an empty-but-non-nil NamespaceAllow (deny-everything) must let
 	// the irreducible mcpx entrypoint through, or the worker bricks.
 	p := &CapabilityProfile{NamespaceAllow: []string{}}
-	for _, name := range []string{"mcpx__execute_code", "mcpx__search_tools", "mcpx__retrieve"} {
+	for _, name := range []string{"mcpx__execute_code", "mcpx__search_tools", "mcpx__call_tool", "mcpx__retrieve"} {
 		if ok, reason := p.Allows(name, false); !ok {
 			t.Errorf("deny-everything profile bricked mcpx %q: %s", name, reason)
 		}

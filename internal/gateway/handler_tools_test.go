@@ -200,7 +200,7 @@ func mustMarshal(t *testing.T, v any) json.RawMessage {
 }
 
 // TestSlimSurfaceKeepers locks in the contract: the slim-surface keep-list
-// is exactly the 4 hand-picked tools and filterToSlimSurface preserves them
+// is exactly the hand-picked entrypoints and filterToSlimSurface preserves them
 // (and only them) from a full set. If this test fails after adding a new
 // tool, the right move is almost always to leave it deferred (i.e. add it
 // to searchableBuiltins, NOT to the keep-list). The keep-list is precious
@@ -209,6 +209,7 @@ func TestSlimSurfaceKeepers(t *testing.T) {
 	want := map[string]bool{
 		"mcpx__execute_code": true,
 		"mcpx__search_tools": true,
+		"mcpx__call_tool":    true,
 		"secret__prompt":     true,
 		"secret__list_refs":  true,
 		// mcpx__retrieve is a keeper so the model can always expand a CCR
@@ -228,6 +229,7 @@ func TestSlimSurfaceKeepers(t *testing.T) {
 	full := []Tool{
 		{Name: "mcpx__execute_code"},
 		{Name: "mcpx__search_tools"},
+		{Name: "mcpx__call_tool"},
 		{Name: "mcpx__skill_search"},
 		{Name: "mcpx__retrieve"},
 		{Name: "mesh__send"},

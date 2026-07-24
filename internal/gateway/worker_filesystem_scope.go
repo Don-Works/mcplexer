@@ -38,6 +38,7 @@ func workerFilesystemScopeFromContext(ctx context.Context) (pathguard.Scope, boo
 // not execute local paths.
 var isolatedWorkerSafeTools = map[string]struct{}{
 	"mcpx__search_tools":             {},
+	"mcpx__call_tool":                {},
 	"mcpx__execute_code":             {},
 	"mcpx__retrieve":                 {},
 	"mcpx__skill_search":             {},

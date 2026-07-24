@@ -418,6 +418,9 @@ func TestCheckWorkerCapabilityMinimalGatesToMcpx(t *testing.T) {
 	if err := checkWorkerCapability(ctx, "mcpx__execute_code"); err != nil {
 		t.Errorf("minimal bricked mcpx__execute_code: %v", err)
 	}
+	if err := checkWorkerCapability(ctx, "mcpx__call_tool"); err != nil {
+		t.Errorf("minimal bricked mcpx__call_tool: %v", err)
+	}
 	if err := checkWorkerCapability(ctx, "github__list_issues"); err == nil {
 		t.Error("minimal allowed a downstream tool")
 	}
@@ -431,6 +434,9 @@ func TestCheckWorkerCapabilityFailClosedDenyEverything(t *testing.T) {
 	ctx := WithWorkerCapabilityProfile(context.Background(), profile)
 	if err := checkWorkerCapability(ctx, "mcpx__execute_code"); err != nil {
 		t.Errorf("deny-everything profile bricked mcpx: %v", err)
+	}
+	if err := checkWorkerCapability(ctx, "mcpx__call_tool"); err != nil {
+		t.Errorf("deny-everything profile bricked call_tool: %v", err)
 	}
 	for _, name := range []string{
 		"github__list_issues", "task__list", "memory__recall", "mesh__send",

@@ -387,18 +387,20 @@ func (s *Server) CallTool(
 	return result, nil
 }
 
-// WorkerToolSurface returns the two-tool schema list (mcpx__search_tools
-// and mcpx__execute_code) that worker runs see in their tool inventory.
+// WorkerToolSurface returns the three-tool schema list (mcpx__search_tools,
+// mcpx__call_tool, and mcpx__execute_code) that worker runs see in their tool inventory.
 // Workers do NOT see downstream tools, mesh tools, secret tools, or any
-// other builtin in their top-level list — everything is reachable from
-// inside an mcpx__execute_code snippet via mcpx__search_tools discovery.
+// other builtin in their top-level list — targets are discovered with
+// mcpx__search_tools, then invoked through call_tool or execute_code.
 // The schemas are returned in the simplified shape the runner consumes:
 // name + description + JSON input schema.
 func (s *Server) WorkerToolSurface(ctx context.Context) []WorkerToolSchema {
 	execTool, _ := s.handler.buildCodeExecuteTool(ctx)
 	searchTool := searchToolsDefinition()
+	callTool := callToolDefinition()
 	return []WorkerToolSchema{
 		toWorkerSchema(searchTool),
+		toWorkerSchema(callTool),
 		toWorkerSchema(execTool),
 	}
 }

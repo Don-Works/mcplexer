@@ -48,6 +48,7 @@ func (f *fakeBuiltin) WorkerToolSurface(_ context.Context) []models.ToolSchema {
 	if f.surface == nil {
 		return []models.ToolSchema{
 			{Name: "mcpx__search_tools", Description: "search"},
+			{Name: "mcpx__call_tool", Description: "call"},
 			{Name: "mcpx__execute_code", Description: "exec"},
 		}
 	}
@@ -123,8 +124,8 @@ func TestDispatcherListToolsEmptyAllowlistFailsClosed(t *testing.T) {
 // TestDispatcherListTools_FailsClosedWithoutBuiltin locks the
 // fail-closed contract: a dispatcher constructed without
 // SetBuiltinCaller must NOT silently fall back to a legacy downstream-
-// flat surface. The whole point of the two-tool surface is that a
-// worker sees mcpx__search_tools + mcpx__execute_code and nothing else;
+// flat surface. The whole point of the three-tool surface is that a
+// worker sees only discovery plus the two invocation wrappers;
 // any wiring path that forgets to wire the BuiltinCaller is a security
 // regression and must surface as a loud error, not a degraded surface.
 func TestDispatcherListTools_FailsClosedWithoutBuiltin(t *testing.T) {
@@ -143,7 +144,7 @@ func TestDispatcherListTools_FailsClosedWithoutBuiltin(t *testing.T) {
 // TestDispatcherDispatchTool_FailsClosedWithoutBuiltin mirrors the
 // above for the dispatch path. The legacy engine.Route fallback is
 // gone — a hallucinated downstream name from a worker reaches the
-// dispatcher only AFTER the model picked a name from its two-tool
+// dispatcher only AFTER the model picked a name from its three-tool
 // inventory, which can't happen unless the inventory was populated;
 // but defence-in-depth wants this to fail loudly anyway.
 func TestDispatcherDispatchTool_FailsClosedWithoutBuiltin(t *testing.T) {
@@ -180,12 +181,12 @@ func TestDispatcherListToolsMalformedAllowlistFailsClosed(t *testing.T) {
 	}
 }
 
-// TestDispatcherListTools_TwoToolSurface verifies that once a
-// BuiltinToolCaller is wired the dispatcher returns ONLY the two
+// TestDispatcherListTools_ThreeToolSurface verifies that once a
+// BuiltinToolCaller is wired the dispatcher returns ONLY the three
 // builtin tools workers see at the model layer — no downstream tools,
 // no allowlist filtering on names, no engine routing. The legacy
 // downstream-flat path is exercised only when builtin is nil.
-func TestDispatcherListTools_TwoToolSurface(t *testing.T) {
+func TestDispatcherListTools_ThreeToolSurface(t *testing.T) {
 	db := newDispatcherTestStore(t)
 	d := newToolDispatcher(db, nil, nil)
 	d.SetBuiltinCaller(&fakeBuiltin{})
@@ -194,14 +195,14 @@ func TestDispatcherListTools_TwoToolSurface(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListTools: %v", err)
 	}
-	if len(tools) != 2 {
-		t.Fatalf("expected exactly 2 tools, got %d (%v)", len(tools), names(tools))
+	if len(tools) != 3 {
+		t.Fatalf("expected exactly 3 tools, got %d (%v)", len(tools), names(tools))
 	}
 	got := names(tools)
 	sort.Strings(got)
-	want := []string{"mcpx__execute_code", "mcpx__search_tools"}
+	want := []string{"mcpx__call_tool", "mcpx__execute_code", "mcpx__search_tools"}
 	if !equalStringSlices(got, want) {
-		t.Fatalf("two-tool surface mismatch:\n got=%v\nwant=%v", got, want)
+		t.Fatalf("three-tool surface mismatch:\n got=%v\nwant=%v", got, want)
 	}
 }
 
@@ -224,7 +225,7 @@ func TestDispatcherListTools_EmptyAllowlistFailsClosedEvenWithBuiltin(t *testing
 }
 
 // TestDispatcherDispatchTool_BuiltinDelegated verifies that the two
-// supported names (mcpx__search_tools, mcpx__execute_code) are forwarded
+// supported names are forwarded
 // to the BuiltinToolCaller, not the engine.
 func TestDispatcherDispatchTool_BuiltinDelegated(t *testing.T) {
 	db := newDispatcherTestStore(t)
@@ -232,7 +233,7 @@ func TestDispatcherDispatchTool_BuiltinDelegated(t *testing.T) {
 	d := newToolDispatcher(db, nil, nil)
 	d.SetBuiltinCaller(bt)
 
-	for _, name := range []string{"mcpx__search_tools", "mcpx__execute_code"} {
+	for _, name := range []string{"mcpx__search_tools", "mcpx__call_tool", "mcpx__execute_code"} {
 		t.Run(name, func(t *testing.T) {
 			before := len(bt.calls)
 			res, err := d.DispatchTool(context.Background(), runner.ToolCallRequest{
@@ -256,7 +257,7 @@ func TestDispatcherDispatchTool_BuiltinDelegated(t *testing.T) {
 }
 
 // TestDispatcherDispatchTool_NonBuiltinRejected verifies that a name
-// outside the two-tool surface (e.g. a model hallucinating a downstream
+// outside the three-tool surface (e.g. a model hallucinating a downstream
 // tool name directly) is rejected with a clear error — the dispatcher
 // must NOT silently route around the execute_code sandbox.
 func TestDispatcherDispatchTool_NonBuiltinRejected(t *testing.T) {

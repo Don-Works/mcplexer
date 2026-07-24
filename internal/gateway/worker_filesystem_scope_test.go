@@ -60,6 +60,7 @@ func TestWorkerFilesystemContractPinsBuiltinRouteProvenance(t *testing.T) {
 	ctx := isolatedTestContext(t, t.TempDir(), nil)
 	for name, downstream := range map[string]string{
 		"mcpx__execute_code": "mcpx-builtin",
+		"mcpx__call_tool":    "mcpx-builtin",
 		"mesh__send":         "mesh-builtin",
 		"memory__recall":     "memory-builtin",
 		"task__get":          "task-builtin",

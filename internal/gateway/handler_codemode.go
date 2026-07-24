@@ -18,21 +18,34 @@ import (
 	"github.com/google/uuid"
 )
 
-type internalCallKey struct{}
+type internalToolCallKey struct{}
+type internalCodeModeCallKey struct{}
 type executionIDKey struct{}
 type skillIDKey struct{}
 type skillAllowlistKey struct{}
 type workerToolAllowlistKey struct{}
 type workerCapabilityKey struct{}
 
-var internalCodeModeCallKey = internalCallKey{}
+// withInternalToolCall marks a wrapper-dispatched target as eligible to enter
+// the authoritative tool pipeline. It is deliberately separate from the Code
+// Mode marker: mcpx__call_tool returns directly to the model, so its target
+// should still receive normal model-facing compression.
+func withInternalToolCall(ctx context.Context) context.Context {
+	return context.WithValue(ctx, internalToolCallKey{}, true)
+}
+
+func isInternalToolCall(ctx context.Context) bool {
+	internal, _ := ctx.Value(internalToolCallKey{}).(bool)
+	return internal
+}
 
 func withInternalCodeModeCall(ctx context.Context) context.Context {
-	return context.WithValue(ctx, internalCodeModeCallKey, true)
+	ctx = withInternalToolCall(ctx)
+	return context.WithValue(ctx, internalCodeModeCallKey{}, true)
 }
 
 func isInternalCodeModeCall(ctx context.Context) bool {
-	internal, _ := ctx.Value(internalCodeModeCallKey).(bool)
+	internal, _ := ctx.Value(internalCodeModeCallKey{}).(bool)
 	return internal
 }
 
@@ -79,8 +92,9 @@ func skillAllowlistFromContext(ctx context.Context) []string {
 }
 
 // WithWorkerToolAllowlist attaches the configured worker tool patterns to
-// the context before a worker invokes mcpx__execute_code. The gateway then
-// checks each sandbox-dispatched inner tool call against these patterns.
+// the context before a worker invokes mcpx__execute_code or mcpx__call_tool.
+// The gateway then checks each wrapper-dispatched target against these
+// patterns.
 // Nil means "no worker allowlist configured"; an empty slice means
 // "configured to deny every downstream tool".
 func WithWorkerToolAllowlist(ctx context.Context, allowed []string) context.Context {
@@ -98,10 +112,10 @@ func workerToolAllowlistFromContext(ctx context.Context) []string {
 }
 
 func checkWorkerToolAllowlist(ctx context.Context, toolName string) error {
-	// CCR expansion is part of the lossless transport contract, not an
-	// optional downstream capability. A worker that can see a marker must be
-	// able to recover it even when its task allowlist is otherwise minimal.
-	if toolName == "mcpx__retrieve" {
+	// CCR expansion and the single-call wrapper are transport entrypoints, not
+	// target capabilities. call_tool immediately re-enters this gate with its
+	// target name, so exempting the wrapper cannot widen what a worker reaches.
+	if toolName == "mcpx__retrieve" || toolName == callToolName {
 		return nil
 	}
 	allowlist := workerToolAllowlistFromContext(ctx)
@@ -138,11 +152,12 @@ func filterByWorkerToolAllowlist(ctx context.Context, tools []Tool) []Tool {
 }
 
 // WithWorkerCapabilityProfile attaches a resolved capability profile to the
-// context before a delegate worker invokes mcpx__execute_code. The gateway
-// enforces it at the dispatch chokepoint (checkWorkerCapability) and mirrors
-// it at discovery (filterByWorkerCapability). A nil profile attaches NOTHING
-// — exactly like WithWorkerToolAllowlist's nil contract — so an interactive
-// or non-delegate session is never gated (back-compat allow-all).
+// context before a delegate worker invokes mcpx__execute_code or
+// mcpx__call_tool. The gateway enforces it at the dispatch chokepoint
+// (checkWorkerCapability) and mirrors it at discovery
+// (filterByWorkerCapability). A nil profile attaches NOTHING — exactly like
+// WithWorkerToolAllowlist's nil contract — so an interactive or non-delegate
+// session is never gated (back-compat allow-all).
 func WithWorkerCapabilityProfile(ctx context.Context, p *toolgate.CapabilityProfile) context.Context {
 	if p == nil {
 		return ctx
@@ -232,17 +247,7 @@ type handlerToolCaller struct {
 func (c *handlerToolCaller) CallTool(
 	ctx context.Context, name string, args json.RawMessage,
 ) (json.RawMessage, error) {
-	req := CallToolRequest{
-		Name:      name,
-		Arguments: args,
-	}
-
-	params, err := json.Marshal(req)
-	if err != nil {
-		return nil, fmt.Errorf("marshal tool call: %w", err)
-	}
-
-	result, rpcErr := c.handler.handleToolsCall(ctx, params)
+	result, rpcErr := c.handler.callToolThroughPipeline(ctx, name, args)
 	if rpcErr != nil {
 		return nil, fmt.Errorf("tool %s: %s", name, rpcErr.Message)
 	}

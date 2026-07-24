@@ -30,6 +30,7 @@ const (
 var slimSurfaceHarnessAliases = map[string]string{
 	"execute_code": "mcpx__execute_code",
 	"search_tools": "mcpx__search_tools",
+	"call_tool":    "mcpx__call_tool",
 	"prompt":       "secret__prompt",
 	"list_refs":    "secret__list_refs",
 	"retrieve":     "mcpx__retrieve",
@@ -222,11 +223,12 @@ func buildCodeModeInstructionsForClient(clientName string, meshEnabled bool) str
 func buildCompactCodeModeInstructions(meshEnabled bool) string {
 	var b strings.Builder
 	b.WriteString("# MCPlexer Code Mode\n\n")
-	b.WriteString("tools/list shows only `mcpx__execute_code`, `mcpx__search_tools`, " +
+	b.WriteString("tools/list shows only `mcpx__call_tool`, `mcpx__execute_code`, `mcpx__search_tools`, " +
 		"`secret__prompt`, `secret__list_refs`, and `mcpx__retrieve`. Everything else — " +
-		"task, mesh, memory, index, skills, downstream MCP servers — is called INSIDE " +
-		"`mcpx__execute_code`. Find it with `mcpx__search_tools` (`detail: \"full\"` for " +
-		"signatures), or `help()` / `help('memory')` inside a snippet.\n\n")
+		"task, mesh, memory, index, skills, downstream MCP servers — is found with " +
+		"`mcpx__search_tools`. Use `mcpx__call_tool` for one small independent call; use " +
+		"`mcpx__execute_code` for batching, dependent calls, polling, or transforms. Fetch " +
+		"signatures with `detail: \"full\"`, or use `help()` / `help('memory')` inside a snippet.\n\n")
 	b.WriteString("Call form — JavaScript, `<namespace>.<tool>(args)`:\n\n")
 	b.WriteString("```js\n")
 	b.WriteString("const snap = customer.get_customer_snapshot({ slug: \"acme\" });\n")
@@ -260,12 +262,13 @@ func buildCodeModeInstructions(profile HarnessProfile, meshEnabled bool) string 
 			"`mcplexer`, then call:\n\n")
 		b.WriteString("1. `mcplexer__search_tools` — discover every callable function " +
 			"(downstream MCP servers + built-in mesh/memory/secret surfaces)\n")
-		b.WriteString("2. `mcplexer__execute_code` — batch downstream calls in one JavaScript snippet\n")
-		b.WriteString("3. `mcplexer__prompt` / `mcplexer__list_refs` — secret handling\n")
-		b.WriteString("4. `mcplexer__retrieve` — expand a `[[ccr key=...]]` compression marker\n\n")
+		b.WriteString("2. `mcplexer__call_tool` — invoke one small independent discovered tool\n")
+		b.WriteString("3. `mcplexer__execute_code` — batch, chain, filter, poll, or transform in JavaScript\n")
+		b.WriteString("4. `mcplexer__prompt` / `mcplexer__list_refs` — secret handling\n")
+		b.WriteString("5. `mcplexer__retrieve` — expand a `[[ccr key=...]]` compression marker\n\n")
 	default:
 		b.WriteString("This server runs in Code Mode. tools/list returns ONLY the built-in " +
-			"`mcpx__execute_code`, `mcpx__search_tools`, `secret__prompt`, and " +
+			"`mcpx__call_tool`, `mcpx__execute_code`, `mcpx__search_tools`, `secret__prompt`, and " +
 			"`secret__list_refs`, plus `mcpx__retrieve` for compression markers. It does NOT list downstream tools or built-in " +
 			"namespaces such as task, mesh, memory, customer, linear, or github, " +
 			"even though many are routed to your session.\n\n")
@@ -282,13 +285,19 @@ func buildCodeModeInstructions(profile HarnessProfile, meshEnabled bool) string 
 		"from the registry, such as `generic-browser-operator`, `playwright-browser`, " +
 		"or `cmux-browser`.\n\n")
 
-	b.WriteString("To call a downstream tool, invoke ")
+	b.WriteString("For one small independent call after discovery, invoke ")
+	if profile == HarnessServerPrefixed {
+		b.WriteString("`mcplexer__call_tool`")
+	} else {
+		b.WriteString("`mcpx__call_tool`")
+	}
+	b.WriteString(" with `{name:\"namespace__tool\", arguments:{...}}`. Use ")
 	if profile == HarnessServerPrefixed {
 		b.WriteString("`mcplexer__execute_code`")
 	} else {
 		b.WriteString("`mcpx__execute_code`")
 	}
-	b.WriteString(" with a JavaScript snippet that calls the function directly:\n\n")
+	b.WriteString(" when calls are batched, dependent, filtered, aggregated, polled, or transformed:\n\n")
 	b.WriteString("```js\n")
 	b.WriteString("const snap = customer.get_customer_snapshot({ slug: \"acme\" });\n")
 	b.WriteString("// snap is the parsed result — access fields directly, no JSON.parse needed.\n")

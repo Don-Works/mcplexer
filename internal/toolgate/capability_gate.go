@@ -124,7 +124,8 @@ func (f CapabilityFeatures) isReadOnly() bool {
 }
 
 // mcpxEntrypointTools is the EXACT set of mcpx__ tools that ride the
-// irreducible always-allow bypass — search/execute plus lossless CCR retrieval. Gating the
+// irreducible always-allow bypass — discovery, the two invocation wrappers,
+// plus lossless CCR retrieval. Gating the
 // bypass to these specific names (rather than the bare "mcpx" namespace
 // segment) means every OTHER mcpx tool (delegate_worker, invoke_model,
 // review_delegation, skill_*, …) falls through to the normal feature /
@@ -135,6 +136,7 @@ func (f CapabilityFeatures) isReadOnly() bool {
 var mcpxEntrypointTools = map[string]bool{
 	"mcpx__execute_code": true,
 	"mcpx__search_tools": true,
+	"mcpx__call_tool":    true,
 	"mcpx__retrieve":     true,
 }
 
@@ -152,7 +154,7 @@ var mcpxEntrypointTools = map[string]bool{
 //  4. feature-derived tool deny => DENY (catches mcpx__delegate_worker /
 //     mcpx__invoke_model when subdelegation is off, and the drift-proof
 //     memory/task write denies, before the mcpx entrypoint bypass).
-//  5. mcpx ENTRYPOINT tools (execute_code / search_tools) => allow
+//  5. mcpx ENTRYPOINT tools (search_tools / call_tool / execute_code / retrieve) => allow
 //     (irreducible) — bypasses ONLY the namespace_deny / namespace_allow /
 //     read-only gates below, never the admin / tool-deny / feature-deny
 //     checks above. NON-entrypoint mcpx tools fall through to the gates.
@@ -181,7 +183,7 @@ func (p *CapabilityProfile) Allows(toolName string, isWriteClass bool) (bool, st
 	}
 	ns := namespaceSegment(toolName)
 	// The worker surface plus CCR recovery is the irreducible entrypoint: it bypasses
-	// the namespace and read-only gates so search/execute/retrieve always work, but
+	// the namespace and read-only gates so search/call/execute/retrieve always work, but
 	// only AFTER the admin + tool-deny + feature-deny checks above have had
 	// their say, and ONLY for the exact entrypoint names (not the whole mcpx
 	// segment — see mcpxEntrypointTools).

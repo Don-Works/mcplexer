@@ -32,6 +32,9 @@ func (h *handler) handleBuiltinCall(
 			ctx, args.Queries, args.Detail, args.Tool, args.Namespaces, args.Limit,
 		)
 
+	case callToolName:
+		return h.handleCallTool(ctx, req.Arguments)
+
 	case "mcpx__search_recipes":
 		return h.handleSearchRecipes(ctx, req.Arguments)
 	case "mcpx__recipe_stats":

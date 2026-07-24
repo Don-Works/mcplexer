@@ -25,13 +25,13 @@ func (h *handler) handleToolsList(
 		return marshalEmptyToolsList(), nil
 	}
 
-	// tools/list returns only builtins (execute_code + search_tools + approval/cache).
-	// Downstream tools are accessible through execute_code's sandbox.
+	// tools/list returns only builtins. Downstream tools are accessible through
+	// call_tool for one independent call or execute_code for composed workflows.
 	tools := h.buildAllBuiltinTools(ctx)
 
 	tools = dedupeToolsByName(tools)
 
-	// Slim-surface filter: keep only the five hand-picked entrypoints in
+	// Slim-surface filter: keep only the six hand-picked entrypoints in
 	// the static tools/list response. Everything else remains callable
 	// (handleToolsCall dispatches by prefix) and discoverable (via
 	// searchableBuiltins → mcpx__search_tools).
@@ -434,27 +434,28 @@ func (h *handler) handleToolsCall(
 		h.recordAuditBlocked(ctx, req.Name, req.Arguments, nil, nil, rpcErr, start)
 		return nil, rpcErr
 	}
-	// Stamp the wrapper call before dispatch so its audit row and every inner
-	// sandbox call share one execution/correlation id. Previously only inner
-	// calls had the id, making wrapper failures impossible to join to causes.
-	if req.Name == "mcpx__execute_code" && executionIDFromContext(ctx) == "" {
+	// Stamp wrapper calls before dispatch so their audit rows and every target
+	// call share one execution/correlation id. Previously only inner calls had
+	// the id, making wrapper failures impossible to join to causes.
+	if (req.Name == "mcpx__execute_code" || req.Name == callToolName) &&
+		executionIDFromContext(ctx) == "" {
 		ctx = withExecutionID(ctx, uuid.NewString())
 	}
 
-	// Block direct external calls to downstream tools — only the sandbox
-	// (internal code-mode calls) and builtins are allowed.
-	if !isInternalCodeModeCall(ctx) && !isBuiltinTool(req.Name) {
+	// Block direct external calls to downstream tools — only gateway-owned
+	// wrappers (Code Mode or call_tool) and builtins are allowed to dispatch a
+	// hidden target.
+	if !isInternalToolCall(ctx) && !isBuiltinTool(req.Name) {
 		result := marshalErrorResult(
-			"Direct tool calls are disabled. Use mcpx__execute_code to call downstream tools.",
+			"Direct tool calls are disabled. Use mcpx__call_tool for one small independent call, or mcpx__execute_code for composed workflows.",
 		)
 		h.recordAuditBlocked(ctx, req.Name, req.Arguments, nil, result, nil, start)
 		return result, nil
 	}
 
-	// Worker allowlist enforcement: workers expose only search_tools and
-	// execute_code at the model layer, so the configured downstream allowlist
-	// must be checked here on the sandbox's inner tool calls.
-	workerOrigin := isInternalCodeModeCall(ctx)
+	// Worker allowlist enforcement: the configured downstream allowlist must be
+	// checked on targets dispatched by either model-facing wrapper.
+	workerOrigin := isInternalToolCall(ctx)
 	if _, scopedWorker := workerFilesystemScopeFromContext(ctx); scopedWorker {
 		workerOrigin = true
 	}
@@ -531,9 +532,9 @@ func (h *handler) handleToolsCall(
 		ToolName: req.Name,
 	}, h.routingClientRoot(ctx), h.routingWorkspaceAncestors(ctx))
 	if err != nil {
-		// For internal code-mode calls, try fuzzy matching on route failure.
+		// For wrapper-dispatched target calls, try fuzzy matching on route failure.
 		_, isolatedCall := workerFilesystemScopeFromContext(ctx)
-		if isInternalCodeModeCall(ctx) && !isolatedCall {
+		if isInternalToolCall(ctx) && !isolatedCall {
 			if corrected, ok := h.tryFuzzyToolRecovery(ctx, req.Name); ok {
 				slog.Info("fuzzy tool name recovery",
 					"original", req.Name, "corrected", corrected)
@@ -617,8 +618,10 @@ func (h *handler) handleToolsCall(
 			if !isTrustedBuiltinResult(req.Name) {
 				result = surfaceStructuredContent(result)
 			}
-			// Piggyback mesh notices on successful builtin results (skip mesh tools themselves).
-			if !isMeshTool(req.Name) {
+			// Piggyback mesh notices on successful builtin results (skip mesh
+			// tools themselves). call_tool returns an already-processed target
+			// envelope, so modifying it again would break direct preservation.
+			if !isMeshTool(req.Name) && req.Name != callToolName {
 				result = h.piggybackMeshNotice(ctx, result)
 			}
 		}
@@ -868,6 +871,7 @@ func (h *handler) builtinToolsExceptCodeExecute(ctx context.Context) []Tool {
 	tools := make([]Tool, 0, 64)
 
 	tools = append(tools, searchToolsDefinition())
+	tools = append(tools, callToolDefinition())
 	tools = append(tools, recipeSearchToolDef())
 	tools = append(tools, recipeStatsToolDef())
 	tools = append(tools, contextCostStatsToolDefinition())
@@ -951,7 +955,7 @@ func (h *handler) builtinToolsExceptCodeExecute(ctx context.Context) []Tool {
 }
 
 // filterToSlimSurface keeps only the slim-surface keep-list. See
-// slimSurfaceKeepers (schema.go) for the rationale of which five tools
+// slimSurfaceKeepers (schema.go) for the rationale of which six tools
 // stay in the static tools/list response.
 func filterToSlimSurface(tools []Tool) []Tool {
 	out := make([]Tool, 0, len(slimSurfaceKeepers))

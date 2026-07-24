@@ -76,7 +76,7 @@ const (
 // preambleForProvider picks the gateway-owned preamble variant that matches
 // how the worker will actually be driven. CLI-backed adapters run their own
 // agent loop with their own native tools and never see the runner's tool
-// list, so the API-provider preamble's two-tool claim is wrong for them.
+// list, so the API-provider preamble's exact three-tool claim is wrong for them.
 // An empty cliVariant falls back to the default — callers that wire only
 // Deps.Preamble keep exactly their previous behaviour.
 func preambleForProvider(provider, defaultVariant, cliVariant string) string {

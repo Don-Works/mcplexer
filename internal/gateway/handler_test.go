@@ -1080,7 +1080,7 @@ func TestHandleToolsList_ReturnsSlimSurface(t *testing.T) {
 	}
 
 	names := toolNames(result)
-	// Default is SlimSurface=true. tools/list returns ONLY the 4 keep-list
+	// Default is SlimSurface=true. tools/list returns ONLY the keep-list
 	// entrypoints. Workflow tools (mesh__*, task__*, memory__*, skill__*,
 	// reload_server, import_openapi, …) move to searchableBuiltins —
 	// callable + discoverable via mcpx__search_tools, but absent here.
@@ -1088,6 +1088,7 @@ func TestHandleToolsList_ReturnsSlimSurface(t *testing.T) {
 	want := []string{
 		"mcpx__execute_code",
 		"mcpx__search_tools",
+		"mcpx__call_tool",
 	}
 	gotSet := map[string]bool{}
 	for _, n := range names {
@@ -1127,7 +1128,7 @@ func TestHandleToolsList_AlwaysReturnsCoreEntrypoints(t *testing.T) {
 
 	names := toolNames(result)
 	// Under slim-surface (the default), the universal entrypoints
-	// execute_code + search_tools must always be present. Without these
+	// search plus both invocation wrappers must always be present. Without these
 	// the agent loses access to downstream tools entirely.
 	found := map[string]bool{}
 	for _, n := range names {
@@ -1138,6 +1139,9 @@ func TestHandleToolsList_AlwaysReturnsCoreEntrypoints(t *testing.T) {
 	}
 	if !found["mcpx__search_tools"] {
 		t.Errorf("missing mcpx__search_tools, got %v", names)
+	}
+	if !found["mcpx__call_tool"] {
+		t.Errorf("missing mcpx__call_tool, got %v", names)
 	}
 }
 
@@ -1187,9 +1191,9 @@ func TestHandleToolsList_NoDownstreamServers(t *testing.T) {
 	}
 
 	names := toolNames(result)
-	// Still gets execute_code + search_tools even with no downstream servers.
-	if len(names) < 2 {
-		t.Fatalf("expected at least 2 tools (execute_code + search_tools), got %v", names)
+	// Still gets discovery plus both invocation wrappers with no downstream servers.
+	if len(names) < 3 {
+		t.Fatalf("expected at least 3 core tools, got %v", names)
 	}
 }
 
@@ -1224,8 +1228,8 @@ func TestHandleToolsList_NoDownstreamToolsExposed(t *testing.T) {
 	for _, n := range names {
 		found[n] = true
 	}
-	if !found["mcpx__execute_code"] || !found["mcpx__search_tools"] {
-		t.Errorf("expected execute_code and search_tools, got %v", names)
+	if !found["mcpx__execute_code"] || !found["mcpx__search_tools"] || !found["mcpx__call_tool"] {
+		t.Errorf("expected discovery and both invocation wrappers, got %v", names)
 	}
 }
 

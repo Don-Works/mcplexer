@@ -15,7 +15,7 @@ func TestPreambleForProvider(t *testing.T) {
 	}{
 		// CLI-backed: the adapter shells out to a coding agent that runs its
 		// own loop and never sees the runner's tool list, so the API
-		// preamble's two-tool claim would be false.
+		// preamble's exact three-tool claim would be false.
 		{"pi_cli", cli},
 		{"claude_cli", cli},
 		{"opencode_cli", cli},

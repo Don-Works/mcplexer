@@ -12,7 +12,7 @@ func slimToolsEnabled() bool {
 }
 
 // slimSurfaceEnvEnabled returns true unless MCPLEXER_SLIM_SURFACE is explicitly "false".
-// Defaults true: only the five keep-list tools appear in the static tools/list response.
+// Defaults true: only the six keep-list tools appear in the static tools/list response.
 func slimSurfaceEnvEnabled() bool {
 	return strings.ToLower(os.Getenv("MCPLEXER_SLIM_SURFACE")) != "false"
 }
@@ -31,11 +31,12 @@ func pureModeEnvEnabled() bool {
 // slimSurfaceKeepers is the hand-picked set of built-in tool names that
 // remain in the static tools/list response when SlimSurface is on.
 // Everything else mcplexer-namespaced moves to searchableBuiltins —
-// discoverable via mcpx__search_tools, callable via mcpx__execute_code
-// or direct dispatch, but absent from the agent's top-level inventory.
+// discoverable via mcpx__search_tools, callable via mcpx__call_tool or
+// mcpx__execute_code, but absent from the agent's top-level inventory.
 var slimSurfaceKeepers = map[string]struct{}{
 	"mcpx__execute_code": {},
 	"mcpx__search_tools": {},
+	"mcpx__call_tool":    {},
 	"secret__prompt":     {},
 	"secret__list_refs":  {},
 	// mcpx__retrieve must stay top-level visible even under the slim surface:
