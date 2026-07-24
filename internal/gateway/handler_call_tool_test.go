@@ -143,6 +143,29 @@ func TestHandleToolsCall_CallToolRejectsRecursiveAliases(t *testing.T) {
 	}
 }
 
+func TestHandleToolsCall_CallToolRejectsExecuteCodeAliases(t *testing.T) {
+	h, _ := newTestHandler(&mockToolLister{tools: map[string]json.RawMessage{}}, nil)
+	for _, target := range []string{
+		"mcpx__execute_code",
+		"execute_code",
+		"mcplexer__execute_code",
+		"mcplexer__mcpx__execute_code",
+	} {
+		t.Run(target, func(t *testing.T) {
+			_, rpcErr := h.handleToolsCall(
+				context.Background(),
+				callToolRequest(t, target, json.RawMessage(`{"code":"print('nested')"}`)),
+			)
+			if rpcErr == nil || rpcErr.Code != CodeInvalidParams {
+				t.Fatalf("nested execute target error = %+v, want invalid params", rpcErr)
+			}
+			if !strings.Contains(rpcErr.Message, "call mcpx__execute_code directly") {
+				t.Fatalf("nested execute target error = %q", rpcErr.Message)
+			}
+		})
+	}
+}
+
 func TestHandleToolsCall_CallToolDoesNotEnableDirectTargetCalls(t *testing.T) {
 	h, lister := newArrayResultHandler(t, json.RawMessage(
 		`{"content":[{"type":"text","text":"unexpected"}],"isError":false}`,

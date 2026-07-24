@@ -22,7 +22,7 @@ func callToolDefinition() Tool {
 			"parallel work, retries/polling, or any result processing. The target traverses the same " +
 			"routing, worker/skill gates, admin and scope policy, approvals, downstream dispatch, " +
 			"sanitization, compression, and audit pipeline as a Code Mode inner call. This wrapper " +
-			"cannot invoke itself and does not enable direct top-level downstream calls.",
+			"cannot invoke itself or mcpx__execute_code and does not enable direct top-level downstream calls.",
 		InputSchema: json.RawMessage(`{
 			"type": "object",
 			"additionalProperties": false,
@@ -98,6 +98,12 @@ func (h *handler) handleCallTool(
 		return nil, &RPCError{
 			Code:    CodeInvalidParams,
 			Message: "mcpx__call_tool cannot invoke itself; call the discovered target directly through this wrapper",
+		}
+	}
+	if target == codeExecuteToolName {
+		return nil, &RPCError{
+			Code:    CodeInvalidParams,
+			Message: "mcpx__call_tool cannot invoke mcpx__execute_code; call mcpx__execute_code directly at the top level",
 		}
 	}
 
