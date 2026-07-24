@@ -89,22 +89,6 @@ func monitoringCommitArgsJSON(t *testing.T, severity string) string {
 	return string(raw)
 }
 
-// observeTemplateAt moves tpl-A's last_seen, which is what
-// monitoringTemplatesForCommit derives observedAt from. observedAt is the
-// clock the notification policy runs on, so this is how the test drives
-// incident age deterministically without touching the wall clock.
-func observeTemplateAt(t *testing.T, h *handler, at time.Time) {
-	t.Helper()
-	tpl, err := h.store.GetLogTemplate(context.Background(), "tpl-A")
-	if err != nil {
-		t.Fatalf("get tpl-A: %v", err)
-	}
-	tpl.LastSeen = at
-	if _, err := h.store.UpsertLogTemplate(context.Background(), tpl, 1); err != nil {
-		t.Fatalf("upsert tpl-A at %s: %v", at, err)
-	}
-}
-
 func TestMonitoringBoundedTriageSeverity(t *testing.T) {
 	templates := []*store.LogTemplate{
 		{Severity: store.SeverityInfo},

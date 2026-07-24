@@ -23,5 +23,4 @@ linters:
         linters:
           - errcheck
 
-output:
-  uniq-by-line: true
+# golangci-lint v2.x removed output.uniq-by-line; leave defaults.
