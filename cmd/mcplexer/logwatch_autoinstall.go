@@ -56,16 +56,38 @@ const (
 	// tail of one tick is still surfaced by the next tick's digest even though
 	// it didn't itself trip this gate. Repeat observations are absorbed by the
 	// worker's canonical-task dedupe (task__list meta_match), not re-filed.
+	//
+	// Optional hook.params.min_pending_severity (e.g. "error") further gates
+	// spend for high-backlog workspaces: the tick only proceeds when the
+	// durable pending queue still has at least one template at that floor.
+	// Used by Embroidery after its historical info/warn flood; central clients
+	// leave the param unset so warn novelty still gets classified.
 	logWatchGate = `const s = monitoring.stats({window: "10m"});
 const forced = hook.run.trigger_kind === "mesh" || hook.run.trigger_kind === "manual";
-if (s.pending_templates === 0 && !s.evidence_gap && !forced) abort("quiet");`
+if (s.pending_templates === 0 && !s.evidence_gap && !forced) abort("quiet");
+const minSev = (hook.params && hook.params.min_pending_severity) || "";
+if (minSev && !forced) {
+  const d = monitoring.digest({window: "15m", budget_tokens: 200, max_samples: 1, pending_only: true, min_severity: String(minSev)});
+  const text = typeof d === "string" ? d : (d && d.text) || "";
+  if (!String(text).includes("template_id:")) abort("quiet below " + minSev);
+}`
 
 	// A model response is not an effect. The post hook admits no-work manual /
 	// mesh runs when the queue is genuinely empty, but blocks a blank or
-	// reasoning-only success while any pending template remains.
+	// reasoning-only success while any pending template remains. When
+	// min_pending_severity is set, only pending items at that floor count.
 	logWatchPostGate = `const e = monitoring.triage_effect({run_id: hook.run.id});
 const s = monitoring.stats({window: "10m"});
-if (!e.committed && s.pending_templates > 0) abort("no monitoring triage effect committed");`
+if (!e.committed && s.pending_templates > 0) {
+  const minSev = (hook.params && hook.params.min_pending_severity) || "";
+  if (minSev) {
+    const d = monitoring.digest({window: "15m", budget_tokens: 200, max_samples: 1, pending_only: true, min_severity: String(minSev)});
+    const text = typeof d === "string" ? d : (d && d.text) || "";
+    if (String(text).includes("template_id:")) abort("no monitoring triage effect committed");
+  } else {
+    abort("no monitoring triage effect committed");
+  }
+}`
 )
 
 func autoInstallLogWatchEnabled() bool {
