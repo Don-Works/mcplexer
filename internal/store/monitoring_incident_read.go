@@ -137,6 +137,16 @@ const (
 	MonitoringOccurrenceListMaxLimit = 200
 )
 
+// MonitoringTitleRewriteStore rewrites novelty-placeholder titles into
+// evidence-derived operator headlines. Additive interface so read-only mocks
+// do not need to grow a write method.
+type MonitoringTitleRewriteStore interface {
+	// RewriteGenericMonitoringTitles updates incidents (and linked tasks)
+	// whose titles still look like "new error-class log template…". Returns
+	// the number of incidents rewritten. limit caps the scan (0→200, max 1000).
+	RewriteGenericMonitoringTitles(ctx context.Context, workspaceID string, limit int) (int, error)
+}
+
 // MonitoringIncidentReadStore is the operator read surface. It is a separate
 // interface from MonitoringStore for the same reason
 // MonitoringExpectedSignalStore is: folding three read methods into the big

@@ -23,7 +23,7 @@ import {
   NextUpRow,
   QuickLink,
   VitalsTile,
-  WorkspaceBreakdown,
+  WorkspaceParetoChart,
 } from './TasksLandingTiles'
 
 const NEXT_UP_LIMIT = 5
@@ -220,7 +220,7 @@ function TasksLandingPageBody() {
         </div>
       </div>
 
-      <WorkspaceBreakdown
+      <WorkspaceParetoChart
         tasks={openTasks}
         workspaceNameByID={workspaceNameByID}
       />

@@ -73,6 +73,10 @@ func ImproveMonitoringTitle(title, body, sample, masked string) string {
 	if sig := OperatorSignature(firstEvidenceLine(body), ""); sig != "" {
 		return truncateRunes(sig, operatorTitleLimit)
 	}
+	// Masked template text is still more actionable than the novelty placeholder.
+	if m := strings.TrimSpace(masked); m != "" && !IsGenericMonitoringTitle(m) {
+		return truncateRunes(m, operatorTitleLimit)
+	}
 	if title != "" {
 		return truncateRunes(title, operatorTitleLimit)
 	}

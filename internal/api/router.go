@@ -768,6 +768,14 @@ func NewRouter(deps RouterDeps) http.Handler {
 	mux.HandleFunc("GET /api/v1/monitoring/incidents", monI.list)
 	mux.HandleFunc("GET /api/v1/monitoring/incidents/{id}", monI.get)
 
+	// One-shot rewrite of novelty-placeholder incident titles into evidence
+	// signatures. Additive type assertion keeps older stores building.
+	monTR := &monitoringTitleRewriteHandler{}
+	if ts, ok := deps.Store.(store.MonitoringTitleRewriteStore); ok {
+		monTR.store = ts
+	}
+	mux.HandleFunc("POST /api/v1/monitoring/rewrite-titles", monTR.rewrite)
+
 	// Operator actions on a live incident (migration 150): acknowledge, silence
 	// (bounded, auto-expiring), dismiss, and the "what is muted right now" read.
 	// Same additive type assertion as the reads above — a store without the

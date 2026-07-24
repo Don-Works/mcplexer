@@ -4,8 +4,19 @@
 // are tuned for task-specific signals (open vs doing vs blocked
 // counts, milestone progress, offer badges).
 
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { ArrowUpRight, Folder, ListTodo } from 'lucide-react'
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  Line,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts'
 import { Card, CardContent } from '@/components/ui/card'
 import { EmptyState } from '@/components/ui/empty-state'
 import { Badge } from '@/components/ui/badge'
@@ -521,6 +532,140 @@ function aggregateByWorkspace(
     else if (isWorkingStatus(t.status)) row.doing += 1
   }
   return Array.from(byId.values()).sort((a, b) => b.open - a.open)
+}
+
+// WorkspaceParetoChart — Pareto (sorted bar + cumulative % line) of
+// open tasks by workspace. Makes the 80/20 instantly visible: a few
+// workspaces hold most of the open tasks. Click-through on bars.
+export function WorkspaceParetoChart({
+  tasks,
+  workspaceNameByID,
+}: {
+  tasks: Task[]
+  workspaceNameByID: Record<string, string>
+}) {
+  const navigate = useNavigate()
+  const rows = aggregateByWorkspace(tasks, workspaceNameByID)
+  if (rows.length === 0) return null
+
+  const total = rows.reduce((s, r) => s + r.open, 0)
+  let cumulative = 0
+  const data = rows.map((r) => {
+    cumulative += r.open
+    return {
+      id: r.id,
+      name: r.name.length > 16 ? r.name.slice(0, 15) + '…' : r.name,
+      fullName: r.name,
+      count: r.open,
+      cumulativePct: Math.round((cumulative / total) * 100),
+    }
+  })
+
+  return (
+    <Card className="overflow-hidden">
+      <CardContent className="space-y-3 p-4">
+        <div className="flex items-center justify-between">
+          <h2 className="text-[13px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+            Tasks by workspace
+          </h2>
+          <span className="font-mono text-[11px] tabular-nums text-muted-foreground/60">
+            {total} open
+          </span>
+        </div>
+        <div className="h-[280px] w-full">
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart
+              data={data}
+              margin={{ top: 8, right: 48, left: 0, bottom: 0 }}
+              onClick={(e) => {
+                const idx = typeof e?.activeTooltipIndex === 'number' ? e.activeTooltipIndex : undefined
+                const item = idx != null ? data[idx] : undefined
+                if (item?.id) navigate(`/tasks/all?workspace=${encodeURIComponent(item.id)}`)
+              }}
+            >
+              <CartesianGrid
+                strokeDasharray="3 3"
+                stroke="hsl(224 12% 18%)"
+                vertical={false}
+              />
+              <XAxis
+                dataKey="name"
+                tick={{ fontSize: 10, fill: 'hsl(220 10% 55%)', fontFamily: 'JetBrains Mono, monospace' }}
+                axisLine={{ stroke: 'hsl(224 12% 18%)' }}
+                tickLine={false}
+                interval={data.length > 15 ? 'preserveStartEnd' : 0}
+                angle={data.length > 10 ? -45 : 0}
+                textAnchor={data.length > 10 ? 'end' : 'middle'}
+                height={data.length > 10 ? 60 : 30}
+              />
+              <YAxis
+                yAxisId="count"
+                tick={{ fontSize: 10, fill: 'hsl(220 10% 55%)', fontFamily: 'JetBrains Mono, monospace' }}
+                axisLine={false}
+                tickLine={false}
+                width={32}
+              />
+              <YAxis
+                yAxisId="pct"
+                orientation="right"
+                domain={[0, 100]}
+                tick={{ fontSize: 10, fill: 'hsl(38 92% 55%)', fontFamily: 'JetBrains Mono, monospace' }}
+                axisLine={false}
+                tickLine={false}
+                width={36}
+                tickFormatter={(v: number) => `${v}%`}
+              />
+              <Tooltip content={<ParetoTooltip />} cursor={{ fill: 'hsl(224 14% 9%)' }} />
+              <Bar
+                yAxisId="count"
+                dataKey="count"
+                radius={[2, 2, 0, 0]}
+                maxBarSize={40}
+                cursor="pointer"
+              >
+                {data.map((_, i) => (
+                  <Cell
+                    key={i}
+                    fill={i === 0 ? '#22d3ee' : i < 3 ? 'hsl(217 95% 55%)' : 'hsl(217 95% 55% / 0.6)'}
+                  />
+                ))}
+              </Bar>
+              <Line
+                yAxisId="pct"
+                type="monotone"
+                dataKey="cumulativePct"
+                stroke="#f59e0b"
+                strokeWidth={2}
+                dot={{ r: 3, fill: '#f59e0b', stroke: '#f59e0b' }}
+                activeDot={{ r: 5 }}
+              />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+function ParetoTooltip({
+  active,
+  payload,
+}: {
+  active?: boolean
+  payload?: Array<{ payload: { fullName: string; count: number; cumulativePct: number } }>
+}) {
+  if (!active || !payload?.length) return null
+  const d = payload[0].payload
+  return (
+    <div className="border border-border bg-card px-3 py-2 shadow-lg">
+      <p className="text-[12px] font-medium text-foreground">{d.fullName}</p>
+      <p className="mt-1 font-mono text-[11px] tabular-nums text-muted-foreground">
+        <span className="text-foreground">{d.count}</span> open
+        <span className="mx-1.5 text-muted-foreground/40">·</span>
+        <span className="text-amber-300">{d.cumulativePct}%</span> cumulative
+      </p>
+    </div>
+  )
 }
 
 // PriorityHint — narrow widget for the "next to look at" panel.
