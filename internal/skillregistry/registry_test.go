@@ -639,13 +639,22 @@ func TestUsingMCPlexerSeedGuidesAdaptiveInvocation(t *testing.T) {
 	}
 	for _, contract := range []string{
 		"`mcpx__call_tool`",
-		"One target, independent, result returned unchanged",
+		"Rule of thumb",
+		"map/filter/pick fields",
+		"index__status",
+		"memory__save",
 		"More than one call",
 		"`mcpx__call_tool` absent",
 		"Do not turn a batch into repeated `mcpx__call_tool` round trips",
+		"const mesh = mesh.receive",
+		"task__get",
+		"_call_tool_hint",
 	} {
 		if !strings.Contains(body, contract) {
 			t.Errorf("using-mcplexer seed missing adaptive guidance %q", contract)
 		}
+	}
+	if strings.Contains(body, `{"name":"task__get","arguments":{"id":"..."}`) {
+		t.Error("using-mcplexer still uses task__get as the primary call_tool example")
 	}
 }

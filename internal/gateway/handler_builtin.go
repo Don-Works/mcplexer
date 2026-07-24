@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/don-works/mcplexer/internal/approval"
+	"github.com/don-works/mcplexer/internal/codemode"
 	"github.com/don-works/mcplexer/internal/downstream"
 	"github.com/don-works/mcplexer/internal/routing"
 	"github.com/don-works/mcplexer/internal/store"
@@ -337,11 +338,37 @@ func (h *handler) handleBuiltinCall(
 		return h.handleDownstreamEventsBatch(ctx, req.Arguments)
 
 	default:
+		// Namespace may have routed here (e.g. memory__*) while the
+		// member was a typo — surface did-you-mean like no-route misses.
 		return nil, &RPCError{
 			Code:    CodeMethodNotFound,
-			Message: fmt.Sprintf("unknown built-in: %s", req.Name),
+			Message: h.unknownBuiltinMessage(ctx, req.Name),
 		}
 	}
+}
+
+// unknownBuiltinMessage is the recovery text for a routed-but-missing
+// built-in name (typo on a real namespace). Prefer did-you-mean over a
+// bare "unknown built-in" so call_tool and Code Mode get the same DX.
+func (h *handler) unknownBuiltinMessage(ctx context.Context, name string) string {
+	msg := fmt.Sprintf("unknown built-in: %s", name)
+	allTools, err := h.gatherCodeModeTools(ctx)
+	if err != nil || len(allTools) == 0 {
+		return msg + ". Discover tools with mcpx__search_tools."
+	}
+	names := make([]string, 0, len(allTools))
+	for _, t := range allTools {
+		if t.Name != "" {
+			names = append(names, t.Name)
+		}
+	}
+	if sug := codemode.DidYouMean(name, names, 3); len(sug) > 0 {
+		return msg + ". Did you mean: " + strings.Join(sug, ", ") + "?"
+	}
+	if matched, ok := fuzzyMatchTool(name, allTools); ok {
+		return msg + ". Did you mean: " + matched.Name + "?"
+	}
+	return msg + ". Discover tools with mcpx__search_tools."
 }
 
 func (h *handler) handleFlushCache(serverID string) (json.RawMessage, *RPCError) {

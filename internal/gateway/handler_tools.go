@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/don-works/mcplexer/internal/cache"
+	"github.com/don-works/mcplexer/internal/codemode"
 	"github.com/don-works/mcplexer/internal/downstream"
 	"github.com/don-works/mcplexer/internal/routing"
 	"github.com/google/uuid"
@@ -566,6 +567,9 @@ func (h *handler) handleToolsCall(
 		}
 		if err != nil {
 			rpcErr := mapRouteError(err)
+			if errors.Is(err, routing.ErrNoRoute) {
+				rpcErr.Message = h.noRouteMessage(ctx, req.Name)
+			}
 			h.recordAuditBlocked(ctx, req.Name, req.Arguments, nil, nil, rpcErr, start)
 			return nil, rpcErr
 		}
@@ -1154,6 +1158,35 @@ func (h *handler) tryFuzzyToolRecovery(ctx context.Context, name string) (string
 		return "", false
 	}
 	return matched.Name, true
+}
+
+// noRouteMessage builds a recovery-friendly route-miss error. Includes
+// did-you-mean suggestions when a close tool name exists; otherwise points
+// the model at mcpx__search_tools. Used for both Code Mode inner calls and
+// mcpx__call_tool targets (both set isInternalToolCall).
+func (h *handler) noRouteMessage(ctx context.Context, name string) string {
+	msg := fmt.Sprintf("no matching route for %q", name)
+	allTools, err := h.gatherCodeModeTools(ctx)
+	if err != nil || len(allTools) == 0 {
+		return msg + ". Discover tools with mcpx__search_tools."
+	}
+	names := make([]string, 0, len(allTools))
+	for _, t := range allTools {
+		if t.Name != "" {
+			names = append(names, t.Name)
+		}
+	}
+	// Prefer multi-suggestion ranking (codemode.DidYouMean) over single-best
+	// fuzzyMatchTool so "list_issu" can surface list_issues, list_issue_comments.
+	if sug := codemode.DidYouMean(name, names, 3); len(sug) > 0 {
+		return msg + ". Did you mean: " + strings.Join(sug, ", ") + "?"
+	}
+	// Fallback: normalized exact/near match that DidYouMean's distance
+	// threshold might miss for long names.
+	if matched, ok := fuzzyMatchTool(name, allTools); ok {
+		return msg + ". Did you mean: " + matched.Name + "?"
+	}
+	return msg + ". Discover tools with mcpx__search_tools."
 }
 
 // isReadOnlyTool checks the tool's annotations for readOnlyHint.

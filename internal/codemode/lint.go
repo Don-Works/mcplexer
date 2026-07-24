@@ -179,12 +179,83 @@ func LintWithTools(code string, toolNames []string) LintResult {
 	// matches inside literals are skipped.
 	if len(toolNames) > 0 {
 		warnings = append(warnings, lintToolCallTypos(code, lines, toolNames)...)
+		// Namespace shadowing: `const mesh = mesh.receive(...)` hits TDZ
+		// and is the #1 self-inflicted Code Mode bug. Flag any local
+		// binding that collides with a registered tool namespace.
+		warnings = append(warnings, lintNamespaceShadowing(code, lines, toolNames)...)
 	}
 
 	return LintResult{
 		Warnings: warnings,
 		Code:     code,
 	}
+}
+
+// lintNamespaceShadowing warns when a local binding reuses a registered
+// tool namespace name (e.g. const mesh = mesh.receive(...)). Severity is
+// warning so execution still proceeds; the runtime TDZ error remains the
+// hard failure, but the lint message names the fix before re-run.
+func lintNamespaceShadowing(code string, lines []string, toolNames []string) []LintWarning {
+	namespaces, _ := indexToolNames(toolNames)
+	if len(namespaces) == 0 {
+		return nil
+	}
+	bindings := collectLocalBindings(code)
+	if len(bindings) == 0 {
+		return nil
+	}
+
+	// Map binding name → first line (best-effort via regex scan) for
+	// actionable line numbers. AST collection does not retain offsets.
+	bindingLines := map[string]int{}
+	for _, loc := range findAllLocations(reLocalBinding, code) {
+		if insideStringLiteral(code, loc) {
+			continue
+		}
+		m := reLocalBinding.FindStringSubmatch(code[loc:])
+		if len(m) < 2 {
+			continue
+		}
+		name := m[1]
+		if _, ok := bindings[name]; !ok {
+			continue
+		}
+		if _, seen := bindingLines[name]; seen {
+			continue
+		}
+		bindingLines[name] = lineNumber(lines, loc)
+	}
+
+	var out []LintWarning
+	// Stable order for tests.
+	names := make([]string, 0, len(bindings))
+	for name := range bindings {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		if _, ok := namespaces[name]; !ok {
+			continue
+		}
+		if _, ok := sandboxGlobals[name]; ok {
+			continue
+		}
+		line := bindingLines[name]
+		if line == 0 {
+			line = 1
+		}
+		out = append(out, LintWarning{
+			Line: line,
+			Message: fmt.Sprintf(
+				"local binding %q shadows tool namespace %q — rename the variable "+
+					"(e.g. const inbox = mesh.receive(...), not const mesh = mesh.receive(...)). "+
+					"Shadowing causes ReferenceError (TDZ) or silently hides the namespace.",
+				name, name,
+			),
+			Severity: "warning",
+		})
+	}
+	return out
 }
 
 func looksLikeUntrustedContentParser(code string) bool {

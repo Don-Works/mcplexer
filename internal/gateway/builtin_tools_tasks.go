@@ -73,12 +73,17 @@ func taskToolDefinitions() []Tool {
 			}),
 		},
 		{
-			Name:        "task__get",
-			Description: "Fetch one task by id. Response carries the task, its notes, derived `composed_by` (parent epics) + `composes` (child tasks), plus a slim `known_assignees` directory (the row already carries its own status + tags, so the workspace status/tag vocab is omitted on single-row reads to save tokens — call `task__list` when you need it).",
+			Name: "task__get",
+			Description: "Fetch one task by id. Default is preview (`task_view:\"preview\"`): task row without full status_history " +
+				"(count only), notes as notes_count + notes_preview (last 3, body truncated), composed_by/composes ids, and known_assignees. " +
+				"Pass `full: true` for the historical hydrate (all notes up to 100 + full status_history). " +
+				"Prefer preview (or execute_code + print selected fields) unless you need every note body. " +
+				"Workspace status/tag vocab is omitted on single-row reads — call task__list when you need it.",
 			InputSchema: json.RawMessage(`{
 				"type": "object",
 				"properties": {
 					"id": {"type": "string"},
+					"full": {"type": "boolean", "description": "Return full notes + status_history (historical hydrate). Default: false (preview)."},
 					"workspace_id": {"type": "string", "description": "Override session-bound workspace; useful for concierge-style routing across workspaces. Omit to use the session's CWD-bound workspace."}
 				},
 				"required": ["id"]

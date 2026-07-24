@@ -9,7 +9,7 @@ import (
 // harnesses. The canonical full body lives in
 // internal/skillregistry/seeds/using-mcplexer.md and is materialized to
 // ~/.claude/skills/using-mcplexer/SKILL.md on Claude install only.
-const usingMcplexerPointer = `Use the 6 top-level tools when available: mcpx__search_tools for discovery; mcpx__call_tool for one small independent call; mcpx__execute_code for batches, dependencies, filtering, polling, or transforms; secret__prompt/list_refs; and mcpx__retrieve for compression markers. On an older gateway without mcpx__call_tool, use mcpx__execute_code for every invocation.
+const usingMcplexerPointer = `Use the 6 top-level tools when available: mcpx__search_tools for discovery; mcpx__call_tool for one small independent call whose entire result is the answer; mcpx__execute_code for batches, dependencies, filtering, polling, or transforms; secret__prompt/list_refs; and mcpx__retrieve for compression markers. On an older gateway without mcpx__call_tool, use mcpx__execute_code for every invocation. Rule of thumb: if you would map/filter/pick fields, use execute_code and print only what you need (call_tool has no print()). Prefer execute_code for hydrates (task__get notes/history — preview is default; full:true only when needed) and multi-call work.
 
 For the full contract, fetch mcpx.skill_get({name:"using-mcplexer"}) directly. Use mcpx.skill_search only for unknown/deeper playbooks: mcplexer-features / mcplexer-tasks / agent-mesh / token-preserving-delegation.
 
@@ -34,7 +34,8 @@ func Render(k HarnessKey, version int) string {
 	if k == Claude {
 		body = fmt.Sprintf("using-mcplexer skill (v%d) installed.\n\n"+
 			"Full skill body: ~/.claude/skills/using-mcplexer/SKILL.md (materialized from registry v%d).\n\n"+
-			"Use the 6 top-level tools when available: mcpx__search_tools for discovery; mcpx__call_tool for one small independent call; mcpx__execute_code for batches, dependencies, filtering, polling, or transforms; secret__prompt / secret__list_refs; and mcpx__retrieve for compression markers. On an older gateway without mcpx__call_tool, use mcpx__execute_code for every invocation.\n"+
+			"Use the 6 top-level tools when available: mcpx__search_tools for discovery; mcpx__call_tool for one small independent call whose entire result is the answer; mcpx__execute_code for batches, dependencies, filtering, polling, or transforms; secret__prompt / secret__list_refs; and mcpx__retrieve for compression markers. On an older gateway without mcpx__call_tool, use mcpx__execute_code for every invocation.\n"+
+			"Rule of thumb: if you would map/filter/pick fields, use execute_code and print only what you need (call_tool has no print()). Prefer execute_code for hydrates and multi-call work.\n"+
 			"Fetch deeper playbooks via the skill registry on demand.\n\n"+
 			"Code index: ask it BEFORE reading the repo — index.context({query, budget_tokens}) returns a ranked pack with snippets; index.search({query, limit}) finds citation-ready implementation source; index.symbols finds definitions; index.map_failure maps failures. Lexical search is always available; semantics are explicit and local-only.\n\n"+
 			"Browser work: search for brw/browser tools and prefer brw when installed; fetch an installed browser skill such as generic-browser-operator, playwright-browser, or cmux-browser for non-trivial workflows.\n\n"+
@@ -47,7 +48,8 @@ func Render(k HarnessKey, version int) string {
 	if k == OpenCode {
 		body = fmt.Sprintf("using-mcplexer skill (v%d) installed.\n\n"+
 			"Full skill body: ~/.config/opencode/skills/using-mcplexer/SKILL.md (materialized from registry v%d).\n\n"+
-			"Use the 6 top-level tools when available: mcpx__search_tools for discovery; mcpx__call_tool for one small independent call; mcpx__execute_code for batches, dependencies, filtering, polling, or transforms; secret__prompt / secret__list_refs; and mcpx__retrieve for compression markers. On an older gateway without mcpx__call_tool, use mcpx__execute_code for every invocation.\n"+
+			"Use the 6 top-level tools when available: mcpx__search_tools for discovery; mcpx__call_tool for one small independent call whose entire result is the answer; mcpx__execute_code for batches, dependencies, filtering, polling, or transforms; secret__prompt / secret__list_refs; and mcpx__retrieve for compression markers. On an older gateway without mcpx__call_tool, use mcpx__execute_code for every invocation.\n"+
+			"Rule of thumb: if you would map/filter/pick fields, use execute_code and print only what you need (call_tool has no print()). Prefer execute_code for hydrates and multi-call work.\n"+
 			"Fetch deeper playbooks via the skill registry on demand.\n\n"+
 			"Code index: ask it BEFORE reading the repo — index.context({query, budget_tokens}) returns a ranked pack with snippets; index.search({query, limit}) finds citation-ready implementation source; index.symbols finds definitions; index.map_failure maps failures. Lexical search is always available; semantics are explicit and local-only.\n\n"+
 			"Browser work: search for brw/browser tools and prefer brw when installed; fetch an installed browser skill such as generic-browser-operator, playwright-browser, or cmux-browser for non-trivial workflows.\n\n"+

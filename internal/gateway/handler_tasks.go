@@ -756,7 +756,7 @@ func (h *handler) handleTaskList(
 	} else {
 		envelope["tasks"] = taskListPreviews(ctx, rows, h.store)
 		envelope["task_view"] = "preview"
-		envelope["hydrate"] = "task__get({id}) or task__list({full:true})"
+		envelope["hydrate"] = "task__get({id}) for preview; task__get({id, full:true}) or task__list({full:true}) for full hydrate"
 	}
 	// Aging signal — non-blocking, only when something is actually
 	// stale. Same advisory posture as coordination_warnings.
@@ -921,6 +921,8 @@ func (h *handler) handleTaskGet(
 	var args struct {
 		ID          string `json:"id"`
 		WorkspaceID string `json:"workspace_id"`
+		Full        *bool  `json:"full"`
+		Compact     *bool  `json:"compact"`
 	}
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return nil, &RPCError{Code: CodeInvalidParams, Message: err.Error()}
@@ -950,7 +952,19 @@ func (h *handler) handleTaskGet(
 		}
 		return marshalErrorResult(fmt.Sprintf("Get failed: %v", err)), nil
 	}
-	return h.marshalTaskWithEnvelope(ctx, t, t.WorkspaceID, envelopeModeSingle)
+	// Default is preview (notes count + recent previews, status_history
+	// count only). Opt-in full:true restores historical full notes + history
+	// — matches write-path compact default and keeps call_tool hydrates cheap.
+	shape := responseShapeCompact
+	if args.Full != nil && *args.Full {
+		shape = responseShapeFull
+	} else if args.Compact != nil && !*args.Compact {
+		shape = responseShapeFull
+	}
+	if shape == responseShapeFull {
+		return h.marshalTaskWithEnvelope(ctx, t, t.WorkspaceID, envelopeModeSingle)
+	}
+	return h.marshalTaskGetPreview(ctx, t, t.WorkspaceID)
 }
 
 // handleTaskSetVisibility is the model-facing audience control. The task
@@ -1219,6 +1233,7 @@ func pickResponseShape(args map[string]json.RawMessage) responseShape {
 // notes + composed_by (derived from meta) + optional discovery
 // envelope per `mode`. workspace_id is intentionally omitted from the
 // envelope — the caller already supplied it via session CWD binding.
+// Used by task__get({full:true}) and full write responses.
 func (h *handler) marshalTaskWithEnvelope(ctx context.Context, t *store.Task, wsID string, mode envelopeMode) (json.RawMessage, *RPCError) {
 	notes, _ := h.tasksSvc.ListNotes(ctx, wsID, t.ID, 100)
 	composedBy := tasks.ReadMetaList(t.Meta, "composed_by")
@@ -1240,6 +1255,68 @@ func (h *handler) marshalTaskWithEnvelope(ctx context.Context, t *store.Task, ws
 	envelope["notes"] = nonNilTaskNotes(notes)
 	envelope["composed_by"] = nonNilStrings(composedBy)
 	envelope["composes"] = nonNilStrings(composes)
+	envelope["task_view"] = "full"
+	return marshalJSONResult(envelope)
+}
+
+const (
+	taskGetNotesPreviewCount = 3
+	taskGetNotePreviewBytes  = 280
+)
+
+// taskNotePreview is a bounded note row for task__get preview mode.
+type taskNotePreview struct {
+	ID        string    `json:"id"`
+	Author    string    `json:"author_kind,omitempty"`
+	Body      string    `json:"body_preview"`
+	BodyBytes int       `json:"body_bytes"`
+	Truncated bool      `json:"body_truncated,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// marshalTaskGetPreview is the default task__get shape: full task row
+// without status_history body (count only), notes as count + recent
+// previews, sibling ids, and a hydrate hint for full:true. Keeps direct
+// call_tool hydrates from dumping multi-KB note histories into context.
+func (h *handler) marshalTaskGetPreview(ctx context.Context, t *store.Task, wsID string) (json.RawMessage, *RPCError) {
+	// Fetch enough notes to know the true count + build recent previews.
+	// ListNotes is newest-first; cap at 100 for the count ceiling (same as full).
+	notes, _ := h.tasksSvc.ListNotes(ctx, wsID, t.ID, 100)
+	if notes == nil {
+		notes = []store.TaskNote{}
+	}
+	composedBy := nonNilStrings(tasks.ReadMetaList(t.Meta, "composed_by"))
+	composes := nonNilStrings(tasks.ReadMetaList(t.Meta, "composes"))
+
+	// Strip full status_history from the task object; surface count only.
+	taskCopy := *t
+	historyCount := taskStatusHistoryCount(taskCopy.StatusHistoryJSON)
+	taskCopy.StatusHistoryJSON = nil
+
+	previews := make([]taskNotePreview, 0, taskGetNotesPreviewCount)
+	for i := 0; i < len(notes) && i < taskGetNotesPreviewCount; i++ {
+		n := notes[i]
+		body, trunc := previewTaskText(n.Body, taskGetNotePreviewBytes)
+		previews = append(previews, taskNotePreview{
+			ID:        n.ID,
+			Author:    n.AuthorKind,
+			Body:      body,
+			BodyBytes: len(n.Body),
+			Truncated: trunc,
+			CreatedAt: n.CreatedAt,
+		})
+	}
+
+	envelope := h.discoveryEnvelope(ctx, wsID, []store.Task{*t}, envelopeModeSingle)
+	envelope["task"] = &taskCopy
+	envelope["task_view"] = "preview"
+	envelope["notes"] = []store.TaskNote{} // always [] in preview — never null
+	envelope["notes_count"] = len(notes)
+	envelope["notes_preview"] = previews
+	envelope["status_history_count"] = historyCount
+	envelope["composed_by"] = composedBy
+	envelope["composes"] = composes
+	envelope["hydrate"] = "task__get({id, full:true}) for full notes + status_history"
 	return marshalJSONResult(envelope)
 }
 

@@ -226,8 +226,9 @@ func buildCompactCodeModeInstructions(meshEnabled bool) string {
 	b.WriteString("tools/list shows only `mcpx__call_tool`, `mcpx__execute_code`, `mcpx__search_tools`, " +
 		"`secret__prompt`, `secret__list_refs`, and `mcpx__retrieve`. Everything else — " +
 		"task, mesh, memory, index, skills, downstream MCP servers — is found with " +
-		"`mcpx__search_tools`. Use `mcpx__call_tool` for one small independent call; use " +
-		"`mcpx__execute_code` for batching, dependent calls, polling, or transforms. Fetch " +
+		"`mcpx__search_tools`. Use `mcpx__call_tool` only when the entire result is the answer; use " +
+		"`mcpx__execute_code` for batching, dependent calls, filtering, polling, or transforms " +
+		"(if you would map/pick fields, use execute_code + print). Fetch " +
 		"signatures with `detail: \"full\"`, or use `help()` / `help('memory')` inside a snippet.\n\n")
 	b.WriteString("Call form — JavaScript, `<namespace>.<tool>(args)`:\n\n")
 	b.WriteString("```js\n")
@@ -262,7 +263,7 @@ func buildCodeModeInstructions(profile HarnessProfile, meshEnabled bool) string 
 			"`mcplexer`, then call:\n\n")
 		b.WriteString("1. `mcplexer__search_tools` — discover every callable function " +
 			"(downstream MCP servers + built-in mesh/memory/secret surfaces)\n")
-		b.WriteString("2. `mcplexer__call_tool` — invoke one small independent discovered tool\n")
+		b.WriteString("2. `mcplexer__call_tool` — one small independent call whose entire result is the answer\n")
 		b.WriteString("3. `mcplexer__execute_code` — batch, chain, filter, poll, or transform in JavaScript\n")
 		b.WriteString("4. `mcplexer__prompt` / `mcplexer__list_refs` — secret handling\n")
 		b.WriteString("5. `mcplexer__retrieve` — expand a `[[ccr key=...]]` compression marker\n\n")
@@ -285,19 +286,19 @@ func buildCodeModeInstructions(profile HarnessProfile, meshEnabled bool) string 
 		"from the registry, such as `generic-browser-operator`, `playwright-browser`, " +
 		"or `cmux-browser`.\n\n")
 
-	b.WriteString("For one small independent call after discovery, invoke ")
+	b.WriteString("For one small independent call after discovery (entire result is the answer — e.g. index__status, memory__save), invoke ")
 	if profile == HarnessServerPrefixed {
 		b.WriteString("`mcplexer__call_tool`")
 	} else {
 		b.WriteString("`mcpx__call_tool`")
 	}
-	b.WriteString(" with `{name:\"namespace__tool\", arguments:{...}}`. Use ")
+	b.WriteString(" with `{name:\"namespace__tool\", arguments:{...}}`. Rule of thumb: if you would map/filter/pick fields, use ")
 	if profile == HarnessServerPrefixed {
 		b.WriteString("`mcplexer__execute_code`")
 	} else {
 		b.WriteString("`mcpx__execute_code`")
 	}
-	b.WriteString(" when calls are batched, dependent, filtered, aggregated, polled, or transformed:\n\n")
+	b.WriteString(" and print only what you need (call_tool has no print()). Also use execute_code when calls are batched, dependent, filtered, aggregated, polled, or transformed:\n\n")
 	b.WriteString("```js\n")
 	b.WriteString("const snap = customer.get_customer_snapshot({ slug: \"acme\" });\n")
 	b.WriteString("// snap is the parsed result — access fields directly, no JSON.parse needed.\n")

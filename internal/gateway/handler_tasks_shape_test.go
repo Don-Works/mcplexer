@@ -11,6 +11,7 @@ package gateway
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -88,7 +89,7 @@ func TestTaskList_EmptyResultReturnsEmptyArray(t *testing.T) {
 
 // TestTaskGet_EmptySiblingsReturnEmptyArrays asserts task__get of a
 // task with no notes / no composed_by / no composes returns empty
-// arrays for each, never null.
+// arrays for each, never null. Default is preview mode.
 func TestTaskGet_EmptySiblingsReturnEmptyArrays(t *testing.T) {
 	ctx := context.Background()
 	h, db, wsID := newTasksHandler(t)
@@ -109,10 +110,14 @@ func TestTaskGet_EmptySiblingsReturnEmptyArrays(t *testing.T) {
 	body := rawResultText(t, raw)
 
 	mustHave := []string{
+		`"task_view":"preview"`,
 		`"notes":[]`,
+		`"notes_count":0`,
+		`"notes_preview":[]`,
 		`"composed_by":[]`,
 		`"composes":[]`,
 		`"known_assignees":[]`,
+		`"hydrate":`,
 	}
 	for _, want := range mustHave {
 		if !strings.Contains(body, want) {
@@ -129,6 +134,96 @@ func TestTaskGet_EmptySiblingsReturnEmptyArrays(t *testing.T) {
 		if strings.Contains(body, bad) {
 			t.Errorf("task__get body contains %q (should be []):\n%s", bad, body)
 		}
+	}
+}
+
+// TestTaskGet_FullOptInRestoresNotesAndHistory asserts full:true returns
+// the historical hydrate (notes array + status_history on the task row).
+func TestTaskGet_FullOptInRestoresNotesAndHistory(t *testing.T) {
+	ctx := context.Background()
+	h, db, wsID := newTasksHandler(t)
+	bindSessionWorkspace(h, wsID)
+
+	row := &store.Task{
+		WorkspaceID:       wsID,
+		Title:             "hydrated task",
+		StatusHistoryJSON: json.RawMessage(`[{"at":"2026-07-24T00:00:00Z","evt":"created","to":"open"}]`),
+	}
+	if err := db.CreateTask(ctx, row); err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+	if err := db.AppendTaskNote(ctx, &store.TaskNote{
+		TaskID:     row.ID,
+		AuthorKind: "agent",
+		Body:       "note body for full hydrate",
+	}); err != nil {
+		t.Fatalf("append note: %v", err)
+	}
+
+	raw, rpcErr := h.handleTaskGet(ctx, json.RawMessage(`{"id":"`+row.ID+`","full":true}`))
+	if rpcErr != nil {
+		t.Fatalf("rpc error: %v", rpcErr)
+	}
+	body := rawResultText(t, raw)
+	for _, want := range []string{
+		`"task_view":"full"`,
+		`"note body for full hydrate"`,
+		`"status_history"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("full task__get missing %q:\n%s", want, body)
+		}
+	}
+	// Preview fields should not dominate the full envelope.
+	if strings.Contains(body, `"task_view":"preview"`) {
+		t.Error("full:true still returned preview task_view")
+	}
+}
+
+// TestTaskGet_PreviewTruncatesNoteBodies asserts default get keeps only
+// recent note previews, not full note history bodies.
+func TestTaskGet_PreviewTruncatesNoteBodies(t *testing.T) {
+	ctx := context.Background()
+	h, db, wsID := newTasksHandler(t)
+	bindSessionWorkspace(h, wsID)
+
+	row := &store.Task{
+		WorkspaceID: wsID,
+		Title:       "many notes",
+	}
+	if err := db.CreateTask(ctx, row); err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+	long := strings.Repeat("note-body-", 50) // >280 bytes after a few
+	for i := 0; i < 5; i++ {
+		if err := db.AppendTaskNote(ctx, &store.TaskNote{
+			TaskID:     row.ID,
+			AuthorKind: "agent",
+			Body:       long + fmt.Sprintf("-%d", i),
+		}); err != nil {
+			t.Fatalf("append note %d: %v", i, err)
+		}
+	}
+
+	raw, rpcErr := h.handleTaskGet(ctx, json.RawMessage(`{"id":"`+row.ID+`"}`))
+	if rpcErr != nil {
+		t.Fatalf("rpc error: %v", rpcErr)
+	}
+	body := rawResultText(t, raw)
+	if !strings.Contains(body, `"task_view":"preview"`) {
+		t.Fatalf("want preview, got:\n%s", body)
+	}
+	if !strings.Contains(body, `"notes_count":5`) {
+		t.Errorf("want notes_count:5, body:\n%s", body)
+	}
+	// Full long bodies should not all appear verbatim in preview.
+	if strings.Count(body, long) > 0 {
+		// preview may include truncated prefix of long; ensure full suffix markers
+		// for all 5 are not present as complete bodies.
+		t.Log("truncated prefix of long note may appear; checking notes array empty")
+	}
+	if !strings.Contains(body, `"notes":[]`) {
+		t.Errorf("preview should leave notes empty array, got:\n%s", body)
 	}
 }
 

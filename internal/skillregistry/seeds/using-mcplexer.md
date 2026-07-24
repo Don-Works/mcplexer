@@ -8,20 +8,34 @@ description: Use when connected to the mcplexer gateway (mcpx__search_tools plus
 Current gateways expose 6 top-level tools; EVERYTHING else (github, linear, task, mesh, memory, skill, ...) is discovered and reached through them. Older gateways may not expose `mcpx__call_tool`; when it is absent, use `mcpx__execute_code` for every invocation.
 
 1. `mcpx__search_tools` — find any callable. Start cheap with summary mode: `{queries:["create task"], namespaces:["task"]}`. Fetch one exact signature with `{tool:"task__create"}`. Use `detail:"full"` only for a narrow query/namespace when you need several signatures at once.
-2. `mcpx__call_tool` — invoke exactly one small, independent discovered tool: `{"name":"task__get","arguments":{"id":"..."}}`. Use it when the result can be returned as-is. It preserves the target's MCP result envelope and traverses the same routing, scope, approval, sanitization, compression, and audit pipeline as Code Mode.
+2. `mcpx__call_tool` — invoke exactly one small, independent discovered tool: `{"name":"index__status","arguments":{}}` or `{"name":"memory__save","arguments":{...}}`. Use it ONLY when the entire result is the answer. It preserves the target's MCP result envelope and traverses the same routing, scope, approval, sanitization, compression, and audit pipeline as Code Mode.
 3. `mcpx__execute_code` — compose calls as JavaScript: `const r = task.create({title:"..."}); print(r.id)`. Registry names are `ns__tool`; in JS use the DOT form `ns.tool(args)` — synchronous, no await. Batch related calls into ONE snippet. Tool results auto-unwrap: JSON text usually becomes objects, plain-text tools such as `mcpx.skill_get` return strings. Never `JSON.parse(result.content[0].text)`. `parallel([...])` returns null for failed entries (it does not throw). The sandbox is also a full JS environment for math/parsing/transforms, and `sleep(ms)` enables bounded poll loops.
 4. `secret__prompt` / `secret__list_refs` — pass `secret://KEY` refs as tool args; plaintext never enters your context.
 5. `mcpx__retrieve` — expand a compression marker (see below) back to the exact original bytes.
 
 ## Choose the invocation path from the task
 
+**Rule of thumb:** if you would map/filter/pick fields on the result, use `mcpx__execute_code` and `print` only what you need. `mcpx__call_tool` has no `print()` — the whole envelope hits context.
+
 After discovery, choose from the work you actually need to do:
 
-- One target, independent, result returned unchanged → `mcpx__call_tool`.
+- One target, independent, result useful **as returned** → `mcpx__call_tool`.
+  - Good: `index__status`, `memory__save`, `task__create`/`task__update` (compact post-write), `mesh__receive` with low `max_results`, `skill_search` with `limit`.
 - More than one call, independent fan-out, a later call using an earlier result, filtering, aggregation, transformation, branching, retries, or polling → one `mcpx__execute_code` call.
+- Hydrates where you only need a subset (task notes/history, memory recall hits, skill bodies you will not quote in full) → `mcpx__execute_code` + `print` selected fields. `task__get` defaults to **preview** (`task_view:"preview"`); pass `full:true` only when you need every note body + full status_history.
 - `mcpx__call_tool` absent from the visible surface → `mcpx__execute_code`.
 
-Do not turn a batch into repeated `mcpx__call_tool` round trips. Do not wrap one simple read in JavaScript merely out of habit. If the result contains an integer beyond JavaScript's exact range, prefer `mcpx__call_tool` so the raw digits never pass through float64.
+**Anti-patterns:**
+
+- Do not turn a batch into repeated `mcpx__call_tool` round trips.
+- Do not wrap one simple read in JavaScript merely out of habit.
+- Do not `call_tool(task__get)` just to read title/status — use preview fields or `execute_code` + `print({id, title, status})`.
+- Do not `call_tool(memory__recall)` without a tight `query` + `limit` (empty query returns newest full bodies).
+- Do not name locals after namespaces: `const mesh = mesh.receive(...)` shadows the namespace (TDZ / ReferenceError). Use `const inbox = mesh.receive(...)`.
+
+If the result contains an integer beyond JavaScript's exact range, prefer `mcpx__call_tool` so the raw digits never pass through float64.
+
+A large direct result may carry `_call_tool_hint` — treat it as a path-choice correction for the next call, not as part of the domain data.
 
 ## Compression markers — `[[ccr key=... bytes=N ...]]` (load-bearing)
 

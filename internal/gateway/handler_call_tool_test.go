@@ -32,16 +32,24 @@ func TestCallToolDefinitionIsPreciseAndObjectOnly(t *testing.T) {
 		t.Fatalf("name = %q, want %q", def.Name, callToolName)
 	}
 	for _, guidance := range []string{
-		"one small, independent call",
+		"ONLY when the entire result is the answer",
+		"Rule of thumb",
+		"map/filter/pick fields",
 		"mcpx__search_tools",
 		"mcpx__execute_code",
-		"filtering",
-		"polling",
+		"index__status",
+		"memory__save",
 		"cannot invoke itself",
 	} {
 		if !strings.Contains(def.Description, guidance) {
 			t.Errorf("description missing %q", guidance)
 		}
+	}
+	if strings.Contains(def.Description, "task__get or github__list") {
+		t.Error("description still uses fat hydrate tools as the primary example")
+	}
+	if !strings.Contains(string(def.InputSchema), "index__status") {
+		t.Error("name schema example should prefer small tools like index__status")
 	}
 
 	var schema struct {
@@ -76,10 +84,10 @@ func TestDecodeCallToolArgsRejectsAmbiguousInputs(t *testing.T) {
 	}{
 		{"missing name", `{"arguments":{}}`, "name is required"},
 		{"blank name", `{"name":"  ","arguments":{}}`, "name is required"},
-		{"missing arguments", `{"name":"task__get"}`, "arguments is required"},
-		{"null arguments", `{"name":"task__get","arguments":null}`, "arguments must be a JSON object"},
-		{"array arguments", `{"name":"task__get","arguments":[]}`, "arguments must be a JSON object"},
-		{"unknown wrapper field", `{"name":"task__get","arguments":{},"args":{}}`, "unknown call_tool field"},
+		{"missing arguments", `{"name":"index__status"}`, "arguments is required"},
+		{"null arguments", `{"name":"index__status","arguments":null}`, "arguments must be a JSON object"},
+		{"array arguments", `{"name":"index__status","arguments":[]}`, "arguments must be a JSON object"},
+		{"unknown wrapper field", `{"name":"index__status","arguments":{},"args":{}}`, "unknown call_tool field"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -282,5 +290,55 @@ func TestCallToolAuditCorrelatesWrapperAndTarget(t *testing.T) {
 		target.CorrelationID != target.ExecutionID {
 		t.Fatalf("correlation ids do not mirror execution ids: wrapper=%+v target=%+v",
 			wrapper, target)
+	}
+}
+
+func TestAnnotateLargeCallToolResult_JSONBodyGetsHint(t *testing.T) {
+	// Build a JSON text envelope larger than the advisory threshold.
+	payload := map[string]any{
+		"ok":   true,
+		"blob": strings.Repeat("x", callToolLargeResultBytes),
+	}
+	text, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env, err := json.Marshal(CallToolResult{
+		Content: []ToolContent{{Type: "text", Text: string(text)}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := annotateLargeCallToolResult(env, "task__get")
+	var parsed CallToolResult
+	if err := json.Unmarshal(out, &parsed); err != nil {
+		t.Fatal(err)
+	}
+	if len(parsed.Content) == 0 {
+		t.Fatal("empty content")
+	}
+	var body map[string]any
+	if err := json.Unmarshal([]byte(parsed.Content[0].Text), &body); err != nil {
+		t.Fatalf("body not JSON: %v\n%s", err, parsed.Content[0].Text)
+	}
+	hint, _ := body["_call_tool_hint"].(string)
+	if !strings.Contains(hint, "Large direct result") || !strings.Contains(hint, "task__get") {
+		t.Fatalf("missing large-result hint: %q", hint)
+	}
+	if body["ok"] != true {
+		t.Fatalf("domain fields lost: %+v", body)
+	}
+}
+
+func TestAnnotateLargeCallToolResult_SmallResultUnchanged(t *testing.T) {
+	env, err := json.Marshal(CallToolResult{
+		Content: []ToolContent{{Type: "text", Text: `{"ok":true}`}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := annotateLargeCallToolResult(env, "index__status")
+	if string(out) != string(env) {
+		t.Fatalf("small result should be unchanged:\n got %s\nwant %s", out, env)
 	}
 }
